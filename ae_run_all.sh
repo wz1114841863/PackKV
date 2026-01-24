@@ -1,7 +1,14 @@
-Figure 3, 4: scripts/figure/kv_data_characteristic.py
-Figure 6: scripts/figure/repacking_visualization.py
+cd scripts
+export CUDA_VISIBLE_DEVICES=0
+export PYTHONPATH=.. 
 
-Figure 13: 
+# Figure 3, 4: 
+python figure/kv_data_characteristic.py
+
+# Figure 6: 
+python figure/repacking_visualization.py
+
+# Figure 13: 
 - scripts/pack_size_cr_gen_setting.py
 - scripts/pack_size_cr_run.py
 - scripts/figure/pack_size_cr.py
