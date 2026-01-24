@@ -2,14 +2,14 @@
 
 This is the official repository for the paper **"PackKV: Reducing KV Cache Memory Footprint through LLM-Aware Lossy Compression"** (IPDPS 2026). [[Paper](https://arxiv.org/abs/2512.24449)]
 
-PackKV is a high-performance framework designed to reduce the memory footprint of Key-Value (KV) cache for Large Language Models Inference with Lossy Compression. By utilizing custom CUDA kernels and sophisticated lossy compression techniques, PackKV aims to reduce memory usage and improve inference throughput.
+PackKV is a high-performance framework designed to reduce the memory footprint of KV cache for Large Language Models Inference with Lossy Compression. By utilizing custom CUDA kernels and sophisticated lossy compression techniques, PackKV aims to reduce memory usage and improve inference throughput.
 
 ## Installation
 
 ### Prerequisites
 
 - Linux
-- NVIDIA GPU with CUDA support
+- NVIDIA GPU with CUDA(13.0) support
 - Anaconda or Miniconda or Miniforge
 
 ### Step 1: Set up the Environment
@@ -19,7 +19,7 @@ Create a new Conda environment using the provided configuration file:
 ```bash
 conda env create -f environment.yml
 conda activate packkv_pub
-pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cu128 # to support RTX Pro 6000
+pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu130 # to support RTX Pro 6000
 pip install flash-attn==2.8.1 --no-build-isolation
 pip install -r requirements.txt
 ```
@@ -30,7 +30,7 @@ Compile and install the custom CUDA kernels required for PackKV:
 
 ```bash
 cd packkv_cuda_ext
-pip install -e .
+pip install -e . --no-build-isolation
 cd ..
 ```
 
@@ -49,7 +49,7 @@ if you failed to compile this extension, you can try to modify the `setup.py` fi
 
 ```bash
 cd scripts
-PYTHONPATH=.. python ./rebuttal_throughout.py
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=.. python ./rebuttal_throughout.py
 cd ..
 ```
 
