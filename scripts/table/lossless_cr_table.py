@@ -80,10 +80,10 @@ logger = get_logger(__file__)
 block_other_logger(logger)
 
 # Load data
-setting_path = "../data/lossless_cr/lossless_setting_map.pkl"
+setting_path = "data/pack_size_cr/pack_size_cr_setting_map.pkl"
 setting_map: Dict[int, PackKVCacheConfig] = load(setting_path)
 
-result_path = "../data/lossless_cr/lossless_result_map.pkl"
+result_path = "data/pack_size_cr/pack_size_cr_result_map.pkl"
 accuracy_result_map = load(result_path)
 
 pairs = pair(setting_map.values(), accuracy_result_map.values())

@@ -81,7 +81,7 @@ if __name__ == '__main__':
         
         # Save the updated result map after each task completion
         save(cr_result_map, save_path)
-        logger.info(f"Saved results to {save_path}")
+        logger.info(f"Saved results to scripts/{save_path}")
         
         return (hash_key, result)
 

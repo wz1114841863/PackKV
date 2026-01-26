@@ -129,10 +129,10 @@ def draw_one_line_pic(x, y, y_label, title, save_path, benchmark):
 
 logger = get_logger(__file__)
 block_other_logger(logger)
-setting_path = "../data/accuracy/accuracy_setting_map.pkl"
+setting_path = "data/accuracy/accuracy_setting_map.pkl"
 setting_map: Dict[int, Tuple[str, PackKVCacheConfig]] = load(setting_path)
 
-save_path = "../data/accuracy/accuracy_result_map.pkl"
+save_path = "data/accuracy/accuracy_result_map.pkl"
 accuracy_result_map = load(save_path)
 
 pairs = pair(setting_map.values(), accuracy_result_map.values())
@@ -180,19 +180,19 @@ for model in model_list:
         scales, accuracies = extract_scales_accuracies(filtered_pairs, benchmark, True)
         # Extract just the model name (without organization prefix)
         draw_one_line_pic(scales, accuracies, "K Channel Quant", f"K_Channel_Quant_{model_name_only}",
-                          "accuracy_turning_point", "gpqa" if isinstance(benchmark, list) else benchmark)
+                          "figure/accuracy_turning_point", "gpqa" if isinstance(benchmark, list) else benchmark)
         # K token quant
         filtered_pairs = filter(pairs, lambda setting, _: setting[1].model_name == model and setting[0] == benchmark and setting[1].quant_method.value[0] == QuantMode.TokenQuant and setting[1].v_quant_scale_rel == 0.01)
         scales, accuracies = extract_scales_accuracies(filtered_pairs, benchmark, True)
         # Extract just the model name (without organization prefix)
         draw_one_line_pic(scales, accuracies, "K Token Quant", f"K_Token_Quant_{model_name_only}",
-                          "accuracy_turning_point", "gpqa" if isinstance(benchmark, list) else benchmark)
+                          "figure/accuracy_turning_point", "gpqa" if isinstance(benchmark, list) else benchmark)
         # V token quant
         filtered_pairs = filter(pairs, lambda setting, _: setting[1].model_name == model and setting[0] == benchmark and setting[1].quant_method.value[1] == QuantMode.TokenQuant and setting[1].quant_method.value[0] == QuantMode.TokenQuant and setting[1].k_quant_scale_rel == 0.01)
         scales, accuracies = extract_scales_accuracies(filtered_pairs, benchmark, False)
         # Extract just the model name (without organization prefix)
         draw_one_line_pic(scales, accuracies, "V Token Quant", f"V_Token_Quant_{model_name_only}",
-                          "accuracy_turning_point", "gpqa" if isinstance(benchmark, list) else benchmark)
+                          "figure/accuracy_turning_point", "gpqa" if isinstance(benchmark, list) else benchmark)
 
 # # "meta-llama/Llama-2-13b-hf"
 # ## k channel quant

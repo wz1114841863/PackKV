@@ -8,7 +8,7 @@ result_map = load(result_path)
 
 new_result_map = {}
 for benchmark, config in setting_map.items():
-    if benchmark in result_map:
+    if benchmark in result_map and not isinstance(result_map[benchmark], str):
         new_result_map[benchmark] = result_map[benchmark]
 
 new_result_path = "data/accuracy/accuracy_result_map.pkl"

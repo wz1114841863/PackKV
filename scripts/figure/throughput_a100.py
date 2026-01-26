@@ -27,16 +27,11 @@ logger = get_logger(__file__)
 block_other_logger(logger)
 a100_setting_path = "data/throughput/throughput_setting_map_a100.pkl"
 a100_setting_map: Dict[int, PackKVCacheConfig] = load(a100_setting_path)
-rtx_pro_setting_path = "data/throughput/throughput_setting_map_rtx_pro.pkl"
-rtx_pro_setting_map: Dict[int, PackKVCacheConfig] = load(rtx_pro_setting_path)
 
 a100_result_path = "data/throughput/throughput_result_map_a100.pkl"
 a100_result_map = load(a100_result_path)
-rtx_pro_result_path = "data/throughput/throughput_result_map_rtx_pro.pkl"
-rtx_pro_result_map = load(rtx_pro_result_path)
 
 a100_pairs = pair(a100_setting_map.values(), a100_result_map.values())
-rtx_pro_pairs = pair(rtx_pro_setting_map.values(), rtx_pro_result_map.values())
 
 def filter(pairs, func):
     filtered_pairs = []
@@ -48,8 +43,6 @@ def filter(pairs, func):
 
 a100_llama_filtered_pairs = filter(a100_pairs, lambda setting, result: setting[1].model_name == "meta-llama/Llama-3.1-8B")
 a100_ministral_filtered_pairs = filter(a100_pairs, lambda setting, result: setting[1].model_name == "mistralai/Ministral-8B-Instruct-2410")
-rtx_pro_llama_filtered_pairs = filter(rtx_pro_pairs, lambda setting, result: setting[1].model_name == "meta-llama/Llama-3.1-8B")
-rtx_pro_ministral_filtered_pairs = filter(rtx_pro_pairs, lambda setting, result: setting[1].model_name == "mistralai/Ministral-8B-Instruct-2410")
 
 def process_pairs(pairs):
     processed_pairs = []
@@ -159,14 +152,10 @@ def pairs_to_arrays(pairs):
 
 a100_llama_filtered_pairs = process_pairs(a100_llama_filtered_pairs)
 a100_ministral_filtered_pairs = process_pairs(a100_ministral_filtered_pairs)
-rtx_pro_llama_filtered_pairs = process_pairs(rtx_pro_llama_filtered_pairs)
-rtx_pro_ministral_filtered_pairs = process_pairs(rtx_pro_ministral_filtered_pairs)
 
 # Convert to arrays for plotting
 a100_llama_arrays = pairs_to_arrays(a100_llama_filtered_pairs)
 a100_ministral_arrays = pairs_to_arrays(a100_ministral_filtered_pairs)
-rtx_pro_llama_arrays = pairs_to_arrays(rtx_pro_llama_filtered_pairs)
-rtx_pro_ministral_arrays = pairs_to_arrays(rtx_pro_ministral_filtered_pairs)
 
 def draw_throughput_comparison(ctx_lens, k_pytorch_throughput, k_our_total_throughput, v_pytorch_throughput, v_our_total_throughput, title, save_filename):
     """
@@ -220,12 +209,10 @@ def draw_throughput_comparison(ctx_lens, k_pytorch_throughput, k_our_total_throu
 save_path = "./throughput"
 os.makedirs(save_path, exist_ok=True)
 
-# Generate all 4 plots (combined K and V)
+# Generate plots (combined K and V)
 datasets = [
     ("a100_llama", a100_llama_arrays, "A100", "Llama-3.1-8B"),
     ("a100_ministral", a100_ministral_arrays, "A100", "Ministral-8B"),
-    ("rtx_pro_llama", rtx_pro_llama_arrays, "RTX Pro", "Llama-3.1-8B"),
-    ("rtx_pro_ministral", rtx_pro_ministral_arrays, "RTX Pro", "Ministral-8B")
 ]
 
 for dataset_name, arrays, gpu_name, model_name in datasets:
@@ -240,7 +227,7 @@ for dataset_name, arrays, gpu_name, model_name in datasets:
         save_filename=os.path.join(save_path, f"{dataset_name}_throughput")
     )
 
-print("Generated 4 combined throughput comparison plots in ./throughput/")
+print("Generated A100 throughput comparison plots in ./throughput/")
 
 def calculate_none_kernel_percentage(our_kernel_times, our_none_kernel_times):
     """
@@ -290,8 +277,6 @@ def create_kernel_time_pie_chart(our_kernel_times, our_none_kernel_times, title,
     plt.savefig(os.path.join(save_path, filename), dpi=300, bbox_inches='tight')
     plt.close()
 
-print("Generated 4 combined throughput comparison plots in ./throughput/")
-
 # Generate pie charts for kernel time breakdown
 # A100 pie charts
 create_kernel_time_pie_chart(
@@ -308,26 +293,11 @@ create_kernel_time_pie_chart(
     filename="a100_v_kernel_time_pie.pdf"
 )
 
-# RTX Pro pie charts
-create_kernel_time_pie_chart(
-    our_kernel_times=rtx_pro_llama_arrays['k_our_kernel_times'],
-    our_none_kernel_times=rtx_pro_llama_arrays['k_our_none_kernel_times'],
-    title="RTX Pro - K Kernel Time Breakdown",
-    filename="rtx_pro_k_kernel_time_pie.pdf"
-)
-
-create_kernel_time_pie_chart(
-    our_kernel_times=rtx_pro_llama_arrays['v_our_kernel_times'],
-    our_none_kernel_times=rtx_pro_llama_arrays['v_our_none_kernel_times'],
-    title="RTX Pro - V Kernel Time Breakdown",
-    filename="rtx_pro_v_kernel_time_pie.pdf"
-)
-
-print("Generated 4 kernel time breakdown pie charts in ./throughput/")
+print("Generated A100 kernel time breakdown pie charts in ./throughput/")
 
 # Calculate and print our none kernel percentages
 print("\n" + "="*50)
-print("OUR NONE KERNEL PERCENTAGE ANALYSIS")
+print("OUR NONE KERNEL PERCENTAGE ANALYSIS (A100)")
 print("="*50)
 
 # A100 percentages
@@ -343,33 +313,11 @@ a100_v_none_percentage = calculate_none_kernel_percentage(
 print(f"A100 K Our None Kernel Percentage: {a100_k_none_percentage:.1f}%")
 print(f"A100 V Our None Kernel Percentage: {a100_v_none_percentage:.1f}%")
 
-# RTX Pro percentages
-rtx_k_none_percentage = calculate_none_kernel_percentage(
-    rtx_pro_llama_arrays['k_our_kernel_times'],
-    rtx_pro_llama_arrays['k_our_none_kernel_times']
-)
-rtx_v_none_percentage = calculate_none_kernel_percentage(
-    rtx_pro_llama_arrays['v_our_kernel_times'],
-    rtx_pro_llama_arrays['v_our_none_kernel_times']
-)
-
-print(f"RTX Pro K Our None Kernel Percentage: {rtx_k_none_percentage:.1f}%")
-print(f"RTX Pro V Our None Kernel Percentage: {rtx_v_none_percentage:.1f}%")
-
-# Overall averages
-k_avg_none_percentage = (a100_k_none_percentage + rtx_k_none_percentage) / 2
-v_avg_none_percentage = (a100_v_none_percentage + rtx_v_none_percentage) / 2
-print(f"\nK Average Our None Kernel Percentage: {k_avg_none_percentage:.1f}%")
-print(f"V Average Our None Kernel Percentage: {v_avg_none_percentage:.1f}%")
-
-overall_avg_none_percentage = (k_avg_none_percentage + v_avg_none_percentage) / 2
-print(f"Overall Average Our None Kernel Percentage: {overall_avg_none_percentage:.1f}%")
-
 print("="*50)
 
 # Calculate average performance improvement (percentage)
 print("\n" + "="*50)
-print("AVERAGE PERFORMANCE IMPROVEMENT ANALYSIS")
+print("AVERAGE PERFORMANCE IMPROVEMENT ANALYSIS (A100)")
 print("="*50)
 
 def calculate_average_improvement(pytorch_times, total_times, name):
@@ -391,28 +339,5 @@ a100_v_improvement = calculate_average_improvement(
     a100_llama_arrays['v_our_total_kernel_times'], 
     "A100 V"
 )
-
-# RTX Pro improvements
-print("\nRTX Pro Improvements:")
-rtx_k_improvement = calculate_average_improvement(
-    rtx_pro_llama_arrays['k_pytorch_kernel_times'], 
-    rtx_pro_llama_arrays['k_our_total_kernel_times'], 
-    "RTX Pro K"
-)
-rtx_v_improvement = calculate_average_improvement(
-    rtx_pro_llama_arrays['v_pytorch_kernel_times'], 
-    rtx_pro_llama_arrays['v_our_total_kernel_times'], 
-    "RTX Pro V"
-)
-
-# Overall averages
-print("\nOverall Averages:")
-k_avg_improvement = (a100_k_improvement + rtx_k_improvement) / 2
-v_avg_improvement = (a100_v_improvement + rtx_v_improvement) / 2
-print(f"K Average Improvement: {k_avg_improvement:.1f}%")
-print(f"V Average Improvement: {v_avg_improvement:.1f}%")
-
-overall_avg_improvement = (k_avg_improvement + v_avg_improvement) / 2
-print(f"Overall Average Improvement: {overall_avg_improvement:.1f}%")
 
 print("="*50)

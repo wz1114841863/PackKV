@@ -4,7 +4,7 @@ import sys
 import os
 # Add the parent directory to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from evaluation.evaluation import throughput_evaluation
+
 from utils.config import PackKVCacheConfig
 from utils.serialization import load, save
 from utils.util import get_logger, block_other_logger, register_notify
@@ -17,6 +17,7 @@ def run_throughput_evaluation_wrapper(config, ctx_len, logger, hash_key):
     """
     Wrapper function for throughput evaluation that doesn't need result_queue.
     """
+    from evaluation.evaluation import throughput_evaluation
     result = throughput_evaluation(config, ctx_len, enable_save=False, logger=logger)
     return result
 
@@ -33,7 +34,7 @@ if __name__ == '__main__':
     logger.info(f"Detected {gpu_count} GPUs")
 
     # Create tasks_devices_map based on available GPUs
-    tasks_devices_map = [(0, 1, 2, 3)]
+    tasks_devices_map = [(i,) for i in range(gpu_count)]
     logger.info(f"Tasks devices map: {tasks_devices_map}")
     
     setting_path = "data/throughput/throughput_setting_map_a100.pkl"

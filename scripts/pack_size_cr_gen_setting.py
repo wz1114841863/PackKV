@@ -56,6 +56,6 @@ for model_name in model_list:
             add_to_map(config, setting_map)
 
 setting_path = "data/pack_size_cr/pack_size_cr_setting_map.pkl"
-print(setting_map)
+# print(setting_map)
 save(setting_map, setting_path)
 logger.info(f"Setting map saved to {setting_path}, total {len(setting_map)} entries")

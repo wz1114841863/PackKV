@@ -9,20 +9,33 @@ PackKV is a high-performance framework designed to reduce the memory footprint o
 ### Prerequisites
 
 - Linux
-- NVIDIA GPU with CUDA(13.0) support
+- NVIDIA GPU with CUDA(13.0) support, recommended to use RTX Pro 6000 to reproduce the results
 - Anaconda or Miniconda or Miniforge
 
 ### Step 1: Set up the Environment
 
 Create a new Conda environment using the provided configuration file:
 
+For RTX Pro 6000 machine:
+
 ```bash
 conda env create -f environment.yml
 conda activate packkv_pub
 pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu130 # to support RTX Pro 6000
-pip install flash-attn==2.8.1 --no-build-isolation
+pip install flash-attn==2.8.1 --no-build-isolation # this may take quit a while to compile flash-attn
 pip install -r requirements.txt
 ```
+
+For 4XA100 machine:
+
+```bash
+conda env create -f environment.yml
+conda activate packkv_pub
+pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu130
+pip install flash-attn==2.8.1 --no-build-isolation # this may take quit a while to compile flash-attn
+pip install -r requirements.txt
+```
+
 
 ### Step 2: Install CUDA Extensions
 
@@ -35,6 +48,7 @@ cd ..
 ```
 
 if you failed to compile this extension, you can try to modify the `setup.py` file:
+For RTX Pro 6000 machine:
 ```bash
 'nvcc': [
     '-O3',
@@ -42,6 +56,17 @@ if you failed to compile this extension, you can try to modify the `setup.py` fi
     # '-gencode=arch=compute_80,code=sm_80',
     # '-gencode=arch=compute_89,code=sm_89',
     '-gencode=arch=compute_120,code=sm_120', # this works for RTX Pro 6000
+]
+```
+
+For 4XA100 machine:
+```bash
+'nvcc': [
+    '-O3',
+    # '-gencode=arch=compute_70,code=compute_70',
+    # '-gencode=arch=compute_80,code=sm_80',
+    # '-gencode=arch=compute_89,code=sm_89',
+    '-gencode=arch=compute_120,code=sm_120', # this works for 4XA100
 ]
 ```
 

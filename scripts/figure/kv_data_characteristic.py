@@ -17,7 +17,7 @@ BLOCK_SIZE = 64
 BUFFER_SIZE = 128 + 64
 ctx_len = 1024
 
-font_path = 'Founders_Grotesk/FoundersGrotesk-Regular.otf'
+font_path = '../Founders_Grotesk/FoundersGrotesk-Regular.otf'
 founders_reg_prop = FontProperties(fname=font_path, size=24)
 
 config = PackKVCacheConfig(
@@ -124,4 +124,4 @@ plt.close()
 
 print("K and V histogram saved as kv_data_characteristic/kv_histogram.pdf")
 
-print("\nAll visualizations completed and saved to kv_data_characteristic/ directory")
+print("\nAll visualizations completed and saved to scripts/figure/kv_data_characteristic/ directory")

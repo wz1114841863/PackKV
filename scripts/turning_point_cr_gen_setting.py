@@ -8,7 +8,7 @@ from utils.serialization import load, unified_hash, save
 from utils.compute import QuantMode, QuantMethod, RepackMethod
 from utils.config import PackKVCacheConfig
 
-turning_points_path = "data/turning_points/turning_points.pkl"
+turning_points_path = "data/turning_point/turning_points.pkl"
 turning_points = load(turning_points_path)
 
 print(len(turning_points))

@@ -16,7 +16,7 @@ BLOCK_SIZE = 64
 BUFFER_SIZE = 128 + 64
 ctx_len = 1024
 
-font_path = 'Founders_Grotesk/FoundersGrotesk-Regular.otf'
+font_path = '../Founders_Grotesk/FoundersGrotesk-Regular.otf'
 founders_reg_prop = FontProperties(fname=font_path)
 
 config = PackKVCacheConfig(
@@ -160,4 +160,4 @@ plt.savefig('before_after_repacking/combined_visualization.pdf', format='pdf', b
 plt.savefig('before_after_repacking/combined_visualization.svg', format='svg', bbox_inches='tight', pad_inches=0.2)
 plt.close()
 
-print("Combined visualization saved as before_after_repacking/combined_visualization.pdf and combined_visualization.svg")
+print("Combined visualization saved as scripts/figure/before_after_repacking/combined_visualization.pdf and combined_visualization.svg")

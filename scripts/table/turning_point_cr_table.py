@@ -7,7 +7,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.serialization import load
 from utils.compute import QuantMode
 
-save_path = "../data/turning_point/turning_points.pkl"
+save_path = "data/turning_point/turning_points.pkl"
 turning_points = load(save_path)
 
 print(turning_points[0])

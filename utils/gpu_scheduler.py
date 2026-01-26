@@ -3,6 +3,7 @@ import multiprocessing as mp
 import queue
 import threading
 import time
+import sys
 import os
 import logging
 from pathlib import Path
@@ -21,29 +22,54 @@ def _standalone_worker_wrapper(device_mapping: tuple, target_func: Callable, arg
     This function is outside the class to avoid pickling issues with spawn.
     Supports both single and multi-GPU assignments.
     """
+    pid = os.getpid()
+    
+    # Ensure consistent device ordering
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    
     # Set CUDA_VISIBLE_DEVICES to show the assigned GPU(s)
     if len(device_mapping) == 1:
         # Single GPU case
-        os.environ['CUDA_VISIBLE_DEVICES'] = str(device_mapping[0])
+        env_val = str(device_mapping[0])
     else:
         # Multi-GPU case: comma-separated list
-        os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(map(str, device_mapping))
+        env_val = ','.join(map(str, device_mapping))
+    
+    os.environ['CUDA_VISIBLE_DEVICES'] = env_val
     
     # Initialize CUDA in spawn mode (clean slate)
-    import torch
+    # import torch  # Already imported at top level
+    
+    # Debug info to understand what's happening
     if torch.cuda.is_available():
-        # In spawn mode, we start with a clean CUDA state
-        # Just verify that the expected number of devices are visible
-        num_visible_devices = torch.cuda.device_count()
+        visible_count = torch.cuda.device_count()
+        # print(f"[Worker {pid}] Mapped: {device_mapping}, CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES')}, Visible Count: {visible_count}")
+        # sys.stdout.flush()
+        
+        # Determine which device ID to use inside the process
         expected_devices = len(device_mapping)
         
-        if num_visible_devices != expected_devices:
-            raise RuntimeError(f"Expected {expected_devices} CUDA devices but found {num_visible_devices}")
-        
-        # Set default device to 0 (first remapped device)
-        torch.cuda.set_device(0)
-        
-
+        if visible_count == expected_devices:
+            # Case A: CUDA_VISIBLE_DEVICES worked.
+            # The devices are re-indexed from 0.
+            # e.g. if Mapped=(1,), visible device 0 IS physical device 1.
+            torch.cuda.set_device(0)
+        else:
+            # Case B: CUDA_VISIBLE_DEVICES failed (saw all GPUs).
+            # We must manually select the PHYSICAL device ID.
+            # This STRICTLY enforces the mapping.
+            # print(f"[Worker {pid}] WARNING: CUDA_VISIBLE_DEVICES failed! Fallback to physical ID.")
+            # sys.stdout.flush()
+            if len(device_mapping) == 1:
+                target_physical_id = device_mapping[0]
+                torch.cuda.set_device(target_physical_id)
+                # print(f"[Worker {pid}] Fallback: Using physical device {target_physical_id}")
+                # sys.stdout.flush()
+            else:
+                # For multi-GPU tasks (e.g. (0,1)), we can't easily fix the mapping if env var failed
+                # because PyTorch might still see them as 0,1,2,3.
+                # But typically we just want to set the current device to the first one.
+                torch.cuda.set_device(device_mapping[0])
     
     try:
         # Call the target function
@@ -70,6 +96,7 @@ class GPUTaskScheduler:
         self.timeout = timeout
         self.logger = logger or get_logger(__name__)
         
+        import torch
         self.gpu_count = torch.cuda.device_count()
             
         self.logger.info(f"Detected {self.gpu_count} GPUs")

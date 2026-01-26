@@ -15,7 +15,7 @@ from utils.util import get_logger, block_other_logger, register_notify
 
 from matplotlib.font_manager import FontProperties
 
-font_path = '../figure/Founders_Grotesk/FoundersGrotesk-Regular.otf'
+font_path = 'Founders_Grotesk/FoundersGrotesk-Regular.otf'
 founders_reg_prop = FontProperties(fname=font_path)
 
 def pair(settings, results):
@@ -154,10 +154,10 @@ def main():
     block_other_logger(logger)
     
     # Load data
-    setting_path = "../data/lossless_cr/lossless_setting_map.pkl"
+    setting_path = "data/pack_size_cr/pack_size_cr_setting_map.pkl"
     setting_map: Dict[int, PackKVCacheConfig] = load(setting_path)
 
-    save_path_data = "../data/lossless_cr/lossless_result_map.pkl"
+    save_path_data = "data/pack_size_cr/pack_size_cr_result_map.pkl"
     accuracy_result_map = load(save_path_data)
 
     pairs = pair(setting_map.values(), accuracy_result_map.values())
@@ -171,7 +171,7 @@ def main():
         "microsoft/phi-4"
     ]
 
-    save_path = "pack_size_cr/"
+    save_path = "figure/pack_size_cr/"
     
     # Create output directory if it doesn't exist
     os.makedirs(save_path, exist_ok=True)
