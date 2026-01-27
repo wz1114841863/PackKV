@@ -9,7 +9,7 @@ PackKV is a high-performance framework designed to reduce the memory footprint o
 ### Prerequisites
 
 - Linux
-- NVIDIA GPU with CUDA(13.0) support, recommended to use RTX Pro 6000 to reproduce the results
+- NVIDIA GPU with CUDA(13.0 for RTX Pro 6000 Blackwell Workstation Edition, 12.2 for 4XA100) support
 - Anaconda or Miniconda or Miniforge
 
 ### Step 1: Set up the Environment
