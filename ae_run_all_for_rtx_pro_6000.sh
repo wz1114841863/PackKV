@@ -24,7 +24,7 @@ mkdir turning_point
 mkdir figure/accuracy_turning_point
 echo "==================== Figure 14 ===================="
 python accuracy_gen_setting.py # < 1 min
-python result_filter.py # < 1 min
+python result_filter.py --setting data/accuracy/accuracy_setting_map.pkl --result data/accuracy/accuracy_result_map.pkl # < 1 min
 python accuracy_run.py # < 150 hours with two RTX Pro 6000, < 300 hours with one RTX Pro 6000
 python turning_point_from_accuracy.py # < 1 min
 python figure/accuracy_w_fitting.py # < 1 min
@@ -54,6 +54,7 @@ echo "==================== Table 3, 4 ===================="
 
 echo "==================== Table 2, 5 ===================="
 python turning_point_cr_gen_setting.py # < 1 min
+python result_filter.py --setting data/turning_point/turning_point_cr_setting_map.pkl --result data/turning_point/turning_point_cr_result_map.pkl # < 1 min
 python turning_point_cr_run.py # < 30 mins
 python turning_point_cr_result_append.py # < 1 min
 python table/turning_point_cr_table.py # < 1 min
