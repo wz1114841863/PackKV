@@ -34,7 +34,7 @@ if __name__ == '__main__':
     logger.info(f"Detected {gpu_count} GPUs")
 
     # Create tasks_devices_map based on available GPUs
-    tasks_devices_map = [(i,) for i in range(gpu_count)]
+    tasks_devices_map = [(0, 1, 2, 3)]
     logger.info(f"Tasks devices map: {tasks_devices_map}")
     
     setting_path = "data/throughput/throughput_setting_map_a100.pkl"

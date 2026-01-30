@@ -256,7 +256,7 @@ draw_throughput_multi_gpu_combined(
     k_throughputs,
     v_throughputs,
     "K and V Throughput vs GPU Number", 
-    "./throughput_multi_gpu/a100_kv"
+    "figure/throughput_multi_gpu/a100_kv"
 )
 
 # 2. Scaling efficiency plot
@@ -264,7 +264,7 @@ draw_scaling_efficiency(
     gpu_nums,
     k_throughputs, 
     v_throughputs,
-    "./throughput_multi_gpu/a100_scaling_efficiency"
+    "figure/throughput_multi_gpu/a100_scaling_efficiency"
 )
 
 # 3. Total throughput plot
@@ -272,7 +272,7 @@ draw_total_throughput(
     gpu_nums,
     k_throughputs,
     v_throughputs,
-    "./throughput_multi_gpu/a100_total_throughput"
+    "figure/throughput_multi_gpu/a100_total_throughput"
 )
 
 # 4. Relative performance plot
@@ -280,7 +280,7 @@ draw_relative_performance(
     gpu_nums,
     k_throughputs,
     v_throughputs, 
-    "./throughput_multi_gpu/a100_relative_performance"
+    "figure/throughput_multi_gpu/a100_relative_performance"
 )
 
 print("Generated multiple visualization PDFs:")

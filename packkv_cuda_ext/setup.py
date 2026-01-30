@@ -26,9 +26,9 @@ setup(
                 'nvcc': [
                     '-O3',
                     # '-gencode=arch=compute_70,code=compute_70',
-                    # '-gencode=arch=compute_80,code=sm_80',
+                    # '-gencode=arch=compute_80,code=sm_80', # this works for A100
                     # '-gencode=arch=compute_89,code=sm_89',
-                    '-gencode=arch=compute_120,code=sm_120',
+                    '-gencode=arch=compute_120,code=sm_120', # this works for RTX Pro 6000
                 ]
             }
         )

@@ -9,7 +9,7 @@ PackKV is a high-performance framework designed to reduce the memory footprint o
 ### Prerequisites
 
 - Linux
-- NVIDIA GPU with CUDA(13.0 for RTX Pro 6000 Blackwell Workstation Edition, 12.2 for 4XA100) support
+- NVIDIA GPU with CUDA(13.0 for RTX Pro 6000 Blackwell Workstation Edition, 12.8 for 4XA100) support
 - Anaconda or Miniconda or Miniforge
 
 ### Step 1: Set up the Environment
@@ -22,8 +22,8 @@ For RTX Pro 6000 machine:
 conda env create -f environment.yml
 conda activate packkv_pub
 pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu130 # to support RTX Pro 6000
-pip install flash-attn==2.8.1 --no-build-isolation # this may take quit a while to compile flash-attn
 pip install -r requirements.txt
+pip install flash-attn==2.8.1 --no-build-isolation # this may take quit a while to compile flash-attn
 ```
 
 For 4XA100 machine:
@@ -31,9 +31,9 @@ For 4XA100 machine:
 ```bash
 conda env create -f environment.yml
 conda activate packkv_pub
-pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu130
-pip install flash-attn==2.8.1 --no-build-isolation # this may take quit a while to compile flash-attn
+pip install torch==2.9.0 --index-url https://download.pytorch.org/whl/cu128
 pip install -r requirements.txt
+pip install "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.1/flash_attn-2.8.1+cu12torch2.9cxx11abiTRUE-cp312-cp312-linux_x86_64.whl"
 ```
 
 
@@ -48,25 +48,13 @@ cd ..
 ```
 
 if you failed to compile this extension, you can try to modify the `setup.py` file:
-For RTX Pro 6000 machine:
 ```bash
 'nvcc': [
     '-O3',
     # '-gencode=arch=compute_70,code=compute_70',
-    # '-gencode=arch=compute_80,code=sm_80',
+    # '-gencode=arch=compute_80,code=sm_80', # this works for A100
     # '-gencode=arch=compute_89,code=sm_89',
     '-gencode=arch=compute_120,code=sm_120', # this works for RTX Pro 6000
-]
-```
-
-For 4XA100 machine:
-```bash
-'nvcc': [
-    '-O3',
-    # '-gencode=arch=compute_70,code=compute_70',
-    # '-gencode=arch=compute_80,code=sm_80',
-    # '-gencode=arch=compute_89,code=sm_89',
-    '-gencode=arch=compute_120,code=sm_120', # this works for 4XA100
 ]
 ```
 

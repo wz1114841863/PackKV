@@ -206,7 +206,7 @@ def draw_throughput_comparison(ctx_lens, k_pytorch_throughput, k_our_total_throu
     plt.close()
 
 # Create save directory if not exists
-save_path = "./throughput"
+save_path = "figure/throughput"
 os.makedirs(save_path, exist_ok=True)
 
 # Generate plots (combined K and V)

@@ -5,7 +5,6 @@ import os
 import argparse
 # Add the parent directory to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from evaluation.evaluation import throughput_evaluation
 from utils.config import PackKVCacheConfig
 from utils.serialization import load, save
 from utils.util import get_logger, block_other_logger, register_notify
@@ -16,6 +15,7 @@ def run_throughput_evaluation_wrapper(config, idx, ctx_len, logger, hash_key):
     """
     Wrapper function for throughput evaluation that doesn't need result_queue.
     """
+    from evaluation.evaluation import throughput_evaluation
     result = throughput_evaluation(config, ctx_len, enable_save=False, logger=logger)
     return result
 
@@ -23,9 +23,6 @@ def run_throughput_evaluation_wrapper(config, idx, ctx_len, logger, hash_key):
 # register_notify()
 
 if __name__ == '__main__':
-    
-
-    
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Run throughput evaluation on multiple GPUs')
     parser.add_argument('--gpu_count', type=int, default=None, 
