@@ -1,12 +1,12 @@
-from typing import Optional, Dict, Any, Tuple
-
+import os
 import torch
 from transformers import Cache
-import os
-
+from typing import Optional, Dict, Any, Tuple
 from models.cache.packkv_quant import PackKVCachePytorchQuant
 
+
 def save_to_file(path, tensor, layer_idx, is_k):
+    """用于将模型的K或V张量保存到本地磁盘"""
     # check path
     path = os.path.join(path, "k" if is_k else "v")
     if not os.path.exists(path):
@@ -19,20 +19,25 @@ def save_to_file(path, tensor, layer_idx, is_k):
         exit()
     torch.save(tensor, file_path)
 
+
 class PackKVCache(Cache):
     def __init__(self, batch_size, head_num, head_dim, layer_num):
         super().__init__()
         # self.cache_instance = KVCompCacheCuda(batch_size, head_num, head_dim, layer_num)
-        self.cache_instance = PackKVCachePytorchQuant(batch_size, head_num, head_dim, layer_num)
+        self.cache_instance = PackKVCachePytorchQuant(
+            batch_size, head_num, head_dim, layer_num
+        )
 
     def update(
-            self,
-            key_states: torch.Tensor,
-            value_states: torch.Tensor,
-            layer_idx: int,
-            cache_kwargs: Optional[Dict[str, Any]] = None,
+        self,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        layer_idx: int,
+        cache_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        return self.cache_instance.update(key_states, value_states, layer_idx, cache_kwargs)
+        return self.cache_instance.update(
+            key_states, value_states, layer_idx, cache_kwargs
+        )
 
     def get_seq_length(self, layer_idx: Optional[int] = 0) -> int:
         return self.cache_instance.get_seq_length(layer_idx)

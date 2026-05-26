@@ -3,6 +3,8 @@ from typing import Dict, Tuple
 import sys
 import os
 
+# Add the parent directory to sys.path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 
 from utils.compute import QuantMethod, RepackMethod
@@ -17,8 +19,10 @@ from utils.serialization import load, save
 logger = get_logger(__file__)
 block_other_logger(logger)
 
-ctx_len =  1024 * 4
-model_name = "meta-llama/Llama-2-13b-hf"
+ctx_len = 1024 * 4
+# model_name = "meta-llama/Llama-2-13b-hf"
+model_name = "JackFram/llama-160m"
+
 BLOCK_SIZE = 64
 BUFFER_SIZE = 128 + 64
 
@@ -34,10 +38,7 @@ config = PackKVCacheConfig(
     v_quant_scale_rel=0.2,
 )
 cr_result, size_mb = compressor_throughput_evaluation_rebuttal(
-    config=config,
-    ctx_len=ctx_len,
-    enable_save=False,
-    logger=logger
+    config=config, ctx_len=ctx_len, enable_save=False, logger=logger
 )
 cr_result = cr_result[0]
 

@@ -4,14 +4,15 @@ from lm_eval.models.huggingface import HFLM
 
 logger = logging.getLogger(__name__)
 
+
 class LMEvalWrapper(HFLM):
     def __init__(
-            self,
-            model,
-            tokenizer,
-            batch_size: int,
-            device: str = "cuda:0",
-            dtype: str = "float16",
+        self,
+        model,
+        tokenizer,
+        batch_size: int,
+        device: str = "cuda:0",
+        dtype: str = "float16",
     ) -> None:
         super().__init__(
             pretrained=f"facebook/opt-125m",
@@ -27,9 +28,11 @@ class LMEvalWrapper(HFLM):
         self._model = None
         # call GC
         import gc
+
         gc.collect()
 
         import torch
+
         torch.cuda.empty_cache()
         model = model.half()
         # check function exists

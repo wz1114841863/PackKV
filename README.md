@@ -1,79 +1,27 @@
 # PackKV
+PackKV官方代码学习
 
-This is the official repository for the paper **"PackKV: Reducing KV Cache Memory Footprint through LLM-Aware Lossy Compression"** (IPDPS 2026). [[Paper](https://arxiv.org/abs/2512.24449)]
-
-PackKV is a high-performance framework designed to reduce the memory footprint of KV cache for Large Language Models Inference with Lossy Compression. By utilizing custom CUDA kernels and sophisticated lossy compression techniques, PackKV aims to reduce memory usage and improve inference throughput.
-
-## Installation
-
-### Prerequisites
-
-- Linux
-- NVIDIA GPU with CUDA(13.0 for RTX Pro 6000 Blackwell Workstation Edition, 12.8 for 4XA100) support
-- Anaconda or Miniconda or Miniforge
-
-### Step 1: Set up the Environment
-
-Create a new Conda environment using the provided configuration file:
-
-For RTX Pro 6000 machine:
-
-```bash
-conda env create -f environment.yml
-conda activate packkv_pub
-pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu130 # to support RTX Pro 6000
-pip install -r requirements.txt
-pip install flash-attn==2.8.1 --no-build-isolation # this may take quit a while to compile flash-attn
+## 环境配置
 ```
-
-For 4XA100 machine:
-
-```bash
-conda env create -f environment.yml
-conda activate packkv_pub
-pip install torch==2.9.0 --index-url https://download.pytorch.org/whl/cu128
-pip install -r requirements.txt
-pip install "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.1/flash_attn-2.8.1+cu12torch2.9cxx11abiTRUE-cp312-cp312-linux_x86_64.whl"
-```
-
-
-### Step 2: Install CUDA Extensions
-
-Compile and install the custom CUDA kernels required for PackKV:
-
-```bash
+conda config --set ssl_verify false
+conda create -n debug_env python=3.12 -y
+conda activate debug_env
+conda install -c "nvidia/label/cuda-12.1.1" cuda-toolkit -y
+uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+uv pip install -r ./requirements.txt
+MAX_JOBS=8 uv pip install flash-attn --no-build-isolation
 cd packkv_cuda_ext
-pip install -e . --no-build-isolation
+uv pip install -e . --no-build-isolation
 cd ..
 ```
 
-if you failed to compile this extension, you can try to modify the `setup.py` file:
-```bash
-'nvcc': [
-    '-O3',
-    # '-gencode=arch=compute_70,code=compute_70',
-    # '-gencode=arch=compute_80,code=sm_80', # this works for A100
-    # '-gencode=arch=compute_89,code=sm_89',
-    '-gencode=arch=compute_120,code=sm_120', # this works for RTX Pro 6000
-]
-```
-
-### Step 3: Test Run
-
-```bash
-cd scripts
-CUDA_VISIBLE_DEVICES=0 PYTHONPATH=.. python ./rebuttal_throughout.py
-cd ..
-```
-
-## Project Structure
-
+## 代码结构说明
 - **`packkv_cuda_ext/`**: C++ and CUDA source code for the packkv custom extension.
 - **`models/`**: implementations of LLMs used in PackKV Experiments.
 - **`scripts/`**: Scripts for automation, benchmarking, and generating experimental results.
 - **`evaluation/`**: Code related to model evaluation.
 - **`utils/`**: Helper functions and utilities.
 
-## License
+```
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+```

@@ -2,6 +2,8 @@ from utils.compute import QuantMode, QuantMethod, RepackMethod
 
 
 class ExtractCacheConfig:
+    """数据分布探针"""
+
     def __init__(self, collect_round: int):
         self.collect_round = collect_round
         self.key_caches = {}
@@ -12,27 +14,28 @@ class ExtractCacheConfig:
         for round_ks in self.key_caches.values():
             for k in round_ks.values():
                 total_size += k.numel() * 16
-        
+
         for round_vs in self.value_caches.values():
             for v in round_vs.values():
                 total_size += v.numel() * 16
 
         return total_size
 
+
 class PackKVCacheConfig:
     def __init__(
-            self,
-            model_name: str,
-            quant_method: QuantMethod,
-            repack_method: RepackMethod,
-            high_precision_zero_point: bool,
-            block_size: int,
-            buffer_size: int,
-            pack_size: int,
-            k_quant_scale_rel: float,
-            v_quant_scale_rel: float,
-            # enable_k_minus_avg: bool,
-            enable_quant: bool = True
+        self,
+        model_name: str,
+        quant_method: QuantMethod,  #
+        repack_method: RepackMethod,  # 重排策略
+        high_precision_zero_point: bool,  # 决定零点元数据是否暴露高精度
+        block_size: int,  # 多少个 Token 被切分为一个基础 Block
+        buffer_size: int,  # Recent Window, 保留多少个最近的Token在Buffer中不压缩
+        pack_size: int,  # 在重排后，几个 Token 被打包在一起计算共用位宽
+        k_quant_scale_rel: float,  # 相对缩放比例
+        v_quant_scale_rel: float,
+        # enable_k_minus_avg: bool,
+        enable_quant: bool = True,
     ):
         self.enable_quant: bool = enable_quant
         self.model_name: str = model_name
@@ -130,12 +133,22 @@ class PackKVCacheConfig:
         return True
 
     def __hash__(self):
-        return hash((self.enable_quant, self.model_name,
-                     # self.enable_k_minus_avg,
-                     self.quant_method, self.repack_method, self.high_precision_zero_point, self.block_size, self.buffer_size,
-                     self.pack_size,
-                     self.k_quant_scale_rel, self.v_quant_scale_rel))
-    
+        return hash(
+            (
+                self.enable_quant,
+                self.model_name,
+                # self.enable_k_minus_avg,
+                self.quant_method,
+                self.repack_method,
+                self.high_precision_zero_point,
+                self.block_size,
+                self.buffer_size,
+                self.pack_size,
+                self.k_quant_scale_rel,
+                self.v_quant_scale_rel,
+            )
+        )
+
     # for print
     def __repr__(self):
         return self.__str__()

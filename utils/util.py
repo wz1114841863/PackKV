@@ -30,7 +30,7 @@ def set_stdout_log():
 
 def get_logger(file_path):
     # Get file name and prepare paths
-    file_name = os.path.basename(file_path).split('.')[0]
+    file_name = os.path.basename(file_path).split(".")[0]
     pwd = os.getcwd()
     log_dir = f"{pwd}/logs/{file_name}"
 
@@ -52,7 +52,9 @@ def get_logger(file_path):
         logger.handlers.clear()
 
     # Create formatters and handlers
-    formatter = logging.Formatter('[%(levelname)s %(asctime)s %(filename)s] %(message)s')
+    formatter = logging.Formatter(
+        "[%(levelname)s %(asctime)s %(filename)s] %(message)s"
+    )
 
     # File handler
     file_handler = logging.FileHandler(log_file)
@@ -76,6 +78,7 @@ def block_other_logger(logger):
 
 def register_notify():
     import atexit
+
     atexit.register(notify_user)
 
 
@@ -99,7 +102,7 @@ def notify_user():
 
     # Create the email subject and body
     subject = "Script Notification"
-    command = ' '.join(sys.argv)
+    command = " ".join(sys.argv)
     body = f"The script has finished running with the following command:\n{command}"
 
     # Create a multipart message and set headers
@@ -127,12 +130,12 @@ def visualize_2d_tensor(tensor, save_path: str = None, dpi: int = 200):
     print(f"Plotting tensor with shape {tensor.shape}")
 
     # plt.figure(figsize=(20, 20))
-    plt.pcolormesh(tensor.cpu(), cmap='viridis', shading='auto')
-    plt.colorbar(label='Value')
-    plt.title('2D Matrix Visualization')
+    plt.pcolormesh(tensor.cpu(), cmap="viridis", shading="auto")
+    plt.colorbar(label="Value")
+    plt.title("2D Matrix Visualization")
     # plt.xlabel('X-axis')
     # plt.ylabel('Y-axis')
-    plt.gca().set_aspect('equal')
+    plt.gca().set_aspect("equal")
     # plt.show()
     if save_path:
         print(f"Saving to {save_path}")

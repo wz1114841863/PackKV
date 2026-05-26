@@ -1,0 +1,8 @@
+*.so
+*.pyc
+
+
+__pycache__/*
+logs/*
+.vscode/*
+.venv/*

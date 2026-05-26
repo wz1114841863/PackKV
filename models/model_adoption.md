@@ -7,11 +7,13 @@ In Phi3Attention module
         value_states = value_states.view(hidden_shape).transpose(1, 2)
 
         cos, sin = position_embeddings
+        # 给 Q 和 K 同时注入 RoPE 位置信息
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
+            # 把注入完的 K 和原生的 V 存入 Cache
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attention_interface: Callable = eager_attention_forward
@@ -32,7 +34,9 @@ change to
 
         cos, sin = position_embeddings
         # remove the previous four lines and add this three lines
+        # 修改后仅先对Q注入RoPE
         query_states = apply_rotary_pos_emb_single(query_states, cos, sin)
+        # 把未注入RoPE的K, V以及RoPE的参数博保存到PackKVCache
         cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
         key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
