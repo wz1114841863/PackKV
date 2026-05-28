@@ -27,6 +27,8 @@ class RepackMethod(Enum):
     GREEDY = "Greedy"
     MEDIAN = "Median"
     NONE = "None"
+    # 添加新的方法
+    BUCKET = "Bucket"
 
 
 def rotate_half(x):
@@ -323,6 +325,97 @@ def median_repacking(blocks: torch.Tensor) -> torch.Tensor:
     return repacked_blocks
 
 
+def bucket_repacking(blocks: torch.Tensor, num_buckets: int = 4) -> torch.Tensor:
+    """面向硬件的动态阈值分桶重排算法
+    与硬件结合, 简化排序算法不按中位数绝对排序, 而是按阈值把 Token 扔进几个桶里,
+    以此来模拟硬件中低延迟的比较器路由逻辑.
+    参数:
+        blocks: 输入的张量块,形状为 [B, N, D]
+                (B: 批次, N: Token数量/Block大小, D: 特征维度, K和V拼接)
+        num_buckets: 硬件中设计的 FIFO 桶的数量,默认为 4
+    """
+    B, N, D = blocks.shape
+    half_vec_len = D // 2
+    # 依旧基于V向量提取代表值
+    v_part = blocks[:, :, half_vec_len:]
+
+    # 为了和原版 Baseline 控制变量,这里先保留 median.
+    # 实际在RTL实现时, 可以把这里的median换成 mean(均值在硬件中用加法树实现极简单)
+    feature_vals = torch.median(v_part, dim=2).values  # 形状: [B, N]
+
+    # 动态确定硬件阈值边界: 获取这批Token特征的最大值和最小值
+    b_min = feature_vals.min(dim=1, keepdim=True).values
+    b_max = feature_vals.max(dim=1, keepsim=True).values
+
+    # 计算每个桶的宽度/步长
+    step = (b_max - b_min) / num_buckets
+    setp = torch.clamp(step, min=1e-6)  # 避免除以0
+
+    # 将特征值映射到0到(num_buckets-1)的桶索引
+    bucket_ids = torch.floor((feature_vals - b_min) / step).long()
+    # 处理边界移除, 确保最大值落在最后一个桶里
+    bucket_ids = torch.clamp(bucket_ids, min=0, max=num_buckets - 1)
+
+    # 模拟硬件的FIFO路由
+    # 硬件中数据会根据 bucket_id 直接通过交叉开关(Crossbar)掉进 4 个不同的FIFO里,不需要排序.
+    # 但在 PyTorch 里,为了把相同 bucket_id 的 Token 聚在内存的相邻位置,
+    # 我们只能"借用"一下 argsort.你要清楚,这个 sort 在转 RTL 时是完全不存在的!
+    _, sorted_indices = torch.sort(bucket_ids, dim=1, descending=True)
+
+    # 完成物理位置重组
+    sorted_indices_expanded = sorted_indices.unsqueeze(2).expand(B, N, D)
+    repacked_blocks = torch.gather(blocks, 1, sorted_indices_expanded)
+
+    return repacked_blocks
+
+
+def hardware_bucket_repacking(
+    blocks: torch.Tensor, num_main_buckets: int = 4, clip_val: float = 5.0
+) -> torch.Tensor:
+    """
+    行为级硬件仿真:带异常值截断旁路 (Bypass) 的分桶重排
+
+    参数:
+        blocks: 输入张量 [B, N, D]
+        num_main_buckets: 常规数据的分类桶数量 (硬件中主流水线的 FIFO 数量)
+        clip_val: 经验截断阈值,比如 5.0.超过这个绝对值的 Token 走异常值通道.
+    """
+    B, N, D = blocks.shape
+    half_vec_len = D // 2
+
+    # 1. 特征提取 (硬件中的加法树或中位数选择网络)
+    v_part = blocks[:, :, half_vec_len:]
+    feature_vals = torch.median(v_part, dim=2).values  # [B, N]
+
+    # 2. 硬件固定的步长 (写死在 RTL 里的常数,不需要动态除法器)
+    # 例如:范围是 [-5, 5],分成 4 个主桶,每个桶的宽度 (步长) 是 2.5
+    step = (2.0 * clip_val) / num_main_buckets
+
+    # 3. 硬件比较器阵列打 Tag
+    # 算出基础的 bucket ID.利用 + clip_val 将 [-5, 5] 平移到 [0, 10]
+    raw_bucket_ids = torch.floor((feature_vals + clip_val) / step).long()
+
+    # 4. 模拟硬件的"异常值旁路 (Bypass)"逻辑
+    # 我们为硬件规划 (num_main_buckets + 2) 个桶:
+    # ID = 0: 负向异常值桶 (小于 -5.0)
+    # ID = 1 到 num_main_buckets: 主数据流水线
+    # ID = num_main_buckets + 1: 正向异常值桶 (大于 5.0)
+
+    # 给主数据腾出 ID 空间 (向右平移 1 位)
+    bucket_ids = raw_bucket_ids + 1
+
+    # 硬件限幅器 (Limiter / Saturation Logic):
+    # 把越界的值死死卡在 0 和 num_main_buckets + 1
+    bucket_ids = torch.clamp(bucket_ids, min=0, max=num_main_buckets + 1)
+
+    # 5. 模拟物理聚合 (在硬件中是根据 ID 送入对应的 SRAM Bank)
+    _, sorted_indices = torch.sort(bucket_ids, dim=1, descending=True)
+    sorted_indices_expanded = sorted_indices.unsqueeze(2).expand(B, N, D)
+    repacked_blocks = torch.gather(blocks, 1, sorted_indices_expanded)
+
+    return repacked_blocks
+
+
 def bit_pack(blocks: torch.Tensor, pack_len: int) -> Tuple[int, int]:
     """评估算法理论压缩率"""
     # 将传入的张量划分为K和V, 切分成大小为pack_len的组
@@ -429,6 +522,8 @@ def repack_and_encode(
         blocks = greedy_repacking(blocks, pack_size)
     elif repack_method == RepackMethod.MEDIAN:
         blocks = median_repacking(blocks)
+    elif repack_method == RepackMethod.BUCKET:
+        blocks = bucket_repacking(blocks, num_buckets=4)
     elif repack_method == RepackMethod.NONE:
         pass
     else:
@@ -450,11 +545,24 @@ def repack_and_encode_detail_rebuttal(
     k_tensor: torch.Tensor,
     v_tensor: torch.Tensor,
     pack_size: int,
+    repack_method: RepackMethod = RepackMethod.MEDIAN,
 ) -> Tuple[int, int, int, int, int, int]:
     k_blocks = k_tensor.permute(2, 3, 0, 1, 4).flatten(2, 4)
     v_blocks = v_tensor.permute(2, 3, 0, 1, 4).flatten(2, 4)
     blocks = torch.cat([k_blocks, v_blocks], dim=2)
-    blocks = median_repacking(blocks)
+    # blocks = median_repacking(blocks)
+    if repack_method == RepackMethod.GREEDY:
+        blocks = greedy_repacking(blocks, pack_size)
+    elif repack_method == RepackMethod.MEDIAN:
+        blocks = median_repacking(blocks)
+    elif repack_method == RepackMethod.BUCKET:
+        blocks = bucket_repacking(blocks, num_buckets=4)
+    elif repack_method == RepackMethod.NONE:
+        pass
+    else:
+        raise ValueError(
+            f"repack_method must be one of {RepackMethod.__members__.keys()}"
+        )
     (
         k_zero_point_size,
         v_zero_point_size,
