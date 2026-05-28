@@ -410,7 +410,7 @@ def cr_evaluation(
         raise ValueError(f"Model class not found for {config.model_name}")
     model = model_class.from_pretrained(
         PackKVCacheConfigStatic.config.model_name,
-        torch_dtype="auto",
+        torch_dtype=torch.float16,
         device_map="auto",
         attn_implementation="flash_attention_2",
     )
