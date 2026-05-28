@@ -7,7 +7,8 @@ from utils.compute import QuantMethod, RepackMethod
 
 
 def main():
-    model_id = "JackFram/llama-160m"
+    # model_id = "JackFram/llama-160m"
+    model_id = "huggyllama/llama-7b"
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
     print(f"1. 初始化PackKV配置")

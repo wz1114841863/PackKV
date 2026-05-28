@@ -12,7 +12,8 @@ logger = get_logger(__file__)
 block_other_logger(logger)
 
 ctx_len = 1024 * 4
-model_name = "JackFram/llama-160m"
+# model_name = "JackFram/llama-160m"
+model_name = "huggyllama/llama-7b"
 
 BLOCK_SIZE = 64
 BUFFER_SIZE = 128 + 64

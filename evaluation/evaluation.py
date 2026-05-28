@@ -38,6 +38,7 @@ from packkv_cuda import (
 
 MODEL_CLASS_MAP = {
     "JackFram/llama-160m": LlamaForCausalLM,
+    "huggyllama/llama-7b": LlamaForCausalLM,
     "meta-llama/Llama-2-7b-hf": LlamaForCausalLM,
     "meta-llama/Llama-2-13b-hf": LlamaForCausalLM,
     "meta-llama/Llama-3.1-8B": LlamaForCausalLM,
