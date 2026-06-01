@@ -448,6 +448,9 @@ def bit_pack(blocks: torch.Tensor, pack_len: int) -> Tuple[int, int]:
         * pack_len
     )
 
+    k_pack_bit_num = torch.clamp(k_pack_bit_num, min=2.0)
+    v_pack_bit_num = torch.clamp(v_pack_bit_num, min=2.0)
+
     # 总比特数 += 基础值的数量 * (基础值所需的比特 + 编码头所需的比特)
     k_pack_bit_num += k_pack_mins.numel() * (
         k_bit_len + math.ceil(math.log2(k_bit_len + 1))
