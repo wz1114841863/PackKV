@@ -12,7 +12,7 @@ from utils.util import get_logger, block_other_logger, register_notify
 
 logger = get_logger(__file__)
 block_other_logger(logger)
-register_notify()
+# register_notify()
 
 model_name = "Qwen/Qwen3-4B"
 BLOCK_SIZE = 64
