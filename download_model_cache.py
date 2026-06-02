@@ -59,7 +59,7 @@ def touch_model(model_name):
         tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
-            dtype=torch.float16,
+            torch_dtype=torch.float16,
             local_files_only=True,
             config=config,
             device_map="auto",

@@ -186,7 +186,7 @@ def quant_error(
     quant_mode: QuantMode,
     high_precision_zero_point: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """计算量化过程带来的误差, 用于算法维度的验证和补偿"""
+    """伪量化, 计算量化过程带来的误差, 用于算法维度的验证和补偿"""
     to_compress, in_buffer = cut_tensor(
         buffer, new_tensor, block_size, recent_size, dim=2
     )
