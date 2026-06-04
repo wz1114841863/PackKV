@@ -104,7 +104,7 @@ def cut_tensor_ctx_len_0(
 def quant_ints(
     tensor: torch.Tensor,
     block_size: int,
-    quant_scale_rel: float,
+    quant_scale_rel: float,  # Relative Quantization Scale(相对量化比例)
     quant_mode: QuantMode,
     high_precision_zero_point: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -125,6 +125,9 @@ def quant_ints(
 
     if high_precision_zero_point:
         # -min_val, /scale
+        # quant_scale_rel控制的是量化网格(Grid)的步长.由于大模型不同层/不同 Token 激活值的极差($X_{max} - X_{min}$)浮动非常大,
+        # 不能用一个固定的绝对数值来做步长.因此,算法采用极差乘以一个相对比例 quant_scale_rel 来动态决定当前数据块的量化步长.
+        # 这个值越大,压缩率越高,精度损失越大.
         quant_scale = (max_val - min_val) * quant_scale_rel
         value_quant = ((tensor - min_val) / quant_scale).round()
     else:

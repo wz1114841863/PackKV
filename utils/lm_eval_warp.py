@@ -56,7 +56,7 @@ class LMEvalWrapper(HFLM):
             pretrained=model,  # 直接传入外部已经搞定的模型实例
             tokenizer=tokenizer,  # 直接传入分词器
             batch_size=batch_size,
-            max_batch_size=64,.
+            max_batch_size=64,
         )
 
         # 保留你原本对模型的后处理逻辑
