@@ -14,10 +14,12 @@ from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"  # 关掉容易卡死的加速器
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"  # 换成稳定的镜像源
 
-
 # 想要预先下载的模型列表
 MODELS = [
     "Qwen/Qwen3-4B",
+    "Qwen/Qwen3-8B",
+    "NousResearch/Meta-Llama-3-8B",
+    "mistralai/Ministral-3-8B-Instruct-2512",
 ]
 
 
@@ -55,17 +57,23 @@ def touch_model(model_name):
     """
     print(f"[Loading] {model_name}")
     try:
-        config = AutoConfig.from_pretrained(model_name, local_files_only=True)
-        tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
+        config = AutoConfig.from_pretrained(
+            model_name, local_files_only=True, trust_remote_code=True
+        )
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_name, local_files_only=True, trust_remote_code=True
+        )
+
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
-            torch_dtype=torch.float16,
+            torch_dtype=torch.bfloat16,  # 替换为主流的 BF16 数据格式
             local_files_only=True,
+            trust_remote_code=True,
             config=config,
             device_map="auto",
             use_safetensors=True,
         )
-        print(f"[OK] 成功加载并校验: {model_name} (Safetensors 格式)")
+        print(f"[OK] 成功加载并校验: {model_name} (Safetensors 格式, BF16)")
 
         del model
         torch.cuda.empty_cache()
