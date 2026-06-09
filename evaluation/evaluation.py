@@ -43,6 +43,7 @@ MODEL_CLASS_MAP = {
     "meta-llama/Llama-2-13b-hf": LlamaForCausalLM,
     "meta-llama/Llama-3.1-8B": LlamaForCausalLM,
     "meta-llama/Meta-Llama-3-8B": LlamaForCausalLM,
+    "huggyllama/llama-13b": LlamaForCausalLM,
     "Qwen/Qwen3-8B": Qwen3ForCausalLM,
     "Qwen/Qwen3-4B": Qwen3ForCausalLM,
     "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B": Qwen3ForCausalLM,
@@ -112,7 +113,7 @@ def accuracy_evaluation_with_model(
 def get_collected_data(logger, model_name="meta-llama/Llama-2-13b-hf"):
     """拦截并收集模型内部Cache数据"""
     PackKVCacheConfigStatic.config = PackKVCacheConfig(
-        enable_quant=False,  # 关闭量化和压缩
+        enable_quant=False,  # 关闭量化
         model_name=model_name,
         quant_method=QuantMethod.PackKV,
         k_block_size=64,
@@ -411,7 +412,7 @@ def cr_evaluation(
         raise ValueError(f"Model class not found for {config.model_name}")
     model = model_class.from_pretrained(
         PackKVCacheConfigStatic.config.model_name,
-        torch_dtype=torch.float16,
+        torch_dtype="auto",
         device_map="auto",
         attn_implementation="flash_attention_2",
     )

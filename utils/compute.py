@@ -101,6 +101,53 @@ def cut_tensor_ctx_len_0(
     return to_compress, buffer
 
 
+def calculate_aware_quant_scale(
+    min_val: torch.Tensor,
+    max_val: torch.Tensor,
+    quant_scale_rel: float,
+    po2_strategy: str = "precision",
+) -> torch.Tensor:
+    """
+    计算结合了容器感知和硬件二次幂对齐的量化 Scale
+    po2_strategy:
+        - "precision": (保精度) 允许偶尔扩展 1 bit 的空间来降低量化误差
+        - "memory": (保内存) 强制向上取整,绝对不突破原定配置的 bit 位数
+        - "none": 不使用二次幂限制 (原版逻辑)
+    """
+    tensor_range = max_val - min_val
+    eps = 1e-7
+
+    # 原始的软件期望 Scale
+    raw_scale = torch.clamp(tensor_range * quant_scale_rel, min=eps)
+
+    if po2_strategy == "none":
+        return raw_scale
+
+    # 第一步:探底,计算初始配置期望使用的位宽 (Target Bits)
+    max_int_init = tensor_range / raw_scale
+    target_bits = torch.ceil(torch.log2(max_int_init + 1.0))
+    target_bits = torch.clamp(target_bits, min=1.0)
+
+    # 第二步:容器拉伸,计算刚好填满该位宽容器的理想 Scale
+    c_max = torch.exp2(target_bits) - 1.0
+    ideal_scale = tensor_range / torch.clamp(c_max, min=1.0)
+    ideal_scale = torch.clamp(ideal_scale, min=eps)
+
+    # 第三步:二次幂逼近,根据传入的策略做出抉择
+    if po2_strategy == "memory":
+        # 向上取整:Scale 变大,切分变粗,一定能装进 Target Bits,但可能有浪费
+        k = torch.ceil(torch.log2(ideal_scale))
+    elif po2_strategy == "precision":
+        # 四舍五入:优先找最近的二次幂.如果变小,切分变细,动态打包时会自动扩充 1 bit
+        k = torch.round(torch.log2(ideal_scale))
+    else:
+        raise ValueError(f"Unknown po2_strategy: {po2_strategy}")
+
+    # 返回硬件友好的 2^k 作为最终的量化步长
+    return torch.exp2(k)
+
+
+"""
 def quant_ints(
     tensor: torch.Tensor,
     block_size: int,
@@ -158,6 +205,78 @@ def quant_ints_throughput(
     max_val = torch.amax(tensor, dim=quant_dim, keepdim=True)
 
     quant_scale = (max_val - min_val) * quant_scale_rel
+    min_int = (min_val / quant_scale).round()
+    value_quant = (tensor / quant_scale).round() - min_int
+    min_val = min_int
+
+    return value_quant, min_val, quant_scale
+
+"""
+
+
+def quant_ints(
+    tensor: torch.Tensor,
+    block_size: int,
+    quant_scale_rel: float,
+    quant_mode: QuantMode,
+    high_precision_zero_point: bool = False,
+    po2_strategy: str = "precision",
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    assert (
+        tensor.shape[2] % block_size == 0
+    ), "Tensor shape is not divisible by block size"
+    # 根据block_size进行reshape
+    tensor = tensor.reshape(
+        tensor.shape[0], tensor.shape[1], -1, block_size, tensor.shape[3]
+    )
+    quant_dim = QUANT_DIM[quant_mode.value]
+
+    min_val = tensor
+    max_val = tensor
+    for i in quant_dim:
+        min_val = min_val.min(dim=i, keepdim=True).values
+        max_val = max_val.max(dim=i, keepdim=True).values
+
+    # ---- 调用新增的软硬件协同 Scale 计算逻辑 ----
+    quant_scale = calculate_aware_quant_scale(
+        min_val, max_val, quant_scale_rel, po2_strategy
+    )
+
+    if high_precision_zero_point:
+        # -min_val, /scale
+        value_quant = ((tensor - min_val) / quant_scale).round()
+    else:
+        # /scale, -min_int, 将零点偏移量本身也量化成整数
+        min_int = (min_val / quant_scale).round()
+        value_quant = (tensor / quant_scale).round() - min_int
+        min_val = min_int
+
+    return value_quant, min_val, quant_scale
+
+
+def quant_ints_throughput(
+    tensor: torch.Tensor,
+    block_size: int,
+    quant_scale_rel: float,
+    quant_mode: QuantMode,
+    po2_strategy: str = "precision",  
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    assert (
+        tensor.shape[2] % block_size == 0
+    ), "Tensor shape is not divisible by block size"
+    tensor = tensor.reshape(
+        tensor.shape[0], tensor.shape[1], -1, block_size, tensor.shape[3]
+    )
+    quant_dim = QUANT_DIM[quant_mode.value]
+
+    min_val = torch.amin(tensor, dim=quant_dim, keepdim=True)
+    max_val = torch.amax(tensor, dim=quant_dim, keepdim=True)
+
+    # ---- 调用新增的软硬件协同 Scale 计算逻辑 ----
+    quant_scale = calculate_aware_quant_scale(
+        min_val, max_val, quant_scale_rel, po2_strategy
+    )
+
     min_int = (min_val / quant_scale).round()
     value_quant = (tensor / quant_scale).round() - min_int
     min_val = min_int

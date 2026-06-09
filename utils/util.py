@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 
 
 def set_stdout_log():
+    """劫持标准输出和错误输出到日志文件"""
     # print pwd
     pwd = os.getcwd()
     file_name = sys.argv[0].split("/")[-1].split(".")[0]
@@ -29,6 +30,7 @@ def set_stdout_log():
 
 
 def get_logger(file_path):
+    """创建一个新的 logger, 输出到控制台和文件, 文件名包含时间戳"""
     # Get file name and prepare paths
     file_name = os.path.basename(file_path).split(".")[0]
     pwd = os.getcwd()
@@ -70,6 +72,7 @@ def get_logger(file_path):
 
 
 def block_other_logger(logger):
+    """阻塞其他 logger 的输出, 只保留当前 logger 的输出"""
     # Block other loggers
     for name in logging.root.manager.loggerDict:
         if name != logger.name and name.startswith(logger.name):
@@ -77,6 +80,7 @@ def block_other_logger(logger):
 
 
 def register_notify():
+    """注册脚本结束时的通知函数, 通过邮件发送通知"""
     import atexit
 
     atexit.register(notify_user)
@@ -127,6 +131,7 @@ def notify_user():
 
 
 def visualize_2d_tensor(tensor, save_path: str = None, dpi: int = 200):
+    """利用 matplotlib 可视化二维张量, 并保存到指定路径"""
     print(f"Plotting tensor with shape {tensor.shape}")
 
     # plt.figure(figsize=(20, 20))

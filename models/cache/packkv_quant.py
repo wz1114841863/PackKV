@@ -80,6 +80,7 @@ class PackKVCachePytorchQuant(Cache):
         key_states = apply_rotary_pos_emb_single(key_states, cos, sin)
 
         self.compressed_k_cache[layer_idx], self.k_cache_buffer[layer_idx] = (
+            # 量化调用的是quant_error, 这是个伪量化函数
             quant_error(
                 self.compressed_k_cache[layer_idx],
                 self.k_cache_buffer[layer_idx],
@@ -119,6 +120,7 @@ class PackKVCachePytorchQuant(Cache):
         layer_idx: int,
         cache_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        # 同样先对Key应用RoPE, 确保和量化版本的缓存数据在同一位置
         cos, sin = cache_kwargs["cos"], cache_kwargs["sin"]
         key_states = apply_rotary_pos_emb_single(key_states, cos, sin)
 
@@ -131,7 +133,7 @@ class PackKVCachePytorchQuant(Cache):
 
         if PackKVCacheConfigStatic.extract_cache is not None:
             if (
-                key_states.shape[2] != 1
+                key_states.shape[2] != 1  # 序列长度不为1, 说明正在进行预填充
                 and PackKVCachePytorchQuant.round_
                 > PackKVCacheConfigStatic.extract_cache.collect_round
             ):
@@ -142,12 +144,14 @@ class PackKVCachePytorchQuant(Cache):
                 PackKVCachePytorchQuant.round_ - 1
                 not in PackKVCacheConfigStatic.extract_cache.key_caches
             ):
+                # 简单的判空和初始化逻辑
                 PackKVCacheConfigStatic.extract_cache.key_caches[
                     PackKVCachePytorchQuant.round_ - 1
                 ] = {}
                 PackKVCacheConfigStatic.extract_cache.value_caches[
                     PackKVCachePytorchQuant.round_ - 1
                 ] = {}
+            # 执行数据截获, 将当前轮次的缓存数据保存到 PackKVCacheConfigStatic.extract_cache 中
             PackKVCacheConfigStatic.extract_cache.key_caches[
                 PackKVCachePytorchQuant.round_ - 1
             ][layer_idx - 1] = self.k_cache_buffer[layer_idx]

@@ -2,7 +2,7 @@ from utils.compute import QuantMode, QuantMethod, RepackMethod
 
 
 class ExtractCacheConfig:
-    """数据分布探针"""
+    """数据分布探针, 获取模型内部的KV Cache数据, 用于分析和调试"""
 
     def __init__(self, collect_round: int):
         self.collect_round = collect_round
@@ -11,6 +11,7 @@ class ExtractCacheConfig:
 
     def size(self):
         total_size = 0
+        # {轮次ID: {层级ID或头部ID: 张量数据}}
         for round_ks in self.key_caches.values():
             for k in round_ks.values():
                 total_size += k.numel() * 16
@@ -26,13 +27,13 @@ class PackKVCacheConfig:
     def __init__(
         self,
         model_name: str,
-        quant_method: QuantMethod,  #
+        quant_method: QuantMethod,  # 量化方法
         repack_method: RepackMethod,  # 重排策略
         high_precision_zero_point: bool,  # 决定零点元数据是否暴露高精度
-        block_size: int,  # 多少个 Token 被切分为一个基础 Block
+        block_size: int,  # 多少个Token被切分为一个基础Block
         buffer_size: int,  # Recent Window, 保留多少个最近的Token在Buffer中不压缩
         pack_size: int,  # 在重排后，几个 Token 被打包在一起计算共用位宽
-        k_quant_scale_rel: float,  # 相对缩放比例
+        k_quant_scale_rel: float,  # 相对缩放比例, 量化的时候决定K Cache的量化步长, 拉大这个值可以制造更大的误差
         v_quant_scale_rel: float,
         # enable_k_minus_avg: bool,
         enable_quant: bool = True,
