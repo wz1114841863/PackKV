@@ -6,14 +6,14 @@
 # 不对模型进行量化, 压缩等处理
 # ==============================================================================
 
-# 1. 设置默认参数
+# 设置默认参数
 MODEL="Qwen/Qwen3-8B"
 TASKS="mmlu,gsm8k"
 OUTPUT_DIR="./eval_logs/default_run"
 BATCH_SIZE="auto"
 LIMIT_CMD="" # 默认跑全量测试
 
-# 2. 帮助文档函数
+# 帮助文档函数
 print_usage() {
     echo "用法: $0 [选项]"
     echo "选项:"
@@ -26,7 +26,7 @@ print_usage() {
     exit 1
 }
 
-# 3. 解析命令行参数
+# 解析命令行参数
 while [[ $# -gt 0 ]]; do
     case $1 in
         -m|--model)      MODEL="$2"; shift 2 ;;
@@ -39,35 +39,44 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# 4. 打印当前实验配置
+# 自动生成时间戳
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+
+# 提取任务名 (将逗号替换为下划线,例如 "mmlu,gsm8k" -> "mmlu_gsm8k")
+SAFE_TASKS=$(echo $TASKS | tr ',' '_')
+
+# 生成输出根目录
+FINAL_OUTPUT_DIR="${OUTPUT_DIR}/${SAFE_TASKS}_${TIMESTAMP}"
+
+# 4打印当前实验配置
 echo "========================================"
 echo "开始执行模型评估任务"
 echo "模型路径 : $MODEL"
 echo "测试任务 : $TASKS"
-echo "输出目录 : $OUTPUT_DIR"
+echo "输出目录 : $FINAL_OUTPUT_DIR"
 echo "Batch Size: $BATCH_SIZE"
 if [ ! -z "$LIMIT_CMD" ]; then
     echo "调试模式 : 已开启 ($LIMIT_CMD)"
 fi
 echo "========================================"
 
-# 5. 设置环境变量 (强迫走本地离线缓存,防止网络波动卡死)
+# 设置环境变量 (强迫走本地离线缓存,防止网络波动卡死)
 # export HF_HUB_OFFLINE=1
 
-# 6. 执行 lm_eval
+# 执行 lm_eval
 # 这里写死了 dtype=bfloat16 和 trust_remote_code=True,保证基线纯洁性
 lm_eval --model hf \
     --model_args pretrained="${MODEL}",dtype=bfloat16,trust_remote_code=True \
     --tasks "${TASKS}" \
     --device cuda:0 \
-    --batch_size "${BATCH_SIZE}" \
-    ${LIMIT_CMD} \
+    --batch_size "auto" \
     --log_samples \
-    --output_path "${OUTPUT_DIR}"
+    --output_path "${FINAL_OUTPUT_DIR}"
 
-# 7. 结束提示
+
+# 结束提示
 if [ $? -eq 0 ]; then
-    echo "Finished! 评估完成!结果已保存至: $OUTPUT_DIR"
+    echo "Finished! 评估完成!结果已保存至: $FINAL_OUTPUT_DIR"
 else
     echo "Error! 评估异常中断,请检查报错信息."
 fi
