@@ -1,6 +1,7 @@
 import torch
 import os
 import math
+import json
 
 from datasets import load_dataset
 from torch import nn
@@ -49,37 +50,75 @@ MODEL_CLASS_MAP = {
     "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B": Qwen3ForCausalLM,
     "deepseek-ai/DeepSeek-R1-Distill-Llama-8B": LlamaForCausalLM,
     "mistralai/Ministral-8B-Instruct-2410": MistralForCausalLM,
+    "NousResearch/Meta-Llama-3-8B": LlamaForCausalLM,
+    "mistralai/Ministral-3-8B-Instruct-2512": MistralForCausalLM,
     "microsoft/phi-4": Phi3ForCausalLM,
 }
 
 
-def accuracy_evaluation(config: PackKVCacheConfig, benchmark: str | list[str], logger):
+def accuracy_evaluation(
+    config: PackKVCacheConfig,
+    benchmark: str | list[str],
+    logger,
+    batch_size: int | str = "auto",  # 支持外部传入数字或 "auto"
+    limit: int = None,  # 支持 Debug 限制样本数
+    output_dir: str = None,  # 支持外部传入输出根路径(如 ./eval_logs)
+):
     """在启用KV Cache压缩的情况下, 测量模型在下游任务上的精度损失"""
     logger.info(f"\n{benchmark}: \n{config}")
     PackKVCacheConfigStatic.config = config
+
     tokenizer = AutoTokenizer.from_pretrained(PackKVCacheConfigStatic.config.model_name)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
     model_class = MODEL_CLASS_MAP.get(config.model_name)
     if model_class is None:
         raise ValueError(f"Model class not found for {config.model_name}")
     model = model_class.from_pretrained(
-        PackKVCacheConfigStatic.config.model_name, torch_dtype="auto", device_map="auto"
+        PackKVCacheConfigStatic.config.model_name,
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
     )
+
     logger.info(f"model class: {model_class.__name__}")
-    # 关闭随机采样
     model.generation_config.temperature = None
     model.generation_config.top_p = None
     model.generation_config.top_k = None
-    batch_size = 4
 
     lm_eval_warp = LMEvalWrapper(model, tokenizer, batch_size)
-
+    task_list = [benchmark] if isinstance(benchmark, str) else benchmark
     results = evaluator.simple_evaluate(
         model=lm_eval_warp,
-        tasks=[benchmark] if isinstance(benchmark, str) else benchmark,
-        # num_fewshot=0,  # Number of few-shot examples
+        tasks=task_list,
         batch_size=batch_size,
-        # device=_device,
+        limit=limit,
+        log_samples=True,
     )
+
+    if output_dir and len(task_list) == 1:
+        current_task = task_list[0]
+        model_safe_name = config.model_name.replace("/", "__")
+        # 组装动态隔离路径: ./eval_logs/hellaswag/Qwen__Qwen3-8B
+        target_path = os.path.join(output_dir, current_task, model_safe_name)
+        os.makedirs(target_path, exist_ok=True)
+
+        # 剥离出 samples 测试细节字典(完全拉齐 lm_eval CLI 保存规则)
+        samples_data = results.pop("samples", None)
+        # 保存指标结果 results.json
+        res_file = os.path.join(target_path, "results.json")
+        with open(res_file, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=2, ensure_ascii=False, default=str)
+        logger.info(f"已成功将汇总指标保存至: {res_file}")
+
+        # 保存细节错题集 samples_task.json
+        if samples_data:
+            samples_file = os.path.join(target_path, f"samples_{current_task}.json")
+            with open(samples_file, "w", encoding="utf-8") as f:
+                json.dump(samples_data, f, indent=2, ensure_ascii=False, default=str)
+            logger.info(f"已成功将测试样本细节(Log Samples)保存至: {samples_file}")
+            # 放回字典以防上层调用报错
+            results["samples"] = samples_data
 
     PackKVCacheConfigStatic.config = None
     return results["results"]
