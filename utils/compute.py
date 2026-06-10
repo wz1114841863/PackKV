@@ -223,11 +223,6 @@ def quant_ints(
     po2_strategy: str = "precision",
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 
-    # ==========================================
-    # debug: 直接在这里提前 return 原始张量
-    # ==========================================
-    return tensor
-
     assert (
         tensor.shape[2] % block_size == 0
     ), "Tensor shape is not divisible by block size"
@@ -244,15 +239,26 @@ def quant_ints(
         max_val = max_val.max(dim=i, keepdim=True).values
 
     # ---- 调用新增的软硬件协同 Scale 计算逻辑 ----
-    quant_scale = calculate_aware_quant_scale(
-        min_val, max_val, quant_scale_rel, po2_strategy
-    )
+    # quant_scale = calculate_aware_quant_scale(
+    #     min_val, max_val, quant_scale_rel, po2_strategy
+    # )
+
+    # if high_precision_zero_point:
+    #     # -min_val, /scale
+    #     value_quant = ((tensor - min_val) / quant_scale).round()
+    # else:
+    #     # /scale, -min_int, 将零点偏移量本身也量化成整数
+    #     min_int = (min_val / quant_scale).round()
+    #     value_quant = (tensor / quant_scale).round() - min_int
+    #     min_val = min_int
 
     if high_precision_zero_point:
         # -min_val, /scale
+        quant_scale = (max_val - min_val) * quant_scale_rel
         value_quant = ((tensor - min_val) / quant_scale).round()
     else:
-        # /scale, -min_int, 将零点偏移量本身也量化成整数
+        # /scale, -min_int
+        quant_scale = (max_val - min_val) * quant_scale_rel
         min_int = (min_val / quant_scale).round()
         value_quant = (tensor / quant_scale).round() - min_int
         min_val = min_int
