@@ -70,7 +70,7 @@ lm_eval --model hf \
     --model_args pretrained="${MODEL}",dtype=bfloat16,trust_remote_code=True \
     --tasks "${TASKS}" \
     --device cuda:0 \
-    --batch_size "auto" \
+    --batch_size "${BATCH_SIZE}" \
     --log_samples \
     --output_path "${FINAL_OUTPUT_DIR}"
 

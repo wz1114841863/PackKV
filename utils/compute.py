@@ -222,6 +222,12 @@ def quant_ints(
     high_precision_zero_point: bool = False,
     po2_strategy: str = "precision",
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+
+    # ==========================================
+    # debug: 直接在这里提前 return 原始张量
+    # ==========================================
+    return tensor
+
     assert (
         tensor.shape[2] % block_size == 0
     ), "Tensor shape is not divisible by block size"
@@ -259,7 +265,7 @@ def quant_ints_throughput(
     block_size: int,
     quant_scale_rel: float,
     quant_mode: QuantMode,
-    po2_strategy: str = "precision",  
+    po2_strategy: str = "precision",
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     assert (
         tensor.shape[2] % block_size == 0
