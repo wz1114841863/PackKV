@@ -7,6 +7,7 @@
 # ==============================================================================
 
 # 设置默认参数
+export TRANSFORMERS_VERBOSITY=error
 MODEL="Qwen/Qwen3-8B"
 TASKS="mmlu,gsm8k"
 OUTPUT_DIR="./eval_logs/default_run"
@@ -46,7 +47,7 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 SAFE_TASKS=$(echo $TASKS | tr ',' '_')
 
 # 生成输出根目录
-FINAL_OUTPUT_DIR="${OUTPUT_DIR}/${SAFE_TASKS}_${TIMESTAMP}"
+FINAL_OUTPUT_DIR="${OUTPUT_DIR}/${SAFE_TASKS}"
 
 # 4打印当前实验配置
 echo "========================================"
