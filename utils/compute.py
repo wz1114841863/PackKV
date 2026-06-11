@@ -147,7 +147,6 @@ def calculate_aware_quant_scale(
     return torch.exp2(k)
 
 
-"""
 def quant_ints(
     tensor: torch.Tensor,
     block_size: int,
@@ -170,16 +169,19 @@ def quant_ints(
         min_val = min_val.min(dim=i, keepdim=True).values
         max_val = max_val.max(dim=i, keepdim=True).values
 
+    quant_scale = (max_val - min_val) * quant_scale_rel
+    quant_scale = torch.clamp(quant_scale, min=1e-5)
+
     if high_precision_zero_point:
         # -min_val, /scale
         # quant_scale_rel控制的是量化网格(Grid)的步长.由于大模型不同层/不同 Token 激活值的极差($X_{max} - X_{min}$)浮动非常大,
         # 不能用一个固定的绝对数值来做步长.因此,算法采用极差乘以一个相对比例 quant_scale_rel 来动态决定当前数据块的量化步长.
         # 这个值越大,压缩率越高,精度损失越大.
-        quant_scale = (max_val - min_val) * quant_scale_rel
+
         value_quant = ((tensor - min_val) / quant_scale).round()
     else:
         # /scale, -min_int, 将零点偏移量本身也量化成整数
-        quant_scale = (max_val - min_val) * quant_scale_rel
+        # quant_scale = (max_val - min_val) * quant_scale_rel
         min_int = (min_val / quant_scale).round()
         value_quant = (tensor / quant_scale).round() - min_int
         min_val = min_int
@@ -205,90 +207,6 @@ def quant_ints_throughput(
     max_val = torch.amax(tensor, dim=quant_dim, keepdim=True)
 
     quant_scale = (max_val - min_val) * quant_scale_rel
-    min_int = (min_val / quant_scale).round()
-    value_quant = (tensor / quant_scale).round() - min_int
-    min_val = min_int
-
-    return value_quant, min_val, quant_scale
-
-"""
-
-
-def quant_ints(
-    tensor: torch.Tensor,
-    block_size: int,
-    quant_scale_rel: float,
-    quant_mode: QuantMode,
-    high_precision_zero_point: bool = False,
-    po2_strategy: str = "precision",
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-
-    assert (
-        tensor.shape[2] % block_size == 0
-    ), "Tensor shape is not divisible by block size"
-    # 根据block_size进行reshape
-    tensor = tensor.reshape(
-        tensor.shape[0], tensor.shape[1], -1, block_size, tensor.shape[3]
-    )
-    quant_dim = QUANT_DIM[quant_mode.value]
-
-    min_val = tensor
-    max_val = tensor
-    for i in quant_dim:
-        min_val = min_val.min(dim=i, keepdim=True).values
-        max_val = max_val.max(dim=i, keepdim=True).values
-
-    # ---- 调用新增的软硬件协同 Scale 计算逻辑 ----
-    # quant_scale = calculate_aware_quant_scale(
-    #     min_val, max_val, quant_scale_rel, po2_strategy
-    # )
-
-    # if high_precision_zero_point:
-    #     # -min_val, /scale
-    #     value_quant = ((tensor - min_val) / quant_scale).round()
-    # else:
-    #     # /scale, -min_int, 将零点偏移量本身也量化成整数
-    #     min_int = (min_val / quant_scale).round()
-    #     value_quant = (tensor / quant_scale).round() - min_int
-    #     min_val = min_int
-
-    if high_precision_zero_point:
-        # -min_val, /scale
-        quant_scale = (max_val - min_val) * quant_scale_rel
-        value_quant = ((tensor - min_val) / quant_scale).round()
-    else:
-        # /scale, -min_int
-        quant_scale = (max_val - min_val) * quant_scale_rel
-        min_int = (min_val / quant_scale).round()
-        value_quant = (tensor / quant_scale).round() - min_int
-        min_val = min_int
-
-    return value_quant, min_val, quant_scale
-
-
-def quant_ints_throughput(
-    tensor: torch.Tensor,
-    block_size: int,
-    quant_scale_rel: float,
-    quant_mode: QuantMode,
-    po2_strategy: str = "precision",
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    assert (
-        tensor.shape[2] % block_size == 0
-    ), "Tensor shape is not divisible by block size"
-    tensor = tensor.reshape(
-        tensor.shape[0], tensor.shape[1], -1, block_size, tensor.shape[3]
-    )
-    quant_dim = QUANT_DIM[quant_mode.value]
-
-    min_val = torch.amin(tensor, dim=quant_dim, keepdim=True)
-    max_val = torch.amax(tensor, dim=quant_dim, keepdim=True)
-
-    # ---- 调用新增的软硬件协同 Scale 计算逻辑 ----
-    quant_scale = calculate_aware_quant_scale(
-        min_val, max_val, quant_scale_rel, po2_strategy
-    )
-
     min_int = (min_val / quant_scale).round()
     value_quant = (tensor / quant_scale).round() - min_int
     min_val = min_int
