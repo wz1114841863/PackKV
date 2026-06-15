@@ -131,6 +131,16 @@ def touch_model_new(model_name):
             config = AutoConfig.from_pretrained(
                 model_name, local_files_only=True, trust_remote_code=True
             )
+
+            # 针对mistral3config命名问题
+            if type(config).__name__ == "Mistral3Config":
+                print("  -> [Patch] 拦截到官方注册表 Bug,正在动态注入修复补丁...")
+                from transformers.models.mistral3.modeling_mistral3 import (
+                    Mistral3ForCausalLM,
+                )
+
+                AutoModelForCausalLM.register(type(config), Mistral3ForCausalLM)
+
             tokenizer = AutoTokenizer.from_pretrained(
                 model_name, trust_remote_code=True, **tok_kwargs
             )
