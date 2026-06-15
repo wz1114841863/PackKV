@@ -4,7 +4,13 @@ import time
 import torch
 import socket
 from huggingface_hub import snapshot_download
-from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
+from transformers import (
+    AutoTokenizer,
+    AutoConfig,
+    AutoModelForCausalLM,
+    AutoModelForConditionalGeneration,
+)
+import torch
 
 """
 文件说明:
@@ -26,7 +32,6 @@ MODELS = [
     "Qwen/Qwen3-4B",
     "Qwen/Qwen3-8B",
     "NousResearch/Meta-Llama-3-8B",
-    "mistralai/Ministral-3-8B-Instruct-2512",
 ]
 
 
@@ -93,78 +98,8 @@ def touch_model(model_name):
         print(f"[Error] 加载失败 {model_name}: {e}")
 
 
-def touch_model_new(model_name):
-    """
-    负责加载和校验:加入了智能 Fallback 机制和特定模型修复
-    """
-    print(f"\n[Loading] {model_name}")
-    try:
-        # 1. 动态处理 Tokenizer 参数:专门消除 Mistral 的正则警告
-        tok_kwargs = {"local_files_only": True}
-        if "istral" in model_name.lower():  # 命中 Mistral 或 Ministral
-            tok_kwargs["fix_mistral_regex"] = True
-
-        # 2. 优先尝试"原生加载" (trust_remote_code=False)
-        # 因为我们更新了 transformers,主流模型原生支持更稳,避免远程代码冲突
-        try:
-            config = AutoConfig.from_pretrained(
-                model_name, local_files_only=True, trust_remote_code=False
-            )
-            tokenizer = AutoTokenizer.from_pretrained(
-                model_name, trust_remote_code=False, **tok_kwargs
-            )
-            model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                torch_dtype=torch.bfloat16,
-                local_files_only=True,
-                trust_remote_code=False,
-                config=config,
-                device_map="auto",
-                use_safetensors=True,
-            )
-            print(f"[OK] 成功加载并校验: {model_name} (原生支持, BF16)")
-
-        # 3. 如果原生不支持,自动降级使用远程代码 (trust_remote_code=True)
-        except Exception as native_e:
-            print(f"  -> 原生加载失败,尝试启用 trust_remote_code... ({native_e})")
-
-            config = AutoConfig.from_pretrained(
-                model_name, local_files_only=True, trust_remote_code=True
-            )
-
-            # 针对mistral3config命名问题
-            if type(config).__name__ == "Mistral3Config":
-                print("  -> [Patch] 拦截到官方注册表 Bug,正在动态注入修复补丁...")
-                from transformers.models.mistral3.modeling_mistral3 import (
-                    Mistral3ForCausalLM,
-                )
-
-                AutoModelForCausalLM.register(type(config), Mistral3ForCausalLM)
-
-            tokenizer = AutoTokenizer.from_pretrained(
-                model_name, trust_remote_code=True, **tok_kwargs
-            )
-            model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                torch_dtype=torch.bfloat16,
-                local_files_only=True,
-                trust_remote_code=True,
-                config=config,
-                device_map="auto",
-                use_safetensors=True,
-            )
-            print(f"[OK] 成功加载并校验: {model_name} (Remote Code 模式, BF16)")
-
-        # 验证完后立刻清理 A100 的显存,准备加载下一个
-        del model
-        torch.cuda.empty_cache()
-
-    except Exception as e:
-        print(f"[Error] 加载彻底失败 {model_name}: {e}")
-
-
 if __name__ == "__main__":
     print(f"Current HF_HOME: {os.getenv('HF_HOME')}")
     for m in MODELS:
         robust_download(m)
-        touch_model_new(m)
+        touch_model(m)
