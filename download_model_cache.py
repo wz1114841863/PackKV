@@ -2,6 +2,7 @@
 import os
 import time
 import torch
+import socket
 from huggingface_hub import snapshot_download
 from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
 
@@ -11,8 +12,14 @@ from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
     强制忽略不安全的 .bin 权重,只下载 .safetensors
 """
 
+# 强制设置全局 Socket 超时时间 (例如 60 秒).
+# 如果 60 秒内没有任何数据传输,底层就会抛出 socket.timeout 异常,
+# 从而成功触发下面的 except 逻辑.
+socket.setdefaulttimeout(60)
+
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"  # 关掉容易卡死的加速器
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"  # 换成稳定的镜像源
+os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "60"  # 增加 HF 专属下载超时设置
 
 # 想要预先下载的模型列表
 MODELS = [
@@ -23,9 +30,9 @@ MODELS = [
 ]
 
 
-def robust_download(model_name):
+def robust_download(model_name, max_retries=100):
     """
-    专门负责下载的函数:
+    专门负责下载的函数
     """
     print(f"\n[Download] 正在检查/下载: {model_name}")
     retries = 0
@@ -47,6 +54,11 @@ def robust_download(model_name):
         except Exception as e:
             retries += 1
             print(f"[Warning] 下载中断: {e}")
+            if retries >= max_retries:
+                print(
+                    f"[Error] {model_name} 达到最大重试次数 ({max_retries}),跳过该模型."
+                )
+                break
             print(f"正在尝试第 {retries} 次重连 (5秒后)...")
             time.sleep(5)
 
