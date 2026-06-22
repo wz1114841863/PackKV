@@ -41,7 +41,6 @@ from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from transformers.processing_utils import Unpack
 from transformers.pytorch_utils import ALL_LAYERNORM_LAYERS
 from transformers.utils import (
-    LossKwargs,
     add_code_sample_docstrings,
     add_start_docstrings,
     add_start_docstrings_to_model_forward,
@@ -50,6 +49,12 @@ from transformers.utils import (
     logging,
     replace_return_docstrings,
 )
+
+try:
+    from transformers.utils import LossKwargs
+except ImportError:
+    # 新版 transformers 兼容写法
+    from transformers.utils import TransformersKwargs as LossKwargs
 from transformers.utils.deprecation import deprecate_kwarg
 from transformers.models.llama.configuration_llama import LlamaConfig
 
