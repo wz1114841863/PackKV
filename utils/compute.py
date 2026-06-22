@@ -264,6 +264,73 @@ def quant_error(
     return safe_cat(error_cache, to_compress, dim=2), in_buffer
 
 
+def quant_without_repacking(
+    error_cache: torch.Tensor,
+    buffer: torch.Tensor,
+    new_tensor: torch.Tensor,
+    block_size: int,
+    recent_size: int,
+    quant_scale_rel: float,
+    quant_mode: QuantMode,
+    high_precision_zero_point: bool = False,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    退守重建版:剥离一切切块与重排逻辑,仅进行最基础的有损量化测试.
+    """
+    # ==========================================
+    # 1. 极简拼接:先把所有的 Token 拼在一起
+    # ==========================================
+    if buffer is not None:
+        full_tensor = torch.cat([buffer, new_tensor], dim=2)
+    else:
+        full_tensor = new_tensor
+
+    # ==========================================
+    # 2. 隔离保护区:切出需要量化的部分和受保护的最新部分
+    # ==========================================
+    seq_len = full_tensor.shape[2]
+
+    if seq_len <= recent_size:
+        # 如果长度还没超过保护区,什么都不做,直接返回全精度
+        return safe_cat(error_cache, full_tensor, dim=2), None
+
+    # 把超过保护区的数据切下来去量化
+    to_compress = full_tensor[:, :, :-recent_size, :]
+    # 把最近的 Token 留作未来的 buffer
+    in_buffer = full_tensor[:, :, -recent_size:, :]
+
+    # ==========================================
+    # 3. 最原始的 8-bit / 4-bit 均匀量化 (Absmax Quantization)
+    # ==========================================
+    # 我们设定为 8-bit 量化,最大整数为 127
+    bits = 8
+    max_int = 2 ** (bits - 1) - 1  # 127
+
+    # 沿着 Token 维度 (dim=2) 和 Channel 维度 (dim=3) 找到绝对最大值
+    # 这里我们采用极其安全的 Per-Head 量化,避免跨 Head 污染
+    abs_max = to_compress.abs().amax(dim=(2), keepdim=True)
+
+    # 防除零保护
+    abs_max = torch.clamp(abs_max, min=1e-5)
+
+    # 计算 Scale
+    scale = abs_max / max_int
+
+    # 量化 (取整)
+    quantized = torch.clamp((to_compress / scale).round(), -max_int, max_int)
+
+    # 反量化 (解压)
+    dequantized = quantized * scale
+
+    # ==========================================
+    # 4. 完美拼接返回
+    # ==========================================
+    # 将量化后的旧历史与之前的超长历史拼接
+    final_cache = safe_cat(error_cache, dequantized, dim=2)
+
+    return final_cache, in_buffer
+
+
 def print_quant_setting(logger):
     logger.info(QUANT_DIM)
 
