@@ -33,7 +33,7 @@ for model in "${MODELS[@]}"; do
                 # ---------------------------------------------------------
                 # 第一步:调用你的 accuracy_eval.py 跑模型
                 # ---------------------------------------------------------
-                python ./scripts/accuracy/pyaccuracy_eval.py \
+                python ./scripts/accuracy/accuracy_eval.py \
                     -m "$model" \
                     -t "$task" \
                     -o "$EXP_DIR" \

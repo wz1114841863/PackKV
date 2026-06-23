@@ -7,3 +7,4 @@ logs/*
 .vscode/*
 .venv/*
 eval_logs/*
+grid_search_logs/*
