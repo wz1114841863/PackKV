@@ -7,6 +7,7 @@ from models.cache.packkv_quant import PackKVCacheConfigStatic, PackKVCachePytorc
 from utils.compute import (
     QuantMode,
     QuantMethod,
+    RepackMethod,
     quant_ints,
     repack_and_encode,
     repack_and_encode_detail_rebuttal,
@@ -110,14 +111,14 @@ if __name__ == "__main__":
         "--k_scale",
         type=float,
         default=0.01,
-        help="K Cache 量化 Scale (默认 0.01)",
+        help="K Cache量化Scale",
     )
     parser.add_argument(
         "-v",
         "--v_scale",
         type=float,
         default=0.01,
-        help="V Cache 量化 Scale (默认 0.01)",
+        help="V Cache量化Scale",
     )
 
     args = parser.parse_args()
@@ -129,8 +130,8 @@ if __name__ == "__main__":
     config = PackKVCacheConfig(
         enable_quant=True,
         model_name=args.model_name,
-        quant_method="PackKV",
-        repack_method="NONE",
+        quant_method=QuantMethod.KIVI,
+        repack_method=RepackMethod.NONE,
         high_precision_zero_point=False,
         block_size=BLOCK_SIZE,
         buffer_size=BUFFER_SIZE,
