@@ -49,12 +49,7 @@ from transformers.utils import (
     logging,
     replace_return_docstrings,
 )
-
-try:
-    from transformers.utils import LossKwargs
-except ImportError:
-    # 新版 transformers 兼容写法
-    from transformers.utils import TransformersKwargs as LossKwargs
+from transformers.utils import LossKwargs
 from transformers.utils.deprecation import deprecate_kwarg
 from transformers.models.llama.configuration_llama import LlamaConfig
 

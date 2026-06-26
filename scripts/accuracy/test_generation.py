@@ -1,6 +1,12 @@
 import torch
 import time
+import sys
+import os
 import argparse
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from utils.config import PackKVCacheConfig, ExtractCacheConfig
 from models.cache.packkv_quant import PackKVCacheConfigStatic, PackKVCachePytorchQuant
@@ -52,7 +58,7 @@ def debug_simple_generation(config):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model_class = MODEL_CLASS_MAP.get(config.model_name, AutoModelForCausalLM)
+    model_class = MODEL_CLASS_MAP.get(config.model_name)
     print(f"[Debug] 正在加载模型类: {model_class.__name__} ...")
     model = model_class.from_pretrained(
         config.model_name,
