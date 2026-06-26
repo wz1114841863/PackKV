@@ -82,8 +82,8 @@ class PackKVCachePytorchQuant(Cache):
 
         self.compressed_k_cache[layer_idx], self.k_cache_buffer[layer_idx] = (
             # 量化调用的是quant_error, 这是个伪量化函数
-            quant_error(
-                # quant_without_repacking(
+            # quant_error(
+            quant_without_repacking(
                 self.compressed_k_cache[layer_idx],
                 self.k_cache_buffer[layer_idx],
                 key_states,  # 新来的 Token
@@ -96,8 +96,8 @@ class PackKVCachePytorchQuant(Cache):
         )
 
         self.compressed_v_cache[layer_idx], self.v_cache_buffer[layer_idx] = (
-            quant_error(
-                # quant_without_repacking(
+            # quant_error(
+            quant_without_repacking(
                 self.compressed_v_cache[layer_idx],
                 self.v_cache_buffer[layer_idx],
                 value_states,

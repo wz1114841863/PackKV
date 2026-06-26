@@ -28,17 +28,21 @@ def analyze_gsm8k_results(json_path):
 
     found_metrics = False
 
-    # 动态遍历并筛选出所有以 exact_match 开头的键
+    # 动态遍历并筛选出所有以 exact_match 开头,且不包含 _stderr 的键
     for key, value in gsm8k_data.items():
-        if key.startswith("exact_match") and isinstance(value, (int, float)):
-            # 解析 filter 名称.例如把 "exact_match,strict-match" 拆分出 "strict-match"
+        if (
+            key.startswith("exact_match")
+            and "_stderr" not in key
+            and isinstance(value, (int, float))
+        ):
+            # 解析 filter 名称
             if "," in key:
                 filter_name = key.split(",")[1]
             else:
                 filter_name = "default"
 
             acc_percentage = value * 100
-            print(f"精确匹配率 (Filter: {filter_name:<16}): {acc_percentage:>6.2f}%")
+            print(f"🌟 精确匹配率 (Filter: {filter_name:<16}): {acc_percentage:>6.2f}%")
             found_metrics = True
 
     if not found_metrics:
