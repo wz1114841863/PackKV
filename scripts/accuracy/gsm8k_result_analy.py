@@ -21,25 +21,30 @@ def analyze_gsm8k_results(json_path):
 
     gsm8k_data = results["gsm8k"]
 
-    # lm_eval 框架在不断升级,我们需要兼容不同版本中精确匹配指标的命名
-    score = (
-        gsm8k_data.get("exact_match,strict-match")
-        or gsm8k_data.get("exact_match,none")
-        or gsm8k_data.get("exact_match")
-    )
+    print(f"\n{'='*55}")
+    print(f"GSM8K 推理能力分析 (全提取策略展示)")
+    print(f"来源文件: {json_path}")
+    print(f"{'-'*55}")
 
-    if score is None:
-        print("[Error] 找到了 GSM8K 数据,但没找到 exact_match 指标.")
-        return
+    found_metrics = False
 
-    acc_percentage = score * 100
+    # 动态遍历并筛选出所有以 exact_match 开头的键
+    for key, value in gsm8k_data.items():
+        if key.startswith("exact_match") and isinstance(value, (int, float)):
+            # 解析 filter 名称.例如把 "exact_match,strict-match" 拆分出 "strict-match"
+            if "," in key:
+                filter_name = key.split(",")[1]
+            else:
+                filter_name = "default"
 
-    print(f"\n{'='*40}")
-    print(f"🧮 GSM8K 推理能力分析")
-    print(f"📄 来源文件: {json_path}")
-    print(f"{'-'*40}")
-    print(f"🌟 精确匹配率 (Exact Match): {acc_percentage:>6.2f}%")
-    print(f"{'='*40}\n")
+            acc_percentage = value * 100
+            print(f"精确匹配率 (Filter: {filter_name:<16}): {acc_percentage:>6.2f}%")
+            found_metrics = True
+
+    if not found_metrics:
+        print("[Error] 找到了 GSM8K 数据,但没找到任何 exact_match 指标.")
+
+    print(f"{'='*55}\n")
 
 
 if __name__ == "__main__":
