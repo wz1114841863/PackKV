@@ -3,8 +3,8 @@
 # 自动化消融实验网格搜索脚本
 # 实验变量矩阵
 MODELS=("Qwen/Qwen3-4B" "Qwen/Qwen3-8B" "NousResearch/Meta-Llama-3-8B")
-TASKS=("mmlu" "gsm8k" "hellaswag")
-SCALES=("0.01" "0.1" "0.5" "0.9")
+TASKS=("gsm8k")
+SCALES=("0.01" "0.07" "0.1" "0.5" "0.9")
 QUANT_METHODS=("PackKV" "KIVI")
 
 # 2. 创建主输出目录
