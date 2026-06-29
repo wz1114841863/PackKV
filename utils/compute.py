@@ -189,6 +189,65 @@ def quant_ints(
     return value_quant, min_val, quant_scale
 
 
+def quant_ints_2k(
+    tensor: torch.Tensor,
+    block_size: int,
+    quant_scale_rel: float,
+    quant_mode: QuantMode,
+    high_precision_zero_point: bool = False,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    硬件友好的 2^k 移位量化器 (集成容器感知逻辑)
+    保持与原版 quant_ints 完全一致的输入参数和返回值结构.
+    """
+    assert (
+        tensor.shape[2] % block_size == 0
+    ), "Tensor shape is not divisible by block size"
+
+    # 1. 按照 block_size 进行 reshape
+    # [B, H, SeqLen, D] -> [B, H, SeqLen//block_size, block_size, D]
+    tensor_reshaped = tensor.reshape(
+        tensor.shape[0], tensor.shape[1], -1, block_size, tensor.shape[3]
+    )
+
+    # 获取需要求极值的维度
+    quant_dims = QUANT_DIM[quant_mode.value]
+
+    # 2. 提取局部极值
+    min_ = tensor_reshaped
+    max_ = tensor_reshaped
+    for dim in quant_dims:
+        min_ = min_.min(dim=dim, keepdim=True).values
+        max_ = max_.max(dim=dim, keepdim=True).values
+
+    # ==========================================
+    # 核心注入: 容器感知 + 2^k 移位量化
+    # ==========================================
+    # 加入 1e-5 防止 Padding 死头导致的除零崩溃
+    range_ = torch.clamp(max_ - min_, min=1e-5)
+
+    # (1) 探底:计算初始期望的位宽
+    scale_init = range_ * quant_scale_rel
+    max_int_init = range_ / scale_init
+    target_bits = torch.clamp(torch.ceil(torch.log2(max_int_init + 1)), min=1.0)
+
+    # (2) 容器拉伸:计算该位宽下能把容器撑满的理想 Scale
+    c_max = (2**target_bits) - 1
+    scale_ideal = range_ / c_max
+
+    # (3) 二次幂逼近 (保精度 Round 策略)
+    k = torch.round(torch.log2(scale_ideal))
+    quant_scale = torch.pow(2.0, k)  # 最终 Scale = 2^k
+    # ==========================================
+
+    # 3. 执行真正的量化 (除以 quant_scale 等价于硬件层的右移)
+    min_ints = (min_ / quant_scale).round_()
+    q_ints = (tensor_reshaped / quant_scale).round_()
+
+    # 返回: (相对量化整数, 零点整数, 比例尺)
+    return q_ints - min_ints, min_ints, quant_scale
+
+
 def quant_ints_throughput(
     tensor: torch.Tensor,
     block_size: int,
@@ -244,7 +303,8 @@ def quant_error(
     )
 
     if to_compress is not None:
-        quant_int, quant_zero, quant_scale = quant_ints(
+        # quant_int, quant_zero, quant_scale = quant_ints(
+        quant_int, quant_zero, quant_scale = quant_ints_2k(
             to_compress,
             block_size,
             quant_scale_rel,

@@ -68,7 +68,9 @@ def accuracy_evaluation(
     logger.info(f"\n{benchmark}: \n{config}")
     PackKVCacheConfigStatic.config = config
 
-    tokenizer = AutoTokenizer.from_pretrained(PackKVCacheConfigStatic.config.model_name)
+    tokenizer = AutoTokenizer.from_pretrained(
+        PackKVCacheConfigStatic.config.model_name, trust_remote_code=True
+    )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -79,6 +81,7 @@ def accuracy_evaluation(
         PackKVCacheConfigStatic.config.model_name,
         torch_dtype=torch.bfloat16,
         device_map="auto",
+        trust_remote_code=True,
     )
 
     logger.info(f"model class: {model_class.__name__}")

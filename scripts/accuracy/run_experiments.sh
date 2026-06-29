@@ -4,7 +4,7 @@
 # 实验变量矩阵
 MODELS=("Qwen/Qwen3-4B" "Qwen/Qwen3-8B" "NousResearch/Meta-Llama-3-8B")
 TASKS=("gsm8k")
-SCALES=("0.01" "0.07" "0.1" "0.5" "0.9")
+SCALES=("0.01" "0.07" "0.1" "0.2" "0.3")
 QUANT_METHODS=("PackKV" "KIVI")
 
 # 2. 创建主输出目录
