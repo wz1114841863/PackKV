@@ -237,6 +237,84 @@ def save_extract_cache(
             torch.save(value_cache, os.path.join(v_dir, f"{i}.pt"))
 
 
+def load_extract_cache(
+    model_name: str, ctx_len: int, root_dir: str, collect_round: int = 1
+):
+    """
+    从本地磁盘读取保存的 KV Cache 数据.
+    数据结构对应 save_extract_cache:
+    {root_dir}/{model_name}/{ctx_len}/{round_i}/[k 或 v]/{layer_idx}.pt
+
+    Returns:
+        成功加载返回组装好的 ExtractCacheConfig 对象;
+        如果未命中缓存或文件不完整,返回 None.
+    """
+    base_dir = os.path.join(root_dir, model_name, str(ctx_len))
+
+    # 1. 检查根目录是否存在,不存在直接未命中
+    if not os.path.exists(base_dir):
+        return None
+
+    # 2. 实例化一个新的 Cache 容器
+    loaded_cache = ExtractCacheConfig(collect_round)
+
+    # 3. 按轮次和层数逐个读取 .pt 文件
+    for round_i in range(collect_round):
+        round_dir = os.path.join(base_dir, str(round_i))
+        k_dir = os.path.join(round_dir, "k")
+        v_dir = os.path.join(round_dir, "v")
+
+        # 安全防御:如果目录不完整,说明上次可能没存完就中断了
+        if not os.path.exists(k_dir) or not os.path.exists(v_dir):
+            print(
+                f"[Warning] Cache directory incomplete for round {round_i}. Miss cache."
+            )
+            return None
+
+        # --- 加载 Key Cache ---
+        k_files = [f for f in os.listdir(k_dir) if f.endswith(".pt")]
+        if len(k_files) == 0:
+            return None  # 文件夹是空的
+
+        # [修复点 1]: 确保 key_caches 字典里有 round_i 这个键
+        if round_i not in loaded_cache.key_caches:
+            loaded_cache.key_caches[round_i] = {}
+
+        for k_file in k_files:
+            layer_idx = int(k_file.split(".")[0])  # 从 "0.pt" 中提取出层号 0
+            file_path = os.path.join(k_dir, k_file)
+            # map_location="cpu" 非常重要!防止在纯算力机器上因为 GPU 序号不同而报错
+            loaded_cache.key_caches[round_i][layer_idx] = torch.load(
+                file_path, map_location="cpu", weights_only=True
+            )
+
+        # --- 加载 Value Cache ---
+        v_files = [f for f in os.listdir(v_dir) if f.endswith(".pt")]
+        if len(v_files) == 0:
+            return None
+
+        # [修复点 2]: 确保 value_caches 字典里有 round_i 这个键
+        if round_i not in loaded_cache.value_caches:
+            loaded_cache.value_caches[round_i] = {}
+
+        for v_file in v_files:
+            layer_idx = int(v_file.split(".")[0])
+            file_path = os.path.join(v_dir, v_file)
+            loaded_cache.value_caches[round_i][layer_idx] = torch.load(
+                file_path, map_location="cpu", weights_only=True
+            )
+
+        # 可选防御:检查 k 和 v 读到的层数是否一致
+        if len(loaded_cache.key_caches[round_i]) != len(
+            loaded_cache.value_caches[round_i]
+        ):
+            print(f"[Warning] K/V cache layer count mismatch. Miss cache.")
+            return None
+
+    # 全部安全加载完成,返回重建的 Cache 对象
+    return loaded_cache
+
+
 def crs_evaluation_with_data(
     config: PackKVCacheConfig, key_caches, value_caches, before_and_after_repacking=None
 ):
@@ -434,6 +512,8 @@ def cr_evaluation(
     logger.info(f"ctx_len: {ctx_len}")
     logger.info(config)
     # logger.info(f"Created a temp config for cache collection and set its enable_quant to False.")
+
+    # 关闭量化, 准备提取高精度的KV Cache
     PackKVCacheConfigStatic.config = PackKVCacheConfig(
         enable_quant=False,
         model_name=config.model_name,
@@ -446,36 +526,56 @@ def cr_evaluation(
         k_quant_scale_rel=config.k_quant_scale_rel,
         v_quant_scale_rel=config.v_quant_scale_rel,
     )
-
-    PackKVCacheConfigStatic.extract_cache = ExtractCacheConfig(collect_round)
-    tokenizer = AutoTokenizer.from_pretrained(config.model_name)
-    model_class = MODEL_CLASS_MAP.get(config.model_name)
-    if model_class is None:
-        raise ValueError(f"Model class not found for {config.model_name}")
-    model = model_class.from_pretrained(
-        PackKVCacheConfigStatic.config.model_name,
-        torch_dtype="auto",
-        device_map="auto",
-        attn_implementation="flash_attention_2",
+    # KV Cache缓存路径
+    cache_dir = "./dumped_cache"
+    logger.info("Checking for existing KV cache on disk...")
+    loaded_cache = load_extract_cache(
+        config.model_name, ctx_len, "./dumped_cache", collect_round
     )
-    # batch_size = 1
-    # lm_eval_warp = LMEvalWrapper(model, tokenizer, batch_size)
-    inputs = get_ctx_len_text_from_wikitext_103_v1(ctx_len, tokenizer).to(model.device)
+    if loaded_cache is not None:
+        # [命中缓存]
+        logger.info("Cache HIT! Successfully loaded high-precision KV Cache from disk.")
+        PackKVCacheConfigStatic.extract_cache = loaded_cache
+    else:
+        logger.warning(
+            "Cache MISS. Loading LLM weights to extract KV Cache. This may take a while..."
+        )
+        PackKVCacheConfigStatic.extract_cache = ExtractCacheConfig(collect_round)
+        tokenizer = AutoTokenizer.from_pretrained(config.model_name)
+        model_class = MODEL_CLASS_MAP.get(config.model_name)
 
-    with torch.no_grad():
-        _ = model(**inputs)
-    PackKVCachePytorchQuant.round_ = 0
-
-    if enable_save:
-        save_extract_cache(
-            config.model_name,
-            ctx_len,
-            PackKVCacheConfigStatic.extract_cache,
-            "./dumped_cache",
+        if model_class is None:
+            raise ValueError(f"Model class not found for {config.model_name}")
+        model = model_class.from_pretrained(
+            PackKVCacheConfigStatic.config.model_name,
+            torch_dtype="auto",
+            device_map="auto",
+            # attn_implementation="flash_attention_2",
+            attn_implementation="eager",
+        )
+        # batch_size = 1
+        # lm_eval_warp = LMEvalWrapper(model, tokenizer, batch_size)
+        inputs = get_ctx_len_text_from_wikitext_103_v1(ctx_len, tokenizer).to(
+            model.device
         )
 
-    rts = []
+        with torch.no_grad():
+            _ = model(**inputs)
+        PackKVCachePytorchQuant.round_ = 0
 
+        if enable_save:
+            save_extract_cache(
+                config.model_name,
+                ctx_len,
+                PackKVCacheConfigStatic.extract_cache,
+                "./dumped_cache",
+            )
+
+        # 释放显存
+        del model
+        torch.cuda.empty_cache()
+
+    rts = []
     logger.info(
         f"Cache Size {PackKVCacheConfigStatic.extract_cache.size() / 8 / 1024 / 1024 / 1024} GB"
     )

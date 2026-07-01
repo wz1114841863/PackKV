@@ -1,4 +1,6 @@
 import torch
+import atexit
+import os
 from transformers import Cache
 from typing import Optional, Dict, Any, Tuple
 from utils.compute import (
@@ -13,7 +15,42 @@ from utils.util import JumpOutException
 
 class PackKVCacheConfigStatic:
     config = None
-    extract_cache = None
+    c = None
+
+    # 评测全局统计变量
+    total_quantized_blocks = 0  # 累计切分并量化的组(Block)数
+    total_high_precision_tokens = 0  # 累计最后保留的高精度 Token 数
+    total_sequences = 0  # 处理的序列(Prompt+Gen)总数
+    last_seq_buffer_len = 0  # 暂存上一次推理时的 Buffer 总长度
+
+
+@atexit.register
+def print_packkv_stats():
+    if os.getenv("USE_ATEXIT") == "false":
+        return
+
+    stats = PackKVCacheConfigStatic
+    # 将最后一条还没来得及累加的 buffer 长度加进去
+    if stats.last_seq_buffer_len > 0:
+        stats.total_high_precision_tokens += stats.last_seq_buffer_len
+        stats.last_seq_buffer_len = 0
+
+    print("\n" + "=" * 20)
+    print("[PackKV 评测全局统计]")
+    print("=" * 20)
+    print(f"总计处理序列数 (Total Sequences)   : {stats.total_sequences}")
+    print(f"总批量化组数 (Total Quantized Blocks): {stats.total_quantized_blocks} 组")
+    print(
+        f"总计保留高精度 (Total High-Precision): {stats.total_high_precision_tokens} Tokens"
+    )
+
+    if stats.total_sequences > 0:
+        avg_blocks = stats.total_quantized_blocks / stats.total_sequences
+        avg_hp = stats.total_high_precision_tokens / stats.total_sequences
+        print("-" * 50)
+        print(f"平均每条序列被切分为 : {avg_blocks:.2f} 个量化组 (Blocks)")
+        print(f"平均每条序列保留了   : {avg_hp:.2f} 个 高精度 Tokens (在Buffer中)")
+    print("=" * 20 + "\n")
 
 
 def mad_based_center(values, dim, k=3, keepdim=True):
@@ -57,6 +94,14 @@ class PackKVCachePytorchQuant(Cache):
         self.sins = [None] * layer_num
         self.k_avg = [None] * layer_num
 
+        # 序列更迭时的累加逻辑
+        if PackKVCacheConfigStatic.last_seq_buffer_len > 0:
+            PackKVCacheConfigStatic.total_high_precision_tokens += (
+                PackKVCacheConfigStatic.last_seq_buffer_len
+            )
+            PackKVCacheConfigStatic.last_seq_buffer_len = 0
+        PackKVCacheConfigStatic.total_sequences += batch_size
+
     def update(
         self,
         key_states: torch.Tensor,
@@ -79,6 +124,14 @@ class PackKVCachePytorchQuant(Cache):
         # 在缓存之前, 先将RoPE应用到Key
         cos, sin = cache_kwargs["cos"], cache_kwargs["sin"]
         key_states = apply_rotary_pos_emb_single(key_states, cos, sin)
+
+        # 记录量化发生前的旧长度
+        if layer_idx == 0:
+            old_k_len = (
+                self.compressed_k_cache[layer_idx].shape[2]
+                if self.compressed_k_cache[layer_idx] is not None
+                else 0
+            )
 
         self.compressed_k_cache[layer_idx], self.k_cache_buffer[layer_idx] = (
             # 量化调用的是quant_error, 这是个伪量化函数
@@ -108,6 +161,27 @@ class PackKVCachePytorchQuant(Cache):
                 PackKVCacheConfigStatic.config.high_precision_zero_point,
             )
         )
+        # 计算新增组数 & 记录高精度Buffer
+        if layer_idx == 0:
+            new_k_len = (
+                self.compressed_k_cache[layer_idx].shape[2]
+                if self.compressed_k_cache[layer_idx] is not None
+                else 0
+            )
+
+            # 如果新长度变大,说明刚刚有 Buffer 被切分成 Block 拿去量化了
+            if new_k_len > old_k_len:
+                block_size = PackKVCacheConfigStatic.config.block_size
+                # 计算切分了多少个 block(注意乘以 batch_size 处理并发情况)
+                added_blocks = ((new_k_len - old_k_len) // block_size) * self.batch_size
+                PackKVCacheConfigStatic.total_quantized_blocks += added_blocks
+
+            # k_cache_buffer 的维度 2 代表当前保留的高精度 Token 数量,实时覆盖
+            # 当整个句子生成结束时,它将自然停留在最后的长度
+            PackKVCacheConfigStatic.last_seq_buffer_len = (
+                self.k_cache_buffer[layer_idx].shape[2] * self.batch_size
+            )
+
         # + self.k_avg[layer_idx]
         # 通过 safe_cat 将压缩后的老缓存和未压缩的新缓冲区在序列维度（dim=2）上拼接起来，返回给注意力层进行点积计算。
         return safe_cat(

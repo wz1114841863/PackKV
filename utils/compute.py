@@ -1,7 +1,49 @@
 import torch
+import atexit
+import math
+import os
 from typing import Tuple, Optional, List
 from enum import Enum
-import math
+from collections import Counter
+
+GLOBAL_K_COUNTER = Counter()
+
+
+@atexit.register
+def dump_k_stats():
+    """
+    当评测脚本 (LM-Eval) 运行结束时,自动拦截并打印这组统计数据
+    """
+    if os.getenv("USE_ATEXIT") == "false":
+        return
+    print("\n" + "=" * 60)
+    print("全局 K/V Cache 移位量 (k) 分布最终统计")
+    print("=" * 60)
+    if not GLOBAL_K_COUNTER:
+        print("未收集到任何 k 值数据.")
+        return
+
+    total_blocks = sum(GLOBAL_K_COUNTER.values())
+    print(f"总计统计的 Scale 数量 (Total Elements): {total_blocks:,}")
+    print("-" * 60)
+
+    # 按照 k 的大小排序打印
+    for k_val in sorted(GLOBAL_K_COUNTER.keys()):
+        count = GLOBAL_K_COUNTER[k_val]
+        pct = (count / total_blocks) * 100
+        # 绘制简单的 ASCII 柱状图直观显示分布
+        bar = "█" * int(pct / 2)
+        print(f"  k = {k_val:>3d} | 频次: {count:>12,d} | 占比: {pct:>5.2f}% | {bar}")
+
+    print("-" * 60)
+    k_min = min(GLOBAL_K_COUNTER.keys())
+    k_max = max(GLOBAL_K_COUNTER.keys())
+    k_range = k_max - k_min
+    required_bits = max(1, int(math.ceil(math.log2(k_range + 1))))
+    print(
+        f"硬件建议: k 的极差为 {k_range},建议为元数据分配至少 {required_bits} bits 的存储空间."
+    )
+    print("=" * 60 + "\n")
 
 
 class QuantMode(Enum):
@@ -238,7 +280,14 @@ def quant_ints_2k(
     # (3) 二次幂逼近 (保精度 Round 策略)
     k = torch.round(torch.log2(scale_ideal))
     quant_scale = torch.pow(2.0, k)  # 最终 Scale = 2^k
-    # ==========================================
+
+    # 在 GPU 上异步计数,不拖慢推理
+    with torch.no_grad():
+        # 在 GPU 上找出当前这批数据有哪几种 k,以及各自的数量
+        unique_ks, counts = torch.unique(k.flatten(), return_counts=True)
+        # 转移回 CPU 并更新全局字典 (非常快,因为 unique_ks 通常长度不超过 10)
+        for kv, c in zip(unique_ks.tolist(), counts.tolist()):
+            GLOBAL_K_COUNTER[int(kv)] += c
 
     # 3. 执行真正的量化 (除以 quant_scale 等价于硬件层的右移)
     min_ints = (min_ / quant_scale).round_()
