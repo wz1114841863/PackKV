@@ -15,7 +15,7 @@ from utils.util import JumpOutException
 
 class PackKVCacheConfigStatic:
     config = None
-    c = None
+    extract_cache = None
 
     # 评测全局统计变量
     total_quantized_blocks = 0  # 累计切分并量化的组(Block)数
