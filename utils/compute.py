@@ -4,46 +4,29 @@ import math
 import os
 from typing import Tuple, Optional, List
 from enum import Enum
-from collections import Counter
+from collections import defaultdict
 
-GLOBAL_K_COUNTER = Counter()
+GLOBAL_K_COUNTER = defaultdict(int)
 
 
 @atexit.register
-def dump_k_stats():
-    """
-    当评测脚本 (LM-Eval) 运行结束时,自动拦截并打印这组统计数据
-    """
-    if os.getenv("USE_ATEXIT") == "false":
-        return
-    print("\n" + "=" * 60)
-    print("全局 K/V Cache 移位量 (k) 分布最终统计")
-    print("=" * 60)
-    if not GLOBAL_K_COUNTER:
-        print("未收集到任何 k 值数据.")
+def print_k_distribution():
+    """在脚本运行结束时,自动打印 2^k 的分布情况"""
+    print("\n" + "=" * 50)
+    print("🎯 [量化硬件分析] 实际使用的 2^k 分布统计:")
+    total = sum(GLOBAL_K_COUNTER.values())
+    if total == 0:
+        print("未记录到量化数据...")
         return
 
-    total_blocks = sum(GLOBAL_K_COUNTER.values())
-    print(f"总计统计的 Scale 数量 (Total Elements): {total_blocks:,}")
-    print("-" * 60)
-
-    # 按照 k 的大小排序打印
-    for k_val in sorted(GLOBAL_K_COUNTER.keys()):
-        count = GLOBAL_K_COUNTER[k_val]
-        pct = (count / total_blocks) * 100
-        # 绘制简单的 ASCII 柱状图直观显示分布
-        bar = "█" * int(pct / 2)
-        print(f"  k = {k_val:>3d} | 频次: {count:>12,d} | 占比: {pct:>5.2f}% | {bar}")
-
-    print("-" * 60)
-    k_min = min(GLOBAL_K_COUNTER.keys())
-    k_max = max(GLOBAL_K_COUNTER.keys())
-    k_range = k_max - k_min
-    required_bits = max(1, int(math.ceil(math.log2(k_range + 1))))
-    print(
-        f"硬件建议: k 的极差为 {k_range},建议为元数据分配至少 {required_bits} bits 的存储空间."
-    )
-    print("=" * 60 + "\n")
+    # 按 k 的大小排序打印
+    for k in sorted(GLOBAL_K_COUNTER.keys()):
+        count = GLOBAL_K_COUNTER[k]
+        percentage = (count / total) * 100
+        print(
+            f"  k = {k:4d} (Scale = 2^{k:<4d}) : {count:10d} 个 Block, 占比 {percentage:5.2f}%"
+        )
+    print("=" * 50 + "\n")
 
 
 class QuantMode(Enum):
@@ -235,12 +218,85 @@ def quant_ints_2k(
     tensor: torch.Tensor,
     block_size: int,
     quant_scale_rel: float,
+    quant_mode,
+    high_precision_zero_point: bool = False,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    2^k 移位量化器
+    """
+    assert (
+        tensor.shape[2] % block_size == 0
+    ), "Tensor shape is not divisible by block size"
+
+    # 1. 按照 block_size 进行 reshape
+    # [B, H, SeqLen, D] -> [B, H, SeqLen//block_size, block_size, D]
+    tensor_reshaped = tensor.reshape(
+        tensor.shape[0], tensor.shape[1], -1, block_size, tensor.shape[3]
+    )
+
+    # 获取需要求极值的维度 (KIVI 可能是 dim=2, PackKV 是 dim=4 等)
+    quant_dims = QUANT_DIM[quant_mode.value]
+
+    # 2. 提取局部极值
+    min_ = tensor_reshaped
+    max_ = tensor_reshaped
+    for dim in quant_dims:
+        min_ = min_.min(dim=dim, keepdim=True).values
+        max_ = max_.max(dim=dim, keepdim=True).values
+
+    # ==========================================
+    # 核心注入: 极简 2^k 逼近 与 NaN 免疫
+    # ==========================================
+    range_raw = max_ - min_
+
+    # [极其重要]: 处理 Padding 或死区带来的 NaN 和 Inf
+    range_safe = torch.nan_to_num(range_raw, nan=1e-5, posinf=1e4, neginf=1e-5)
+    range_ = torch.clamp(range_safe, min=1e-5)
+
+    # 步骤 A: 计算原始的/连续的浮点 Scale
+    scale_raw = range_ * quant_scale_rel
+
+    # 步骤 B: 直接寻找最合适的 k (对浮点 Scale 求 log2 后四舍五入)
+    # 这保证了既贴近原始误差期望,又满足硬件的 2^k 限制
+    k = torch.round(torch.log2(scale_raw))
+
+    # 预防极端情况(如 scale_raw 极小)导致 log2 算出 Inf 或 NaN
+    k = torch.nan_to_num(k, nan=0.0, posinf=0.0, neginf=-10.0)
+
+    # 步骤 C: 硬件最终使用的 Scale (强行对齐到 2 的整数次幂)
+    quant_scale = torch.exp2(k)
+
+    # ==========================================
+    # 在 GPU 上异步统计当前批次的 K 分布 (不影响推理速度)
+    # ==========================================
+    with torch.no_grad():
+        unique_ks, counts = torch.unique(k.flatten(), return_counts=True)
+        # 转移回 CPU 并更新全局字典
+        for kv, c in zip(unique_ks.tolist(), counts.tolist()):
+            GLOBAL_K_COUNTER[int(kv)] += c
+
+    # 3. 执行真正的量化
+    # 在 Python 里我们用除以 quant_scale 模拟
+    # 在未来的硬件实现中,这就是一次无需乘法器的算术移位 (Shift)
+    min_ints = (min_ / quant_scale).round_()
+    q_ints = (tensor_reshaped / quant_scale).round_()
+
+    # 返回: (相对量化整数, 零点整数, 比例尺)
+    return q_ints - min_ints, min_ints, quant_scale
+
+
+def quant_ints_2k_error(
+    tensor: torch.Tensor,
+    block_size: int,
+    quant_scale_rel: float,
     quant_mode: QuantMode,
     high_precision_zero_point: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    硬件友好的 2^k 移位量化器 (集成容器感知逻辑)
+    硬件友好的 2^k 移位量化器
     保持与原版 quant_ints 完全一致的输入参数和返回值结构.
+
+    感知逻辑存在问题, 运行KIVI时报错存在NAN值.
     """
     assert (
         tensor.shape[2] % block_size == 0
@@ -270,7 +326,7 @@ def quant_ints_2k(
 
     # (1) 探底:计算初始期望的位宽
     scale_init = range_ * quant_scale_rel
-    max_int_init = range_ / scale_init
+    max_int_init = range_ / scale_init  # 把range_抵消了.
     target_bits = torch.clamp(torch.ceil(torch.log2(max_int_init + 1)), min=1.0)
 
     # (2) 容器拉伸:计算该位宽下能把容器撑满的理想 Scale
