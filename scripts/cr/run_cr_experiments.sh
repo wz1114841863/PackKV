@@ -48,7 +48,7 @@ for MODEL in "${MODELS[@]}"; do
 
                 # 调用我们修改好的 Python 脚本
                 # 请根据你实际的文件路径调整下面的 cr_eval_cli.py 的路径
-                python ./scripts/cr_eval_cli.py \
+                python ./scripts/cr/cr_eval.py \
                     -m "$MODEL" \
                     --quant_method "$QUANT" \
                     --repack_method "$REPACK" \

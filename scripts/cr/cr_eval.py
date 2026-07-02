@@ -14,8 +14,8 @@ from evaluation.evaluation import cr_evaluation
 from utils.util import get_logger, block_other_logger
 
 max_ctx_len_map = {
-    "Qwen/Qwen3-4B": 1024 * 40,  # 40K 上下文
-    "Qwen/Qwen3-8B": 1024 * 40,  # 40K 上下文
+    "Qwen/Qwen3-4B": 1024 * 8,  # 40K 上下文
+    "Qwen/Qwen3-8B": 1024 * 8,  # 40K 上下文
     "NousResearch/Meta-Llama-3-8B": 1024 * 8,  # 8K 上下文 (区别于 3.1 版本的 128K)
     "JackFram/llama-160m": 1024 * 2,  # 2K 上下文
 }
