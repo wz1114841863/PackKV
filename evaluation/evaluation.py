@@ -315,6 +315,13 @@ def load_extract_cache(
     return loaded_cache
 
 
+def get_pseudo_quant_bit_num(x, min_bits=1):
+    # 只用于统计码值种类,不改变原始伪量化张量
+    x_for_count = x.detach().to(torch.int32)
+    unique_num = torch.unique(x_for_count).numel()
+    return max(min_bits, (unique_num - 1).bit_length())
+
+
 def crs_evaluation_with_data(
     config: PackKVCacheConfig, key_caches, value_caches, before_and_after_repacking=None
 ):
@@ -354,8 +361,10 @@ def crs_evaluation_with_data(
         )
         # k_quant_int = k_quant_int.flatten(2,3)
         # v_quant_int = v_quant_int.flatten(2,3)
-        k_quant_bit_num = math.ceil(math.log2(k_quant_int.unique().numel()))
-        v_quant_bit_num = math.ceil(math.log2(v_quant_int.unique().numel()))
+        # k_quant_bit_num = math.ceil(math.log2(k_quant_int.unique().numel()))
+        # v_quant_bit_num = math.ceil(math.log2(v_quant_int.unique().numel()))
+        k_quant_bit_num = get_pseudo_quant_bit_num(k_quant_int)
+        v_quant_bit_num = get_pseudo_quant_bit_num(v_quant_int)
         k_quant_size = (
             k_quant_int.numel() * k_quant_bit_num // 8
             + k_quant_zero.numel() * k_quant_zero.element_size()
