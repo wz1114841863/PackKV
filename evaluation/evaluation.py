@@ -2,7 +2,7 @@ import torch
 import os
 import math
 import json
-
+from datetime import datetime
 from datasets import load_dataset
 from torch import nn
 from typing import Tuple, List
@@ -83,7 +83,9 @@ def accuracy_evaluation(
         device_map="auto",
         trust_remote_code=True,
     )
-
+    model.eval()
+    model.config.use_cache = True
+    torch.set_grad_enabled(False)
     logger.info(f"model class: {model_class.__name__}")
     model.generation_config.temperature = None
     model.generation_config.top_p = None
@@ -91,19 +93,21 @@ def accuracy_evaluation(
 
     lm_eval_warp = LMEvalWrapper(model, tokenizer, batch_size)
     task_list = [benchmark] if isinstance(benchmark, str) else benchmark
-    results = evaluator.simple_evaluate(
-        model=lm_eval_warp,
-        tasks=task_list,
-        batch_size=batch_size,
-        limit=limit,
-        log_samples=True,
-    )
+    with torch.inference_mode():
+        results = evaluator.simple_evaluate(
+            model=lm_eval_warp,
+            tasks=task_list,
+            batch_size=batch_size,
+            limit=limit,
+            log_samples=True,
+        )
 
     if output_dir and len(task_list) == 1:
         current_task = task_list[0]
         model_safe_name = config.model_name.replace("/", "__")
         # 组装动态隔离路径: ./eval_logs/hellaswag/Qwen__Qwen3-8B
-        target_path = os.path.join(output_dir, current_task, model_safe_name)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        target_path = os.path.join(output_dir, current_task, model_safe_name, timestamp)
         os.makedirs(target_path, exist_ok=True)
 
         # 剥离出 samples 测试细节字典(完全拉齐 lm_eval CLI 保存规则)
