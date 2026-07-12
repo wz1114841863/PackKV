@@ -236,9 +236,9 @@ def save_extract_cache(
             round_i
         ].values()
         for i, key_cache in enumerate(key_caches):
-            torch.save(key_cache, os.path.join(k_dir, f"{i}.pt"))
+            torch.save(key_cache.detach().cpu(), os.path.join(k_dir, f"{i}.pt"))
         for i, value_cache in enumerate(value_caches):
-            torch.save(value_cache, os.path.join(v_dir, f"{i}.pt"))
+            torch.save(value_cache.detach().cpu(), os.path.join(v_dir, f"{i}.pt"))
 
 
 def load_extract_cache(
@@ -280,7 +280,7 @@ def load_extract_cache(
         if len(k_files) == 0:
             return None  # 文件夹是空的
 
-        # [修复点 1]: 确保 key_caches 字典里有 round_i 这个键
+        # 确保 key_caches 字典里有 round_i 这个键
         if round_i not in loaded_cache.key_caches:
             loaded_cache.key_caches[round_i] = {}
 
@@ -297,7 +297,7 @@ def load_extract_cache(
         if len(v_files) == 0:
             return None
 
-        # [修复点 2]: 确保 value_caches 字典里有 round_i 这个键
+        # 确保 value_caches 字典里有 round_i 这个键
         if round_i not in loaded_cache.value_caches:
             loaded_cache.value_caches[round_i] = {}
 
@@ -385,6 +385,7 @@ def crs_evaluation_with_data(
         v_quant_cr = v_origin_size / v_quant_size
         res["k_quant_cr"].append(k_quant_cr)
         res["v_quant_cr"].append(v_quant_cr)
+
         if config.quant_method == QuantMethod.PackKV:
             (
                 k_encode_size_before_repack,
@@ -561,11 +562,14 @@ def cr_evaluation(
             raise ValueError(f"Model class not found for {config.model_name}")
         model = model_class.from_pretrained(
             PackKVCacheConfigStatic.config.model_name,
-            torch_dtype="auto",
+            torch_dtype=torch.bfloat16,
             device_map="auto",
-            # attn_implementation="flash_attention_2",
-            attn_implementation="eager",
+            attn_implementation="flash_attention_2",
+            # attn_implementation="sdpa",
+            # attn_implementation="eager",
+            trust_remote_code=True,
         )
+        model.eval()
         # batch_size = 1
         # lm_eval_warp = LMEvalWrapper(model, tokenizer, batch_size)
         inputs = get_ctx_len_text_from_wikitext_103_v1(ctx_len, tokenizer).to(
@@ -573,7 +577,11 @@ def cr_evaluation(
         )
 
         with torch.no_grad():
-            _ = model(**inputs)
+            _ = model(
+                **inputs,
+                use_cache=True,
+                logits_to_keep=1,
+            )
         PackKVCachePytorchQuant.round_ = 0
 
         if enable_save:
