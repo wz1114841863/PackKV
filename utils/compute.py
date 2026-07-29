@@ -2,9 +2,10 @@ import torch
 import atexit
 import math
 import os
-from typing import Tuple, Optional, List
+from typing import Tuple, Optional, List, Dict
 from enum import Enum
 from collections import defaultdict
+from dataclasses import dataclass
 
 GLOBAL_K_COUNTER = defaultdict(int)
 
@@ -696,94 +697,141 @@ def hardware_bucket_repacking(
     return repacked_blocks
 
 
-def bit_pack(blocks: torch.Tensor, pack_len: int) -> Tuple[int, int]:
-    """评估算法理论压缩率"""
-    # 将传入的张量划分为K和V, 切分成大小为pack_len的组
-    # 并计算每个组的最大值和最小值
+@dataclass(frozen=True)
+class BitPackStats:
+    """一个连续 bitstream 编码后的分项存储开销."""
+
+    payload_bits: int
+    pack_min_bits: int
+    encode_length_bits: int
+    byte_alignment_bits: int
+    total_bytes: int
+    code_value_bits: int
+    pack_count: int
+    padded_token_count: int
+    padded_value_count: int
+    bit_width_histogram: Dict[int, int]
+
+    @property
+    def payload_bytes(self) -> int:
+        return (self.payload_bits + 7) // 8
+
+    @property
+    def pack_min_bytes(self) -> int:
+        return (self.pack_min_bits + 7) // 8
+
+    @property
+    def encode_length_bytes(self) -> int:
+        return (self.encode_length_bits + 7) // 8
+
+
+def _integer_storage_bits(min_value: int, max_value: int) -> int:
+    """返回覆盖给定整数范围所需的最小定长位宽."""
+    if min_value > max_value:
+        raise ValueError("min_value must not exceed max_value")
+    if min_value >= 0:
+        return max(1, math.ceil(math.log2(max_value + 1)))
+
+    bits = 1
+    while min_value < -(1 << (bits - 1)) or max_value > (1 << (bits - 1)) - 1:
+        bits += 1
+    return bits
+
+
+def _single_cache_bit_pack_stats(
+    values: torch.Tensor,
+    pack_len: int,
+    padded_token_count: int,
+) -> BitPackStats:
+    if pack_len <= 0:
+        raise ValueError("pack_len must be positive")
+    if values.ndim != 2 or values.shape[0] % pack_len != 0:
+        raise ValueError("values must be [token, feature] and divisible by pack_len")
+
+    packs = values.view(-1, pack_len, values.shape[1])
+    pack_mins = packs.min(dim=1).values
+    pack_maxs = packs.max(dim=1).values
+    widths = torch.ceil(torch.log2(pack_maxs - pack_mins + 1)).to(torch.int64)
+
+    payload_bits = int(widths.sum().item()) * pack_len
+    global_min = int(values.min().item())
+    global_max = int(values.max().item())
+    code_value_bits = _integer_storage_bits(global_min, global_max)
+    pack_min_bits = pack_mins.numel() * code_value_bits
+    encode_length_field_bits = max(
+        1, math.ceil(math.log2(code_value_bits + 1))
+    )
+    encode_length_bits = widths.numel() * encode_length_field_bits
+
+    component_bytes = (
+        (payload_bits + 7) // 8
+        + (pack_min_bits + 7) // 8
+        + (encode_length_bits + 7) // 8
+    )
+    raw_bits = payload_bits + pack_min_bits + encode_length_bits
+    byte_alignment_bits = component_bytes * 8 - raw_bits
+    unique_widths, counts = torch.unique(widths, return_counts=True)
+    histogram = {
+        int(width): int(count)
+        for width, count in zip(unique_widths.tolist(), counts.tolist())
+    }
+
+    return BitPackStats(
+        payload_bits=payload_bits,
+        pack_min_bits=pack_min_bits,
+        encode_length_bits=encode_length_bits,
+        byte_alignment_bits=byte_alignment_bits,
+        total_bytes=component_bytes,
+        code_value_bits=code_value_bits,
+        pack_count=packs.shape[0],
+        padded_token_count=padded_token_count,
+        padded_value_count=padded_token_count * values.shape[1],
+        bit_width_histogram=histogram,
+    )
+
+
+def bit_pack_stats(
+    blocks: torch.Tensor, pack_len: int
+) -> Tuple[BitPackStats, BitPackStats]:
+    """统计K/V payload及其解码元数据，不包含量化scale/zero-point."""
+    if blocks.ndim != 3:
+        raise ValueError("blocks must have shape [block, token, feature]")
+    if blocks.shape[2] % 2 != 0:
+        raise ValueError("K/V concatenated feature dimension must be even")
+
     half_vec_len = blocks.shape[2] // 2
-    blocks = blocks.flatten(0, 1).to(torch.int64)
-    k_blocks = blocks[:, :half_vec_len]
-    v_blocks = blocks[:, half_vec_len:]
+    flattened = blocks.flatten(0, 1).to(torch.int64)
+    padded_token_count = (-flattened.shape[0]) % pack_len
+    if padded_token_count:
+        # 重复最后一个向量不会扩大最后一个pack的数值范围.
+        padding = flattened[-1:].expand(padded_token_count, -1)
+        flattened = torch.cat([flattened, padding], dim=0)
 
-    k_packs = k_blocks.view(-1, pack_len, half_vec_len)
-    v_packs = v_blocks.view(-1, pack_len, half_vec_len)
-
-    k_bit_len = math.ceil(math.log2(k_packs.unique().numel()))
-    v_bit_len = math.ceil(math.log2(v_packs.unique().numel()))
-    # 找出基础值
-    k_pack_mins = k_packs.min(dim=1).values
-    k_pack_maxs = k_packs.max(dim=1).values
-    v_pack_mins = v_packs.min(dim=1).values
-    v_pack_maxs = v_packs.max(dim=1).values
-
-    # 计算有效载荷, 即存下Pack内数值所需的基础比特
-    # 组内极差 = k_pack_maxs - k_pack_mins
-    # 所需位宽 = ceil(log2(极差 + 1))
-    k_pack_bit_num = (
-        torch.ceil(torch.log2(k_pack_maxs - k_pack_mins + 1)).to(torch.int64).sum()
-        * pack_len
-    )
-    v_pack_bit_num = (
-        torch.ceil(torch.log2(v_pack_maxs - v_pack_mins + 1)).to(torch.int64).sum()
-        * pack_len
+    k_values = flattened[:, :half_vec_len]
+    v_values = flattened[:, half_vec_len:]
+    return (
+        _single_cache_bit_pack_stats(k_values, pack_len, padded_token_count),
+        _single_cache_bit_pack_stats(v_values, pack_len, padded_token_count),
     )
 
-    k_pack_bit_num = torch.clamp(k_pack_bit_num, min=2.0)
-    v_pack_bit_num = torch.clamp(v_pack_bit_num, min=2.0)
 
-    # 总比特数 += 基础值的数量 * (基础值所需的比特 + 编码头所需的比特)
-    k_pack_bit_num += k_pack_mins.numel() * (
-        k_bit_len + math.ceil(math.log2(k_bit_len + 1))
-    )
-    v_pack_bit_num += v_pack_mins.numel() * (
-        v_bit_len + math.ceil(math.log2(v_bit_len + 1))
-    )
-
-    return k_pack_bit_num.item() // 8, v_pack_bit_num.item() // 8
+def bit_pack(blocks: torch.Tensor, pack_len: int) -> Tuple[int, int]:
+    """兼容旧调用方，返回按连续bitstream估算的K/V总字节数."""
+    k_stats, v_stats = bit_pack_stats(blocks, pack_len)
+    return k_stats.total_bytes, v_stats.total_bytes
 
 
 def bit_pack_detail_rebuttal(
     blocks: torch.Tensor, pack_len: int
 ) -> Tuple[int, int, int, int, int, int]:
-    half_vec_len = blocks.shape[2] // 2
-    blocks = blocks.flatten(0, 1).to(torch.int64)
-    k_blocks = blocks[:, :half_vec_len]
-    v_blocks = blocks[:, half_vec_len:]
-
-    k_packs = k_blocks.view(-1, pack_len, half_vec_len)
-    v_packs = v_blocks.view(-1, pack_len, half_vec_len)
-
-    k_bit_len = math.ceil(math.log2(k_packs.unique().numel()))
-    v_bit_len = math.ceil(math.log2(v_packs.unique().numel()))
-
-    k_pack_mins = k_packs.min(dim=1).values
-    k_pack_maxs = k_packs.max(dim=1).values
-    v_pack_mins = v_packs.min(dim=1).values
-    v_pack_maxs = v_packs.max(dim=1).values
-
-    # 计算真正的有效载荷 (Payload，即打包后的差值)
-    k_pack_bit_num = (
-        torch.ceil(torch.log2(k_pack_maxs - k_pack_mins + 1)).to(torch.int64).sum()
-        * pack_len
-    )
-    v_pack_bit_num = (
-        torch.ceil(torch.log2(v_pack_maxs - v_pack_mins + 1)).to(torch.int64).sum()
-        * pack_len
-    )
-    # 计算 K 和 V 的零点元数据开销 (Zero-point)
-    k_zero_point_bit_num = k_pack_mins.numel() * k_bit_len
-    # 计算 K 和 V 的位宽字典开销 (Encode-length)
-    k_encode_len_bit_num = k_pack_mins.numel() * math.ceil(math.log2(k_bit_len + 1))
-    v_zero_point_bit_num = v_pack_mins.numel() * v_bit_len
-    v_encode_len_bit_num = v_pack_mins.numel() * math.ceil(math.log2(v_bit_len + 1))
-
+    k_stats, v_stats = bit_pack_stats(blocks, pack_len)
     return (
-        k_zero_point_bit_num // 8,
-        v_zero_point_bit_num // 8,
-        k_encode_len_bit_num // 8,
-        v_encode_len_bit_num // 8,
-        k_pack_bit_num.item() // 8,
-        v_pack_bit_num.item() // 8,
+        k_stats.pack_min_bytes,
+        v_stats.pack_min_bytes,
+        k_stats.encode_length_bytes,
+        v_stats.encode_length_bytes,
+        k_stats.payload_bytes,
+        v_stats.payload_bytes,
     )
 
 
@@ -793,12 +841,13 @@ def repack_and_encode(
     pack_size: int,
     repack_method: RepackMethod,
     before_and_after_repacking=None,
-) -> Tuple[int, int, int, int]:
+    return_stats: bool = False,
+):
     """执行不同的重排算法, 并对比重排前后的收益与代价"""
     k_blocks = k_tensor.permute(2, 3, 0, 1, 4).flatten(2, 4)
     v_blocks = v_tensor.permute(2, 3, 0, 1, 4).flatten(2, 4)
     blocks = torch.cat([k_blocks, v_blocks], dim=2)
-    k_size_pre, v_size_pre = bit_pack(blocks, pack_size)
+    k_stats_pre, v_stats_pre = bit_pack_stats(blocks, pack_size)
 
     before_and_after_ = [blocks, None]
     if repack_method == RepackMethod.GREEDY:
@@ -819,9 +868,16 @@ def repack_and_encode(
     if before_and_after_repacking is not None:
         before_and_after_repacking.append(before_and_after_)
 
-    k_size_aft, v_size_aft = bit_pack(blocks, pack_size)
+    k_stats_aft, v_stats_aft = bit_pack_stats(blocks, pack_size)
 
-    return k_size_pre, v_size_pre, k_size_aft, v_size_aft
+    if return_stats:
+        return k_stats_pre, v_stats_pre, k_stats_aft, v_stats_aft
+    return (
+        k_stats_pre.total_bytes,
+        v_stats_pre.total_bytes,
+        k_stats_aft.total_bytes,
+        v_stats_aft.total_bytes,
+    )
 
 
 def repack_and_encode_detail_rebuttal(

@@ -4,6 +4,7 @@ import argparse
 import logging
 import csv
 import datetime
+import re
 
 # 将项目根目录添加到系统路径,以确保能够正确导入 utils 和 models
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -20,9 +21,51 @@ max_ctx_len_map = {
     "JackFram/llama-160m": 1024 * 2,  # 2K 上下文
 }
 
+STORAGE_MODEL = "stream-packed-v1-native-quant-metadata"
+
+
+def safe_filename_component(value):
+    """将实验参数转换为适合文件名的稳定片段."""
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", str(value)).strip("-")
+
+
+def build_report_filename(args, round_idx, timestamp=None):
+    """生成包含完整实验配置的逐层报告文件名."""
+    timestamp = timestamp or datetime.datetime.now()
+    zero_point_mode = (
+        "fp-min" if args.high_precision_zero_point else "int-zero"
+    )
+    fields = [
+        "CR",
+        safe_filename_component(args.model_name),
+        f"ctx-{args.ctx_len}",
+        f"quant-{args.quant_method}",
+        f"scale-{args.scale_method}",
+        f"zp-{zero_point_mode}",
+        f"repack-{args.repack_method}",
+        f"k-{safe_filename_component(args.k_scale)}",
+        f"v-{safe_filename_component(args.v_scale)}",
+        f"block-{args.block_size}",
+        f"buffer-{args.buffer_size}",
+        f"pack-{args.pack_size}",
+        f"round-{round_idx}",
+        timestamp.strftime("%Y%m%d_%H%M%S"),
+    ]
+    return "_".join(fields) + ".csv"
+
 
 def append_to_macro_summary_csv(
-    args, avg_k_cr, avg_v_cr, overall_avg, k_save_pct, v_save_pct, csv_path
+    args,
+    k_original_bytes,
+    v_original_bytes,
+    k_compressed_bytes,
+    v_compressed_bytes,
+    k_global_cr,
+    v_global_cr,
+    overall_global_cr,
+    k_save_pct,
+    v_save_pct,
+    csv_path,
 ):
     """
     将全局宏观结果追加 (Append) 到一个总的 CSV 汇总表中
@@ -31,7 +74,8 @@ def append_to_macro_summary_csv(
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    summary_file = os.path.join(save_dir, "Global_Macro_Summary.csv")
+    # v1/v2 使用逐层CR算术平均;v3改为总原始字节/总压缩字节.
+    summary_file = os.path.join(save_dir, "Global_Macro_Summary_v3.csv")
     file_exists = os.path.isfile(summary_file)
 
     # 定义表头 (涵盖了你对比实验需要的所有超参和结果)
@@ -46,13 +90,19 @@ def append_to_macro_summary_csv(
         "K_Scale",
         "V_Scale",
         "Block_Size",
+        "Buffer_Size",
         "Pack_Size",
-        "K_Avg_CR",
-        "V_Avg_CR",
-        "Overall_Avg_CR",
+        "Storage_Model",
+        "K_Original_Bytes",
+        "V_Original_Bytes",
+        "K_Compressed_Bytes",
+        "V_Compressed_Bytes",
+        "K_Global_CR",
+        "V_Global_CR",
+        "Overall_Global_CR",
         "K_Mem_Saved(%)",
         "V_Mem_Saved(%)",
-        "csv_path",
+        "Detailed_Report_Path",
     ]
 
     # 组装当前运行的数据行
@@ -68,16 +118,30 @@ def append_to_macro_summary_csv(
         args.k_scale,
         args.v_scale,
         args.block_size,
+        args.buffer_size,
         args.pack_size,
-        f"{avg_k_cr:.4f}",
-        f"{avg_v_cr:.4f}",
-        f"{overall_avg:.4f}",
+        STORAGE_MODEL,
+        k_original_bytes,
+        v_original_bytes,
+        k_compressed_bytes,
+        v_compressed_bytes,
+        f"{k_global_cr:.4f}",
+        f"{v_global_cr:.4f}",
+        f"{overall_global_cr:.4f}",
         f"{k_save_pct:.2f}%",
         f"{v_save_pct:.2f}%",
         f"{csv_path}",
     ]
 
     try:
+        if file_exists:
+            with open(summary_file, mode="r", newline="", encoding="utf-8") as f:
+                existing_headers = next(csv.reader(f), None)
+            if existing_headers != headers:
+                raise ValueError(
+                    "Global_Macro_Summary_v3.csv 表头与当前 schema 不一致"
+                )
+
         # 使用 'a' 模式追加写入
         with open(summary_file, mode="a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
@@ -101,10 +165,8 @@ def export_to_csv(args, res_dict, round_idx):
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    # 生成安全的文件名
-    safe_model_name = args.model_name.replace("/", "_").replace("\\", "_")
-    timestamp = datetime.datetime.now().strftime("%Y%md_%H%M%S")
-    csv_filename = f"CR_Report_{safe_model_name}_ctx{args.ctx_len}_Round{round_idx}_{timestamp}.csv"
+    generated_at = datetime.datetime.now()
+    csv_filename = build_report_filename(args, round_idx, generated_at)
     csv_path = os.path.join(save_dir, csv_filename)
 
     # 提取共有多少层 (以 k_original_size 的长度为准)
@@ -116,7 +178,39 @@ def export_to_csv(args, res_dict, round_idx):
         return None  # 如果没有逐层数据,跳过导出
 
     # 准备 CSV 表头
-    headers = ["Layer"]
+    metadata_headers = [
+        "Generated_At",
+        "Model",
+        "Ctx_Len",
+        "Quant_Method",
+        "Scale_Method",
+        "High_Precision_Zero_Point",
+        "Repack_Method",
+        "K_Scale",
+        "V_Scale",
+        "Block_Size",
+        "Buffer_Size",
+        "Pack_Size",
+        "Round",
+        "Storage_Model",
+    ]
+    metadata_values = [
+        generated_at.strftime("%Y-%m-%d %H:%M:%S"),
+        args.model_name,
+        args.ctx_len,
+        args.quant_method,
+        args.scale_method,
+        args.high_precision_zero_point,
+        args.repack_method,
+        args.k_scale,
+        args.v_scale,
+        args.block_size,
+        args.buffer_size,
+        args.pack_size,
+        round_idx,
+        STORAGE_MODEL,
+    ]
+    headers = metadata_headers + ["Layer"]
     # 提取所有值为列表的键作为列名
     list_keys = [
         k for k, v in res_dict.items() if isinstance(v, list) and len(v) == num_layers
@@ -130,7 +224,7 @@ def export_to_csv(args, res_dict, round_idx):
 
             # 逐行 (逐层) 写入数据
             for layer_idx in range(num_layers):
-                row = [f"Layer_{layer_idx}"]
+                row = metadata_values + [f"Layer_{layer_idx}"]
                 for key in list_keys:
                     row.append(res_dict[key][layer_idx])
                 writer.writerow(row)
@@ -197,7 +291,7 @@ def main():
         "--high_precision_zero_point",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="保存浮点 minimum；使用 --no-high_precision_zero_point 改为整数 zero point",
+        help="保存浮点 minimum;使用 --no-high_precision_zero_point 改为整数 zero point",
     )
 
     # 方法选项
@@ -289,25 +383,31 @@ def main():
                     "k_encode_after_repack_cr" in res
                     and "v_encode_after_repack_cr" in res
                 ):
-                    # 计算所有层的平均压缩率
-                    k_cr_list = res["k_encode_after_repack_cr"]
-                    v_cr_list = res["v_encode_after_repack_cr"]
-
-                    avg_k_cr = sum(k_cr_list) / len(k_cr_list) if k_cr_list else 0
-                    avg_v_cr = sum(v_cr_list) / len(v_cr_list) if v_cr_list else 0
-
-                    k_save_pct = (1.0 - 1.0 / avg_k_cr) * 100 if avg_k_cr > 0 else 0
-                    v_save_pct = (1.0 - 1.0 / avg_v_cr) * 100 if avg_v_cr > 0 else 0
+                    k_original_bytes = sum(res["k_original_size"])
+                    v_original_bytes = sum(res["v_original_size"])
+                    k_compressed_bytes = sum(res["k_encode_size_after_repack"])
+                    v_compressed_bytes = sum(res["v_encode_size_after_repack"])
+                    k_global_cr = k_original_bytes / k_compressed_bytes
+                    v_global_cr = v_original_bytes / v_compressed_bytes
+                    overall_global_cr = (
+                        k_original_bytes + v_original_bytes
+                    ) / (k_compressed_bytes + v_compressed_bytes)
+                    k_save_pct = (1.0 - 1.0 / k_global_cr) * 100
+                    v_save_pct = (1.0 - 1.0 / v_global_cr) * 100
 
                     print(
-                        f"   Key Cache 平均压缩率   : {avg_k_cr:.3f}x  (显存节省: {k_save_pct:.1f}%)"
+                        f"   Key Cache 全局压缩率   : {k_global_cr:.3f}x  (显存节省: {k_save_pct:.1f}%)"
                     )
                     print(
-                        f"   Value Cache 平均压缩率 : {avg_v_cr:.3f}x  (显存节省: {v_save_pct:.1f}%)"
+                        f"   Value Cache 全局压缩率 : {v_global_cr:.3f}x  (显存节省: {v_save_pct:.1f}%)"
                     )
                     print("-" * 50)
-                    overall_avg = (avg_k_cr + avg_v_cr) / 2
-                    print(f"   综合全局平均压缩率     : {overall_avg:.3f}x")
+                    print(f"   K/V 综合全局压缩率     : {overall_global_cr:.3f}x")
+                    print(
+                        "   统计口径: 总原始字节 / 总编码字节 "
+                        "(包含Recent Buffer及量化元数据)"
+                    )
+                    print(f"   存储模型: {STORAGE_MODEL}")
 
                     # 导出详细数据到 CSV
                     csv_path = export_to_csv(args, res, i + 1)
@@ -316,9 +416,13 @@ def main():
 
                     summary_path = append_to_macro_summary_csv(
                         args,
-                        avg_k_cr,
-                        avg_v_cr,
-                        overall_avg,
+                        k_original_bytes,
+                        v_original_bytes,
+                        k_compressed_bytes,
+                        v_compressed_bytes,
+                        k_global_cr,
+                        v_global_cr,
+                        overall_global_cr,
                         k_save_pct,
                         v_save_pct,
                         csv_path,

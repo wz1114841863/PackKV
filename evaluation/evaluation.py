@@ -322,45 +322,143 @@ def load_extract_cache(
 
 
 def get_pseudo_quant_bit_num(x, min_bits=1):
-    # 只用于统计码值种类,不改变原始伪量化张量
-    x_for_count = x.detach().to(torch.int32)
-    unique_num = torch.unique(x_for_count).numel()
-    return max(min_bits, (unique_num - 1).bit_length())
+    """按实际整数范围返回定长存储位宽，不再使用 unique 数量近似."""
+    x_for_count = x.detach().to(torch.int64)
+    min_value = int(x_for_count.min().item())
+    max_value = int(x_for_count.max().item())
+    if min_value >= 0:
+        return max(min_bits, math.ceil(math.log2(max_value + 1)))
+
+    bits = max(1, min_bits)
+    while min_value < -(1 << (bits - 1)) or max_value > (1 << (bits - 1)) - 1:
+        bits += 1
+    return bits
+
+
+def get_compressible_prefix_length(seq_len, block_size, recent_size):
+    """与在线 Cache 的 cut_tensor 规则一致，只量化完整Block."""
+    if block_size <= 0 or recent_size < 0:
+        raise ValueError("block_size must be positive and recent_size non-negative")
+    if seq_len <= recent_size:
+        return 0
+    return ((seq_len - recent_size) // block_size) * block_size
 
 
 def crs_evaluation_with_data(
     config: PackKVCacheConfig, key_caches, value_caches, before_and_after_repacking=None
 ):
-    """计算KV Cache在量化和压缩前后的大小和CR, 返回详细的数据供后续分析使用"""
-    # assert key_caches[0].shape[1] == 32 and key_caches[0].shape[3] == 128
+    """按字节统计量化、编码元数据、Recent Buffer和bit-packing开销."""
+    metric_names = [
+        "original_size",
+        "recent_high_precision_size",
+        "quant_payload_size",
+        "quant_payload_alignment_bits",
+        "quant_zero_point_size",
+        "quant_scale_size",
+        "quant_size",
+        "bitpack_payload_size_before_repack",
+        "bitpack_min_size_before_repack",
+        "bitpack_encode_len_size_before_repack",
+        "bitpack_alignment_bits_before_repack",
+        "bitpack_code_value_bits_before_repack",
+        "bitpack_pack_count_before_repack",
+        "bitpack_padding_tokens_before_repack",
+        "bitpack_padding_values_before_repack",
+        "bit_width_hist_before_repack",
+        "encode_size_before_repack",
+        "bitpack_payload_size_after_repack",
+        "bitpack_min_size_after_repack",
+        "bitpack_encode_len_size_after_repack",
+        "bitpack_alignment_bits_after_repack",
+        "bitpack_code_value_bits_after_repack",
+        "bitpack_pack_count_after_repack",
+        "bitpack_padding_tokens_after_repack",
+        "bitpack_padding_values_after_repack",
+        "bit_width_hist_after_repack",
+        "permutation_metadata_size",
+        "bucket_metadata_size",
+        "block_metadata_size",
+        "encode_size_after_repack",
+        "quant_cr",
+        "encode_before_repack_cr",
+        "encode_after_repack_cr",
+    ]
     res = {
-        "k_original_size": [],
-        "v_original_size": [],
-        "k_quant_size": [],
-        "v_quant_size": [],
-        "k_encode_size_before_repack": [],
-        "v_encode_size_before_repack": [],
-        "k_encode_size_after_repack": [],
-        "v_encode_size_after_repack": [],
-        "k_quant_cr": [],
-        "v_quant_cr": [],
-        "k_encode_before_repack_cr": [],
-        "v_encode_before_repack_cr": [],
-        "k_encode_after_repack_cr": [],
-        "v_encode_after_repack_cr": [],
+        f"{cache_kind}_{metric}": []
+        for cache_kind in ("k", "v")
+        for metric in metric_names
     }
 
     layer_num = len(key_caches)
+    if layer_num != len(value_caches):
+        raise ValueError("K/V cache layer count mismatch")
 
     for layer_idx in range(layer_num):
         k = key_caches[layer_idx]
         v = value_caches[layer_idx]
+        if k.shape[2] != v.shape[2]:
+            raise ValueError(f"Layer {layer_idx} K/V sequence length mismatch")
+
         k_origin_size = k.numel() * k.element_size()
         v_origin_size = v.numel() * v.element_size()
         res["k_original_size"].append(k_origin_size)
         res["v_original_size"].append(v_origin_size)
+
+        compressible_tokens = get_compressible_prefix_length(
+            k.shape[2], config.block_size, config.buffer_size
+        )
+        k_to_quant = k[:, :, :compressible_tokens, :]
+        v_to_quant = v[:, :, :compressible_tokens, :]
+        k_recent = k[:, :, compressible_tokens:, :]
+        v_recent = v[:, :, compressible_tokens:, :]
+        k_recent_size = k_recent.numel() * k_recent.element_size()
+        v_recent_size = v_recent.numel() * v_recent.element_size()
+        res["k_recent_high_precision_size"].append(k_recent_size)
+        res["v_recent_high_precision_size"].append(v_recent_size)
+
+        if compressible_tokens == 0:
+            for cache_kind, origin_size in (
+                ("k", k_origin_size),
+                ("v", v_origin_size),
+            ):
+                for name in (
+                    "quant_payload_size",
+                    "quant_payload_alignment_bits",
+                    "quant_zero_point_size",
+                    "quant_scale_size",
+                    "bitpack_payload_size_before_repack",
+                    "bitpack_min_size_before_repack",
+                    "bitpack_encode_len_size_before_repack",
+                    "bitpack_alignment_bits_before_repack",
+                    "bitpack_code_value_bits_before_repack",
+                    "bitpack_pack_count_before_repack",
+                    "bitpack_padding_tokens_before_repack",
+                    "bitpack_padding_values_before_repack",
+                    "bitpack_payload_size_after_repack",
+                    "bitpack_min_size_after_repack",
+                    "bitpack_encode_len_size_after_repack",
+                    "bitpack_alignment_bits_after_repack",
+                    "bitpack_code_value_bits_after_repack",
+                    "bitpack_pack_count_after_repack",
+                    "bitpack_padding_tokens_after_repack",
+                    "bitpack_padding_values_after_repack",
+                    "permutation_metadata_size",
+                    "bucket_metadata_size",
+                    "block_metadata_size",
+                ):
+                    res[f"{cache_kind}_{name}"].append(0)
+                res[f"{cache_kind}_bit_width_hist_before_repack"].append("{}")
+                res[f"{cache_kind}_bit_width_hist_after_repack"].append("{}")
+                res[f"{cache_kind}_quant_size"].append(origin_size)
+                res[f"{cache_kind}_encode_size_before_repack"].append(origin_size)
+                res[f"{cache_kind}_encode_size_after_repack"].append(origin_size)
+                res[f"{cache_kind}_quant_cr"].append(1.0)
+                res[f"{cache_kind}_encode_before_repack_cr"].append(1.0)
+                res[f"{cache_kind}_encode_after_repack_cr"].append(1.0)
+            continue
+
         k_quant_int, k_quant_zero, k_quant_scale = quant_ints(
-            k,
+            k_to_quant,
             config.block_size,
             config.k_quant_scale_rel,
             config.quant_method.value[0],
@@ -368,61 +466,152 @@ def crs_evaluation_with_data(
             getattr(config, "scale_method", ScaleMethod.CONTINUOUS),
         )
         v_quant_int, v_quant_zero, v_quant_scale = quant_ints(
-            v,
+            v_to_quant,
             config.block_size,
             config.v_quant_scale_rel,
             config.quant_method.value[1],
             config.high_precision_zero_point,
             getattr(config, "scale_method", ScaleMethod.CONTINUOUS),
         )
-        # k_quant_int = k_quant_int.flatten(2,3)
-        # v_quant_int = v_quant_int.flatten(2,3)
-        # k_quant_bit_num = math.ceil(math.log2(k_quant_int.unique().numel()))
-        # v_quant_bit_num = math.ceil(math.log2(v_quant_int.unique().numel()))
         k_quant_bit_num = get_pseudo_quant_bit_num(k_quant_int)
         v_quant_bit_num = get_pseudo_quant_bit_num(v_quant_int)
+        k_quant_payload_bits = k_quant_int.numel() * k_quant_bit_num
+        v_quant_payload_bits = v_quant_int.numel() * v_quant_bit_num
+        k_quant_payload_size = (k_quant_payload_bits + 7) // 8
+        v_quant_payload_size = (v_quant_payload_bits + 7) // 8
+        k_zero_size = k_quant_zero.numel() * k_quant_zero.element_size()
+        v_zero_size = v_quant_zero.numel() * v_quant_zero.element_size()
+        k_scale_size = k_quant_scale.numel() * k_quant_scale.element_size()
+        v_scale_size = v_quant_scale.numel() * v_quant_scale.element_size()
         k_quant_size = (
-            k_quant_int.numel() * k_quant_bit_num // 8
-            + k_quant_zero.numel() * k_quant_zero.element_size()
-            + k_quant_scale.numel() * k_quant_scale.element_size()
+            k_quant_payload_size + k_zero_size + k_scale_size + k_recent_size
         )
         v_quant_size = (
-            v_quant_int.numel() * v_quant_bit_num // 8
-            + v_quant_zero.numel() * v_quant_zero.element_size()
-            + v_quant_scale.numel() * v_quant_scale.element_size()
+            v_quant_payload_size + v_zero_size + v_scale_size + v_recent_size
         )
+        res["k_quant_payload_size"].append(k_quant_payload_size)
+        res["v_quant_payload_size"].append(v_quant_payload_size)
+        res["k_quant_payload_alignment_bits"].append(
+            k_quant_payload_size * 8 - k_quant_payload_bits
+        )
+        res["v_quant_payload_alignment_bits"].append(
+            v_quant_payload_size * 8 - v_quant_payload_bits
+        )
+        res["k_quant_zero_point_size"].append(k_zero_size)
+        res["v_quant_zero_point_size"].append(v_zero_size)
+        res["k_quant_scale_size"].append(k_scale_size)
+        res["v_quant_scale_size"].append(v_scale_size)
         res["k_quant_size"].append(k_quant_size)
         res["v_quant_size"].append(v_quant_size)
-        k_quant_cr = k_origin_size / k_quant_size
-        v_quant_cr = v_origin_size / v_quant_size
-        res["k_quant_cr"].append(k_quant_cr)
-        res["v_quant_cr"].append(v_quant_cr)
+        res["k_quant_cr"].append(k_origin_size / k_quant_size)
+        res["v_quant_cr"].append(v_origin_size / v_quant_size)
 
         if config.quant_method == QuantMethod.PackKV:
             (
-                k_encode_size_before_repack,
-                v_encode_size_before_repack,
-                k_encode_size_after_repack,
-                v_encode_size_after_repack,
+                k_stats_before,
+                v_stats_before,
+                k_stats_after,
+                v_stats_after,
             ) = repack_and_encode(
                 k_quant_int,
                 v_quant_int,
                 config.pack_size,
                 config.repack_method,
                 before_and_after_repacking,
+                return_stats=True,
             )
-            res["k_encode_size_before_repack"].append(k_encode_size_before_repack)
-            res["v_encode_size_before_repack"].append(v_encode_size_before_repack)
-            res["k_encode_size_after_repack"].append(k_encode_size_after_repack)
-            res["v_encode_size_after_repack"].append(v_encode_size_after_repack)
-            k_encode_before_repack_cr = k_origin_size / k_encode_size_before_repack
-            v_encode_before_repack_cr = v_origin_size / v_encode_size_before_repack
-            res["k_encode_before_repack_cr"].append(k_encode_before_repack_cr)
-            res["v_encode_before_repack_cr"].append(v_encode_before_repack_cr)
-            k_encode_after_repack_cr = k_origin_size / k_encode_size_after_repack
-            v_encode_after_repack_cr = v_origin_size / v_encode_size_after_repack
-            res["k_encode_after_repack_cr"].append(k_encode_after_repack_cr)
-            res["v_encode_after_repack_cr"].append(v_encode_after_repack_cr)
+
+            for cache_kind, stats_before, stats_after, origin_size, zero_size, scale_size, recent_size in (
+                (
+                    "k",
+                    k_stats_before,
+                    k_stats_after,
+                    k_origin_size,
+                    k_zero_size,
+                    k_scale_size,
+                    k_recent_size,
+                ),
+                (
+                    "v",
+                    v_stats_before,
+                    v_stats_after,
+                    v_origin_size,
+                    v_zero_size,
+                    v_scale_size,
+                    v_recent_size,
+                ),
+            ):
+                for phase, stats in (
+                    ("before_repack", stats_before),
+                    ("after_repack", stats_after),
+                ):
+                    res[f"{cache_kind}_bitpack_payload_size_{phase}"].append(
+                        stats.payload_bytes
+                    )
+                    res[f"{cache_kind}_bitpack_min_size_{phase}"].append(
+                        stats.pack_min_bytes
+                    )
+                    res[f"{cache_kind}_bitpack_encode_len_size_{phase}"].append(
+                        stats.encode_length_bytes
+                    )
+                    res[f"{cache_kind}_bitpack_alignment_bits_{phase}"].append(
+                        stats.byte_alignment_bits
+                    )
+                    res[f"{cache_kind}_bitpack_code_value_bits_{phase}"].append(
+                        stats.code_value_bits
+                    )
+                    res[f"{cache_kind}_bitpack_pack_count_{phase}"].append(
+                        stats.pack_count
+                    )
+                    res[f"{cache_kind}_bitpack_padding_tokens_{phase}"].append(
+                        stats.padded_token_count
+                    )
+                    res[f"{cache_kind}_bitpack_padding_values_{phase}"].append(
+                        stats.padded_value_count
+                    )
+                    res[f"{cache_kind}_bit_width_hist_{phase}"].append(
+                        json.dumps(stats.bit_width_histogram, sort_keys=True)
+                    )
+
+                # 当前格式假设K/V同步物理重排且pack/block形状由全局配置给出.
+                # 因而没有实际生成以下三类元数据；显式记录为0而不是隐式漏算.
+                permutation_metadata_size = 0
+                bucket_metadata_size = 0
+                block_metadata_size = 0
+                res[f"{cache_kind}_permutation_metadata_size"].append(
+                    permutation_metadata_size
+                )
+                res[f"{cache_kind}_bucket_metadata_size"].append(
+                    bucket_metadata_size
+                )
+                res[f"{cache_kind}_block_metadata_size"].append(
+                    block_metadata_size
+                )
+                encoded_before = (
+                    stats_before.total_bytes
+                    + zero_size
+                    + scale_size
+                    + recent_size
+                )
+                encoded_after = (
+                    stats_after.total_bytes
+                    + zero_size
+                    + scale_size
+                    + recent_size
+                    + permutation_metadata_size
+                    + bucket_metadata_size
+                    + block_metadata_size
+                )
+                res[f"{cache_kind}_encode_size_before_repack"].append(
+                    encoded_before
+                )
+                res[f"{cache_kind}_encode_size_after_repack"].append(encoded_after)
+                res[f"{cache_kind}_encode_before_repack_cr"].append(
+                    origin_size / encoded_before
+                )
+                res[f"{cache_kind}_encode_after_repack_cr"].append(
+                    origin_size / encoded_after
+                )
     return res
 
 
@@ -438,12 +627,16 @@ def crs_evaluation_with_data_detail_rebuttal(
         "v_quant_zero_point_size": [],
         "k_quant_scale_size": [],
         "v_quant_scale_size": [],
+        "k_recent_high_precision_size": [],
+        "v_recent_high_precision_size": [],
         "k_bitpack_min_value_size": [],
         "v_bitpack_min_value_size": [],
         "k_bitpack_encode_len_size": [],
         "v_bitpack_encode_len_size": [],
         "k_bitpack_encoded_size": [],
         "v_bitpack_encoded_size": [],
+        "k_bitpack_alignment_bits": [],
+        "v_bitpack_alignment_bits": [],
     }
 
     layer_num = len(key_caches)
@@ -455,8 +648,34 @@ def crs_evaluation_with_data_detail_rebuttal(
         v_origin_size = v.numel() * v.element_size()
         res["k_original_size"].append(k_origin_size)
         res["v_original_size"].append(v_origin_size)
+        compressible_tokens = get_compressible_prefix_length(
+            k.shape[2], config.block_size, config.buffer_size
+        )
+        k_to_quant = k[:, :, :compressible_tokens, :]
+        v_to_quant = v[:, :, :compressible_tokens, :]
+        k_recent = k[:, :, compressible_tokens:, :]
+        v_recent = v[:, :, compressible_tokens:, :]
+        res["k_recent_high_precision_size"].append(
+            k_recent.numel() * k_recent.element_size()
+        )
+        res["v_recent_high_precision_size"].append(
+            v_recent.numel() * v_recent.element_size()
+        )
+        if compressible_tokens == 0:
+            for cache_kind in ("k", "v"):
+                for name in (
+                    "quant_zero_point_size",
+                    "quant_scale_size",
+                    "bitpack_min_value_size",
+                    "bitpack_encode_len_size",
+                    "bitpack_encoded_size",
+                    "bitpack_alignment_bits",
+                ):
+                    res[f"{cache_kind}_{name}"].append(0)
+            continue
+
         k_quant_int, k_quant_zero, k_quant_scale = quant_ints(
-            k,
+            k_to_quant,
             config.block_size,
             config.k_quant_scale_rel,
             config.quant_method.value[0],
@@ -464,17 +683,13 @@ def crs_evaluation_with_data_detail_rebuttal(
             getattr(config, "scale_method", ScaleMethod.CONTINUOUS),
         )
         v_quant_int, v_quant_zero, v_quant_scale = quant_ints(
-            v,
+            v_to_quant,
             config.block_size,
             config.v_quant_scale_rel,
             config.quant_method.value[1],
             config.high_precision_zero_point,
             getattr(config, "scale_method", ScaleMethod.CONTINUOUS),
         )
-        # k_quant_int = k_quant_int.flatten(2,3)
-        # v_quant_int = v_quant_int.flatten(2,3)
-        k_quant_bit_num = math.ceil(math.log2(k_quant_int.unique().numel()))
-        v_quant_bit_num = math.ceil(math.log2(v_quant_int.unique().numel()))
         res["k_quant_zero_point_size"].append(
             k_quant_zero.numel() * k_quant_zero.element_size()
         )
@@ -489,21 +704,30 @@ def crs_evaluation_with_data_detail_rebuttal(
         )
         if config.quant_method == QuantMethod.PackKV:
             (
-                k_bitpack_min_value_size,
-                v_bitpack_min_value_size,
-                k_bitpack_encode_len_size,
-                v_bitpack_encode_len_size,
-                k_bitpack_encoded_size,
-                v_bitpack_encoded_size,
-            ) = repack_and_encode_detail_rebuttal(
-                k_quant_int, v_quant_int, config.pack_size
+                _,
+                _,
+                k_stats,
+                v_stats,
+            ) = repack_and_encode(
+                k_quant_int,
+                v_quant_int,
+                config.pack_size,
+                config.repack_method,
+                return_stats=True,
             )
-            res["k_bitpack_min_value_size"].append(k_bitpack_min_value_size)
-            res["v_bitpack_min_value_size"].append(v_bitpack_min_value_size)
-            res["k_bitpack_encode_len_size"].append(k_bitpack_encode_len_size)
-            res["v_bitpack_encode_len_size"].append(v_bitpack_encode_len_size)
-            res["k_bitpack_encoded_size"].append(k_bitpack_encoded_size)
-            res["v_bitpack_encoded_size"].append(v_bitpack_encoded_size)
+            for cache_kind, stats in (("k", k_stats), ("v", v_stats)):
+                res[f"{cache_kind}_bitpack_min_value_size"].append(
+                    stats.pack_min_bytes
+                )
+                res[f"{cache_kind}_bitpack_encode_len_size"].append(
+                    stats.encode_length_bytes
+                )
+                res[f"{cache_kind}_bitpack_encoded_size"].append(
+                    stats.payload_bytes
+                )
+                res[f"{cache_kind}_bitpack_alignment_bits"].append(
+                    stats.byte_alignment_bits
+                )
     return res
 
 
