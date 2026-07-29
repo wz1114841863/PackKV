@@ -1,6 +1,6 @@
 *.so
 *.pyc
-
+*.csv
 
 __pycache__/*
 logs/*
@@ -10,3 +10,6 @@ eval_logs/*
 grid_search_logs/*
 dumped_cache/*
 csv_results/*
+
+docs/
+AGENTS.md

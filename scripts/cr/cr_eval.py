@@ -9,7 +9,7 @@ import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.config import PackKVCacheConfig
-from utils.compute import QuantMethod, RepackMethod
+from utils.compute import QuantMethod, RepackMethod, ScaleMethod
 from evaluation.evaluation import cr_evaluation
 from utils.util import get_logger, block_other_logger
 
@@ -40,6 +40,8 @@ def append_to_macro_summary_csv(
         "Model",
         "Ctx_Len",
         "Quant_Method",
+        "Scale_Method",
+        "High_Precision_Zero_Point",
         "Repack_Method",
         "K_Scale",
         "V_Scale",
@@ -60,6 +62,8 @@ def append_to_macro_summary_csv(
         args.model_name,
         args.ctx_len,
         args.quant_method,
+        args.scale_method,
+        args.high_precision_zero_point,
         args.repack_method,
         args.k_scale,
         args.v_scale,
@@ -182,6 +186,19 @@ def main():
         default=0.01,
         help="V Cache 量化的相对误差容忍度 (Scale Rel)",
     )
+    parser.add_argument(
+        "--scale_method",
+        type=str,
+        default=ScaleMethod.CONTINUOUS.value,
+        choices=[method.value for method in ScaleMethod],
+        help="量化步长策略",
+    )
+    parser.add_argument(
+        "--high_precision_zero_point",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="保存浮点 minimum；使用 --no-high_precision_zero_point 改为整数 zero point",
+    )
 
     # 方法选项
     parser.add_argument(
@@ -227,12 +244,13 @@ def main():
         model_name=args.model_name,
         quant_method=quant_method_enum,
         repack_method=repack_method_enum,
-        high_precision_zero_point=True,  # 默认开启高精度极值保存
+        high_precision_zero_point=args.high_precision_zero_point,
         block_size=args.block_size,
         buffer_size=args.buffer_size,
         pack_size=args.pack_size,
         k_quant_scale_rel=args.k_scale,
         v_quant_scale_rel=args.v_scale,
+        scale_method=ScaleMethod(args.scale_method),
     )
     args.ctx_len = max_ctx_len_map[args.model_name]
     args.enable_save = True
@@ -240,6 +258,8 @@ def main():
     logger.info(f"   开始压缩率 (CR) 评测: {args.model_name}")
     logger.info(f"   Context Length: {args.ctx_len}")
     logger.info(f"   K Scale: {args.k_scale}, V Scale: {args.v_scale}")
+    logger.info(f"   Scale Method: {args.scale_method}")
+    logger.info(f"   High Precision Zero Point: {args.high_precision_zero_point}")
     logger.info(f"   Block Size: {args.block_size}, Pack Size: {args.pack_size}")
     logger.info("=" * 50)
 

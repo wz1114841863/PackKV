@@ -9,6 +9,7 @@ from utils.compute import (
     quant_error,
     quant_without_repacking,
     QuantMethod,
+    ScaleMethod,
 )
 from utils.util import JumpOutException
 
@@ -145,6 +146,11 @@ class PackKVCachePytorchQuant(Cache):
                 PackKVCacheConfigStatic.config.k_quant_scale_rel,
                 PackKVCacheConfigStatic.config.quant_method.value[0],
                 PackKVCacheConfigStatic.config.high_precision_zero_point,
+                getattr(
+                    PackKVCacheConfigStatic.config,
+                    "scale_method",
+                    ScaleMethod.CONTINUOUS,
+                ),
             )
         )
 
@@ -159,6 +165,11 @@ class PackKVCachePytorchQuant(Cache):
                 PackKVCacheConfigStatic.config.v_quant_scale_rel,
                 PackKVCacheConfigStatic.config.quant_method.value[1],
                 PackKVCacheConfigStatic.config.high_precision_zero_point,
+                getattr(
+                    PackKVCacheConfigStatic.config,
+                    "scale_method",
+                    ScaleMethod.CONTINUOUS,
+                ),
             )
         )
         # 计算新增组数 & 记录高精度Buffer

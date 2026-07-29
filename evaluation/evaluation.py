@@ -21,6 +21,8 @@ from utils.compute import (
     repack_and_encode_detail_rebuttal,
     repack_throughput_detail_rebuttal,
     quant_ints_throughput,
+    ScaleMethod,
+    dequantize_ints,
 )
 from utils.config import PackKVCacheConfig, ExtractCacheConfig
 from utils.lm_eval_warp import LMEvalWrapper
@@ -358,10 +360,20 @@ def crs_evaluation_with_data(
         res["k_original_size"].append(k_origin_size)
         res["v_original_size"].append(v_origin_size)
         k_quant_int, k_quant_zero, k_quant_scale = quant_ints(
-            k, config.block_size, config.k_quant_scale_rel, config.quant_method.value[0]
+            k,
+            config.block_size,
+            config.k_quant_scale_rel,
+            config.quant_method.value[0],
+            config.high_precision_zero_point,
+            getattr(config, "scale_method", ScaleMethod.CONTINUOUS),
         )
         v_quant_int, v_quant_zero, v_quant_scale = quant_ints(
-            v, config.block_size, config.v_quant_scale_rel, config.quant_method.value[1]
+            v,
+            config.block_size,
+            config.v_quant_scale_rel,
+            config.quant_method.value[1],
+            config.high_precision_zero_point,
+            getattr(config, "scale_method", ScaleMethod.CONTINUOUS),
         )
         # k_quant_int = k_quant_int.flatten(2,3)
         # v_quant_int = v_quant_int.flatten(2,3)
@@ -444,10 +456,20 @@ def crs_evaluation_with_data_detail_rebuttal(
         res["k_original_size"].append(k_origin_size)
         res["v_original_size"].append(v_origin_size)
         k_quant_int, k_quant_zero, k_quant_scale = quant_ints(
-            k, config.block_size, config.k_quant_scale_rel, config.quant_method.value[0]
+            k,
+            config.block_size,
+            config.k_quant_scale_rel,
+            config.quant_method.value[0],
+            config.high_precision_zero_point,
+            getattr(config, "scale_method", ScaleMethod.CONTINUOUS),
         )
         v_quant_int, v_quant_zero, v_quant_scale = quant_ints(
-            v, config.block_size, config.v_quant_scale_rel, config.quant_method.value[1]
+            v,
+            config.block_size,
+            config.v_quant_scale_rel,
+            config.quant_method.value[1],
+            config.high_precision_zero_point,
+            getattr(config, "scale_method", ScaleMethod.CONTINUOUS),
         )
         # k_quant_int = k_quant_int.flatten(2,3)
         # v_quant_int = v_quant_int.flatten(2,3)
@@ -500,10 +522,20 @@ def repacking_throughput_with_kv_rebuttal(
         k = key_caches[layer_idx]
         v = value_caches[layer_idx]
         k_quant_int, k_quant_zero, k_quant_scale = quant_ints(
-            k, config.block_size, config.k_quant_scale_rel, config.quant_method.value[0]
+            k,
+            config.block_size,
+            config.k_quant_scale_rel,
+            config.quant_method.value[0],
+            config.high_precision_zero_point,
+            getattr(config, "scale_method", ScaleMethod.CONTINUOUS),
         )
         v_quant_int, v_quant_zero, v_quant_scale = quant_ints(
-            v, config.block_size, config.v_quant_scale_rel, config.quant_method.value[1]
+            v,
+            config.block_size,
+            config.v_quant_scale_rel,
+            config.quant_method.value[1],
+            config.high_precision_zero_point,
+            getattr(config, "scale_method", ScaleMethod.CONTINUOUS),
         )
         if config.quant_method == QuantMethod.PackKV:
             greedy_time, median_time = repack_throughput_detail_rebuttal(
@@ -623,11 +655,23 @@ def k_cpu_compress_gpu_mat_vec_mul(
     k: torch.Tensor, config
 ) -> Tuple[int, float, float, float]:
     """在CPU上进行位打包压缩, 同时测量压缩过程和GPU上矩阵向量乘的时间"""
+    if config.high_precision_zero_point:
+        raise ValueError("当前 fused KQ kernel 只支持整数 zero point")
     k_quant_int, k_quant_zero, k_quant_scale = quant_ints(
-        k, config.block_size, config.k_quant_scale_rel, config.quant_method.value[0]
+        k,
+        config.block_size,
+        config.k_quant_scale_rel,
+        config.quant_method.value[0],
+        config.high_precision_zero_point,
+        getattr(config, "scale_method", ScaleMethod.CONTINUOUS),
     )
     dtype_ = k.dtype
-    k = ((k_quant_int + k_quant_zero) * k_quant_scale).flatten(2, 3)
+    k = dequantize_ints(
+        k_quant_int,
+        k_quant_zero,
+        k_quant_scale,
+        config.high_precision_zero_point,
+    ).flatten(2, 3)
     k_quant_int = (
         k_quant_int.flatten(2, 3).permute(2, 0, 1, 3).flatten(1, 3).contiguous()
     )
@@ -753,14 +797,24 @@ def k_cpu_compress(k: torch.Tensor, config) -> Tuple[int, float, float, float]:
     torch.cuda.synchronize()
     start.record()
     k_quant_int, k_quant_zero, k_quant_scale = quant_ints(
-        k, config.block_size, config.k_quant_scale_rel, config.quant_method.value[0]
+        k,
+        config.block_size,
+        config.k_quant_scale_rel,
+        config.quant_method.value[0],
+        config.high_precision_zero_point,
+        getattr(config, "scale_method", ScaleMethod.CONTINUOUS),
     )
     dtype_ = k.dtype
     end.record()
     torch.cuda.synchronize()
     compress_time += start.elapsed_time(end)
     # 量化与显存排布转换
-    k = ((k_quant_int + k_quant_zero) * k_quant_scale).flatten(2, 3)
+    k = dequantize_ints(
+        k_quant_int,
+        k_quant_zero,
+        k_quant_scale,
+        config.high_precision_zero_point,
+    ).flatten(2, 3)
     k_quant_int = (
         k_quant_int.flatten(2, 3).permute(2, 0, 1, 3).flatten(1, 3).contiguous()
     )
@@ -809,11 +863,23 @@ def v_cpu_compress_gpu_mat_vec_mul(
     v: torch.Tensor, config
 ) -> Tuple[int, float, float, float]:
     # return 0,0,0,0
+    if config.high_precision_zero_point:
+        raise ValueError("当前 fused WV kernel 只支持整数 zero point")
     v_quant_int, v_quant_zero, v_quant_scale = quant_ints(
-        v, config.block_size, config.v_quant_scale_rel, config.quant_method.value[1]
+        v,
+        config.block_size,
+        config.v_quant_scale_rel,
+        config.quant_method.value[1],
+        config.high_precision_zero_point,
+        getattr(config, "scale_method", ScaleMethod.CONTINUOUS),
     )
     dtype_ = v.dtype
-    v = ((v_quant_int + v_quant_zero) * v_quant_scale).flatten(2, 3)
+    v = dequantize_ints(
+        v_quant_int,
+        v_quant_zero,
+        v_quant_scale,
+        config.high_precision_zero_point,
+    ).flatten(2, 3)
     v_quant_int = (
         v_quant_int.flatten(2, 3).permute(2, 0, 1, 3).flatten(1, 3).contiguous()
     )
@@ -943,13 +1009,23 @@ def v_cpu_compress(v: torch.Tensor, config) -> Tuple[int, float, float, float]:
     torch.cuda.synchronize()
     start.record()
     v_quant_int, v_quant_zero, v_quant_scale = quant_ints(
-        v, config.block_size, config.v_quant_scale_rel, config.quant_method.value[1]
+        v,
+        config.block_size,
+        config.v_quant_scale_rel,
+        config.quant_method.value[1],
+        config.high_precision_zero_point,
+        getattr(config, "scale_method", ScaleMethod.CONTINUOUS),
     )
     end.record()
     torch.cuda.synchronize()
     compress_time += start.elapsed_time(end)
     dtype_ = v.dtype
-    v = ((v_quant_int + v_quant_zero) * v_quant_scale).flatten(2, 3)
+    v = dequantize_ints(
+        v_quant_int,
+        v_quant_zero,
+        v_quant_scale,
+        config.high_precision_zero_point,
+    ).flatten(2, 3)
     v_quant_int = (
         v_quant_int.flatten(2, 3).permute(2, 0, 1, 3).flatten(1, 3).contiguous()
     )

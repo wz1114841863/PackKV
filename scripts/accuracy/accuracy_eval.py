@@ -4,7 +4,7 @@ import os
 import argparse
 import shutil
 from evaluation.evaluation import accuracy_evaluation
-from utils.compute import QuantMethod, RepackMethod
+from utils.compute import QuantMethod, RepackMethod, ScaleMethod
 from utils.config import PackKVCacheConfig
 from utils.util import get_logger, block_other_logger
 
@@ -61,6 +61,19 @@ def parse_arguments():
     parser.add_argument(
         "--v_scale", type=float, default=0.1, help="V Cache 相对缩放因子 scale_rel"
     )
+    parser.add_argument(
+        "--scale_method",
+        type=str,
+        default=ScaleMethod.CONTINUOUS.value,
+        choices=[method.value for method in ScaleMethod],
+        help="量化步长策略",
+    )
+    parser.add_argument(
+        "--high_precision_zero_point",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="保存浮点 minimum；默认沿用原精度脚本的整数 zero point",
+    )
 
     return parser.parse_args()
 
@@ -91,12 +104,13 @@ def main():
         model_name=args.model,
         quant_method=chosen_method,
         repack_method=RepackMethod.NONE,
-        high_precision_zero_point=False,
+        high_precision_zero_point=args.high_precision_zero_point,
         block_size=64,
         buffer_size=128 + 64,
         pack_size=16,
         k_quant_scale_rel=args.k_scale,
         v_quant_scale_rel=args.v_scale,
+        scale_method=ScaleMethod(args.scale_method),
     )
 
     logger.info("========================================")
@@ -105,6 +119,8 @@ def main():
     logger.info(
         f"  量化方案: {args.quant_method} (K_scale={args.k_scale}, V_scale={args.v_scale})"
     )
+    logger.info(f"  Scale 策略: {args.scale_method}")
+    logger.info(f"  高精度零点: {args.high_precision_zero_point}")
     logger.info("========================================")
 
     _ = accuracy_evaluation(

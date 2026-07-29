@@ -1,4 +1,4 @@
-from utils.compute import QuantMode, QuantMethod, RepackMethod
+from utils.compute import QuantMode, QuantMethod, RepackMethod, ScaleMethod
 
 
 class ExtractCacheConfig:
@@ -37,6 +37,7 @@ class PackKVCacheConfig:
         v_quant_scale_rel: float,
         # enable_k_minus_avg: bool,
         enable_quant: bool = True,
+        scale_method: ScaleMethod = ScaleMethod.CONTINUOUS,
     ):
         self.enable_quant: bool = enable_quant
         self.model_name: str = model_name
@@ -49,6 +50,7 @@ class PackKVCacheConfig:
         # self.enable_k_minus_avg: bool = enable_k_minus_avg
         self.k_quant_scale_rel: float = k_quant_scale_rel
         self.v_quant_scale_rel: float = v_quant_scale_rel
+        self.scale_method: ScaleMethod = scale_method
 
     # to string print
     def __str__(self):
@@ -67,6 +69,9 @@ class PackKVCacheConfig:
             json_["pack_size"] = self.pack_size
             json_["k_quant_scale_rel"] = self.k_quant_scale_rel
             json_["v_quant_scale_rel"] = self.v_quant_scale_rel
+            json_["scale_method"] = getattr(
+                self, "scale_method", ScaleMethod.CONTINUOUS
+            ).value
 
         return str(json_)
 
@@ -83,14 +88,19 @@ class PackKVCacheConfig:
             pack_size = json_["pack_size"]
             k_quant_scale_rel = json_["k_quant_scale_rel"]
             v_quant_scale_rel = json_["v_quant_scale_rel"]
+            scale_method = ScaleMethod(
+                json_.get("scale_method", ScaleMethod.CONTINUOUS.value)
+            )
         else:
             quant_method = None
             repack_method = None
+            high_precision_zero_point = False
             block_size = None
             buffer_size = None
             pack_size = None
             k_quant_scale_rel = None
             v_quant_scale_rel = None
+            scale_method = ScaleMethod.CONTINUOUS
 
         return PackKVCacheConfig(
             model_name=json_["model_name"],
@@ -104,6 +114,7 @@ class PackKVCacheConfig:
             pack_size=pack_size,
             k_quant_scale_rel=k_quant_scale_rel,
             v_quant_scale_rel=v_quant_scale_rel,
+            scale_method=scale_method,
         )
 
     def __eq__(self, other):
@@ -131,6 +142,10 @@ class PackKVCacheConfig:
             return False
         if self.v_quant_scale_rel != other.v_quant_scale_rel:
             return False
+        if getattr(
+            self, "scale_method", ScaleMethod.CONTINUOUS
+        ) != getattr(other, "scale_method", ScaleMethod.CONTINUOUS):
+            return False
         return True
 
     def __hash__(self):
@@ -147,6 +162,7 @@ class PackKVCacheConfig:
                 self.pack_size,
                 self.k_quant_scale_rel,
                 self.v_quant_scale_rel,
+                getattr(self, "scale_method", ScaleMethod.CONTINUOUS),
             )
         )
 
