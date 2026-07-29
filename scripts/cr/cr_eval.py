@@ -6,8 +6,11 @@ import csv
 import datetime
 import re
 
-# 将项目根目录添加到系统路径,以确保能够正确导入 utils 和 models
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# 将项目根目录添加到系统路径,确保可直接运行 scripts/cr/cr_eval.py.
+PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
+sys.path.insert(0, PROJECT_ROOT)
 
 from utils.config import PackKVCacheConfig
 from utils.compute import QuantMethod, RepackMethod, ScaleMethod
@@ -21,7 +24,7 @@ max_ctx_len_map = {
     "JackFram/llama-160m": 1024 * 2,  # 2K 上下文
 }
 
-STORAGE_MODEL = "stream-packed-v1-native-quant-metadata"
+STORAGE_MODEL = "stream-packed-v2-native-quant-metadata-bucket-counts"
 
 
 def safe_filename_component(value):
@@ -48,6 +51,7 @@ def build_report_filename(args, round_idx, timestamp=None):
         f"block-{args.block_size}",
         f"buffer-{args.buffer_size}",
         f"pack-{args.pack_size}",
+        f"buckets-{args.bucket_count}",
         f"round-{round_idx}",
         timestamp.strftime("%Y%m%d_%H%M%S"),
     ]
@@ -74,8 +78,8 @@ def append_to_macro_summary_csv(
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    # v1/v2 使用逐层CR算术平均;v3改为总原始字节/总压缩字节.
-    summary_file = os.path.join(save_dir, "Global_Macro_Summary_v3.csv")
+    # v4 在全局字节口径上增加 Bucket 配置及其计数元数据.
+    summary_file = os.path.join(save_dir, "Global_Macro_Summary_v4.csv")
     file_exists = os.path.isfile(summary_file)
 
     # 定义表头 (涵盖了你对比实验需要的所有超参和结果)
@@ -92,6 +96,7 @@ def append_to_macro_summary_csv(
         "Block_Size",
         "Buffer_Size",
         "Pack_Size",
+        "Bucket_Count",
         "Storage_Model",
         "K_Original_Bytes",
         "V_Original_Bytes",
@@ -120,6 +125,7 @@ def append_to_macro_summary_csv(
         args.block_size,
         args.buffer_size,
         args.pack_size,
+        args.bucket_count,
         STORAGE_MODEL,
         k_original_bytes,
         v_original_bytes,
@@ -139,7 +145,7 @@ def append_to_macro_summary_csv(
                 existing_headers = next(csv.reader(f), None)
             if existing_headers != headers:
                 raise ValueError(
-                    "Global_Macro_Summary_v3.csv 表头与当前 schema 不一致"
+                    "Global_Macro_Summary_v4.csv 表头与当前 schema 不一致"
                 )
 
         # 使用 'a' 模式追加写入
@@ -191,6 +197,7 @@ def export_to_csv(args, res_dict, round_idx):
         "Block_Size",
         "Buffer_Size",
         "Pack_Size",
+        "Bucket_Count",
         "Round",
         "Storage_Model",
     ]
@@ -207,6 +214,7 @@ def export_to_csv(args, res_dict, round_idx):
         args.block_size,
         args.buffer_size,
         args.pack_size,
+        args.bucket_count,
         round_idx,
         STORAGE_MODEL,
     ]
@@ -265,6 +273,12 @@ def main():
     )
     parser.add_argument(
         "--pack_size", type=int, default=16, help="位宽重排打包的对齐大小 (Pack Size)"
+    )
+    parser.add_argument(
+        "--bucket_count",
+        type=int,
+        default=4,
+        help="BUCKET 重排的 FIFO 桶数;必须是不超过 block_size 的 2 的幂",
     )
 
     # 量化精度控制参数
@@ -332,6 +346,15 @@ def main():
             f"错误的枚举参数: {e}. 请检查 --quant_method 或 --repack_method 的拼写."
         )
         sys.exit(1)
+    if repack_method_enum == RepackMethod.BUCKET and (
+        args.bucket_count < 2
+        or args.bucket_count > args.block_size
+        or args.bucket_count & (args.bucket_count - 1)
+    ):
+        parser.error(
+            "--bucket_count must be a power of two in [2, block_size] "
+            "when --repack_method BUCKET"
+        )
 
     config = PackKVCacheConfig(
         enable_quant=False,
@@ -345,6 +368,7 @@ def main():
         k_quant_scale_rel=args.k_scale,
         v_quant_scale_rel=args.v_scale,
         scale_method=ScaleMethod(args.scale_method),
+        bucket_count=args.bucket_count,
     )
     args.ctx_len = max_ctx_len_map[args.model_name]
     args.enable_save = True
@@ -355,6 +379,7 @@ def main():
     logger.info(f"   Scale Method: {args.scale_method}")
     logger.info(f"   High Precision Zero Point: {args.high_precision_zero_point}")
     logger.info(f"   Block Size: {args.block_size}, Pack Size: {args.pack_size}")
+    logger.info(f"   Bucket Count: {args.bucket_count}")
     logger.info("=" * 50)
 
     results = cr_evaluation(

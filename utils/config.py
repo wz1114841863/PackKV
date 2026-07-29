@@ -1,3 +1,5 @@
+import ast
+
 from utils.compute import QuantMode, QuantMethod, RepackMethod, ScaleMethod
 
 
@@ -38,6 +40,7 @@ class PackKVCacheConfig:
         # enable_k_minus_avg: bool,
         enable_quant: bool = True,
         scale_method: ScaleMethod = ScaleMethod.CONTINUOUS,
+        bucket_count: int = 4,
     ):
         self.enable_quant: bool = enable_quant
         self.model_name: str = model_name
@@ -51,6 +54,7 @@ class PackKVCacheConfig:
         self.k_quant_scale_rel: float = k_quant_scale_rel
         self.v_quant_scale_rel: float = v_quant_scale_rel
         self.scale_method: ScaleMethod = scale_method
+        self.bucket_count: int = bucket_count
 
     # to string print
     def __str__(self):
@@ -61,7 +65,7 @@ class PackKVCacheConfig:
         }
         if self.enable_quant:
             # json_["enable_k_minus_avg"] = self.enable_k_minus_avg
-            json_["quant_method"] = self.quant_method.value
+            json_["quant_method"] = self.quant_method.name
             json_["repack_method"] = self.repack_method.value
             json_["high_precision_zero_point"] = self.high_precision_zero_point
             json_["block_size"] = self.block_size
@@ -72,15 +76,19 @@ class PackKVCacheConfig:
             json_["scale_method"] = getattr(
                 self, "scale_method", ScaleMethod.CONTINUOUS
             ).value
+            json_["bucket_count"] = getattr(self, "bucket_count", 4)
 
         return str(json_)
 
     @staticmethod
     def from_str(json_str: str):
-        # parse json string to class
-        json_ = eval(json_str)
+        json_ = ast.literal_eval(json_str)
         if json_["enable_quant"]:
-            quant_method = QuantMethod(json_["quant_method"])
+            quant_method_raw = json_["quant_method"]
+            if isinstance(quant_method_raw, str):
+                quant_method = QuantMethod[quant_method_raw]
+            else:
+                quant_method = QuantMethod(quant_method_raw)
             repack_method = RepackMethod(json_["repack_method"])
             high_precision_zero_point = json_["high_precision_zero_point"]
             block_size = json_["block_size"]
@@ -91,6 +99,7 @@ class PackKVCacheConfig:
             scale_method = ScaleMethod(
                 json_.get("scale_method", ScaleMethod.CONTINUOUS.value)
             )
+            bucket_count = json_.get("bucket_count", 4)
         else:
             quant_method = None
             repack_method = None
@@ -101,6 +110,7 @@ class PackKVCacheConfig:
             k_quant_scale_rel = None
             v_quant_scale_rel = None
             scale_method = ScaleMethod.CONTINUOUS
+            bucket_count = 4
 
         return PackKVCacheConfig(
             model_name=json_["model_name"],
@@ -115,6 +125,7 @@ class PackKVCacheConfig:
             k_quant_scale_rel=k_quant_scale_rel,
             v_quant_scale_rel=v_quant_scale_rel,
             scale_method=scale_method,
+            bucket_count=bucket_count,
         )
 
     def __eq__(self, other):
@@ -146,6 +157,8 @@ class PackKVCacheConfig:
             self, "scale_method", ScaleMethod.CONTINUOUS
         ) != getattr(other, "scale_method", ScaleMethod.CONTINUOUS):
             return False
+        if getattr(self, "bucket_count", 4) != getattr(other, "bucket_count", 4):
+            return False
         return True
 
     def __hash__(self):
@@ -163,6 +176,7 @@ class PackKVCacheConfig:
                 self.k_quant_scale_rel,
                 self.v_quant_scale_rel,
                 getattr(self, "scale_method", ScaleMethod.CONTINUOUS),
+                getattr(self, "bucket_count", 4),
             )
         )
 

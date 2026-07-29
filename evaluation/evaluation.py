@@ -388,6 +388,14 @@ def crs_evaluation_with_data(
         for cache_kind in ("k", "v")
         for metric in metric_names
     }
+    res.update(
+        {
+            "repack_bucket_count": [],
+            "repack_bucket_count_field_bits": [],
+            "repack_bucket_metadata_size": [],
+            "repack_bucket_occupancy_hist": [],
+        }
+    )
 
     layer_num = len(key_caches)
     if layer_num != len(value_caches):
@@ -455,6 +463,10 @@ def crs_evaluation_with_data(
                 res[f"{cache_kind}_quant_cr"].append(1.0)
                 res[f"{cache_kind}_encode_before_repack_cr"].append(1.0)
                 res[f"{cache_kind}_encode_after_repack_cr"].append(1.0)
+            res["repack_bucket_count"].append(0)
+            res["repack_bucket_count_field_bits"].append(0)
+            res["repack_bucket_metadata_size"].append(0)
+            res["repack_bucket_occupancy_hist"].append("{}")
             continue
 
         k_quant_int, k_quant_zero, k_quant_scale = quant_ints(
@@ -512,6 +524,7 @@ def crs_evaluation_with_data(
                 v_stats_before,
                 k_stats_after,
                 v_stats_after,
+                repack_metadata,
             ) = repack_and_encode(
                 k_quant_int,
                 v_quant_int,
@@ -519,6 +532,22 @@ def crs_evaluation_with_data(
                 config.repack_method,
                 before_and_after_repacking,
                 return_stats=True,
+                bucket_count=getattr(config, "bucket_count", 4),
+                return_repack_metadata=True,
+            )
+            shared_bucket_metadata_size = repack_metadata.bucket_metadata_bytes
+            res["repack_bucket_count"].append(repack_metadata.bucket_count)
+            res["repack_bucket_count_field_bits"].append(
+                repack_metadata.bucket_count_field_bits
+            )
+            res["repack_bucket_metadata_size"].append(
+                shared_bucket_metadata_size
+            )
+            res["repack_bucket_occupancy_hist"].append(
+                json.dumps(
+                    repack_metadata.bucket_occupancy_histogram or {},
+                    sort_keys=True,
+                )
             )
 
             for cache_kind, stats_before, stats_after, origin_size, zero_size, scale_size, recent_size in (
@@ -573,10 +602,15 @@ def crs_evaluation_with_data(
                         json.dumps(stats.bit_width_histogram, sort_keys=True)
                     )
 
-                # 当前格式假设K/V同步物理重排且pack/block形状由全局配置给出.
-                # 因而没有实际生成以下三类元数据；显式记录为0而不是隐式漏算.
+                # K/V 使用同一物理重排;共享的 bucket count 元数据在两者之间
+                # 均分,从而保证 K+V 总存储只计一次.
                 permutation_metadata_size = 0
-                bucket_metadata_size = 0
+                if cache_kind == "k":
+                    bucket_metadata_size = (
+                        shared_bucket_metadata_size + 1
+                    ) // 2
+                else:
+                    bucket_metadata_size = shared_bucket_metadata_size // 2
                 block_metadata_size = 0
                 res[f"{cache_kind}_permutation_metadata_size"].append(
                     permutation_metadata_size
@@ -714,6 +748,7 @@ def crs_evaluation_with_data_detail_rebuttal(
                 config.pack_size,
                 config.repack_method,
                 return_stats=True,
+                bucket_count=getattr(config, "bucket_count", 4),
             )
             for cache_kind, stats in (("k", k_stats), ("v", v_stats)):
                 res[f"{cache_kind}_bitpack_min_value_size"].append(
