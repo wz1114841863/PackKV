@@ -13,7 +13,12 @@ PROJECT_ROOT = os.path.dirname(
 sys.path.insert(0, PROJECT_ROOT)
 
 from utils.config import PackKVCacheConfig
-from utils.compute import QuantMethod, RepackMethod, ScaleMethod
+from utils.compute import (
+    BucketScoreMethod,
+    QuantMethod,
+    RepackMethod,
+    ScaleMethod,
+)
 from evaluation.evaluation import cr_evaluation
 from utils.util import get_logger, block_other_logger
 
@@ -52,6 +57,7 @@ def build_report_filename(args, round_idx, timestamp=None):
         f"buffer-{args.buffer_size}",
         f"pack-{args.pack_size}",
         f"buckets-{args.bucket_count}",
+        f"bucket-score-{args.bucket_score_method}",
         f"round-{round_idx}",
         timestamp.strftime("%Y%m%d_%H%M%S"),
     ]
@@ -78,8 +84,8 @@ def append_to_macro_summary_csv(
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    # v4 在全局字节口径上增加 Bucket 配置及其计数元数据.
-    summary_file = os.path.join(save_dir, "Global_Macro_Summary_v4.csv")
+    # v5 增加 Bucket score 方法和 K/V 二级桶配置.
+    summary_file = os.path.join(save_dir, "Global_Macro_Summary_v5.csv")
     file_exists = os.path.isfile(summary_file)
 
     # 定义表头 (涵盖了你对比实验需要的所有超参和结果)
@@ -97,6 +103,7 @@ def append_to_macro_summary_csv(
         "Buffer_Size",
         "Pack_Size",
         "Bucket_Count",
+        "Bucket_Score_Method",
         "Storage_Model",
         "K_Original_Bytes",
         "V_Original_Bytes",
@@ -126,6 +133,7 @@ def append_to_macro_summary_csv(
         args.buffer_size,
         args.pack_size,
         args.bucket_count,
+        args.bucket_score_method,
         STORAGE_MODEL,
         k_original_bytes,
         v_original_bytes,
@@ -145,7 +153,7 @@ def append_to_macro_summary_csv(
                 existing_headers = next(csv.reader(f), None)
             if existing_headers != headers:
                 raise ValueError(
-                    "Global_Macro_Summary_v4.csv 表头与当前 schema 不一致"
+                    "Global_Macro_Summary_v5.csv 表头与当前 schema 不一致"
                 )
 
         # 使用 'a' 模式追加写入
@@ -198,6 +206,7 @@ def export_to_csv(args, res_dict, round_idx):
         "Buffer_Size",
         "Pack_Size",
         "Bucket_Count",
+        "Bucket_Score_Method",
         "Round",
         "Storage_Model",
     ]
@@ -215,6 +224,7 @@ def export_to_csv(args, res_dict, round_idx):
         args.buffer_size,
         args.pack_size,
         args.bucket_count,
+        args.bucket_score_method,
         round_idx,
         STORAGE_MODEL,
     ]
@@ -279,6 +289,13 @@ def main():
         type=int,
         default=4,
         help="BUCKET 重排的 FIFO 桶数;必须是不超过 block_size 的 2 的幂",
+    )
+    parser.add_argument(
+        "--bucket_score_method",
+        type=str,
+        default=BucketScoreMethod.COMBINED_SUM.value,
+        choices=[method.value for method in BucketScoreMethod],
+        help="BUCKET 的整数 score:当前基线/K-only/V-only/K-V二级分桶",
     )
 
     # 量化精度控制参数
@@ -355,6 +372,12 @@ def main():
             "--bucket_count must be a power of two in [2, block_size] "
             "when --repack_method BUCKET"
         )
+    if (
+        repack_method_enum == RepackMethod.BUCKET
+        and args.bucket_score_method == BucketScoreMethod.KV_2D.value
+        and args.bucket_count < 4
+    ):
+        parser.error("--bucket_score_method kv_2d requires --bucket_count >= 4")
 
     config = PackKVCacheConfig(
         enable_quant=False,
@@ -369,6 +392,7 @@ def main():
         v_quant_scale_rel=args.v_scale,
         scale_method=ScaleMethod(args.scale_method),
         bucket_count=args.bucket_count,
+        bucket_score_method=BucketScoreMethod(args.bucket_score_method),
     )
     args.ctx_len = max_ctx_len_map[args.model_name]
     args.enable_save = True
@@ -380,6 +404,7 @@ def main():
     logger.info(f"   High Precision Zero Point: {args.high_precision_zero_point}")
     logger.info(f"   Block Size: {args.block_size}, Pack Size: {args.pack_size}")
     logger.info(f"   Bucket Count: {args.bucket_count}")
+    logger.info(f"   Bucket Score Method: {args.bucket_score_method}")
     logger.info("=" * 50)
 
     results = cr_evaluation(

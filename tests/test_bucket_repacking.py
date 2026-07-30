@@ -3,6 +3,7 @@ import unittest
 import torch
 
 from utils.compute import (
+    BucketScoreMethod,
     QuantMethod,
     RepackMethod,
     ScaleMethod,
@@ -13,6 +14,25 @@ from utils.config import PackKVCacheConfig
 
 
 class BucketRepackingTest(unittest.TestCase):
+    def test_default_score_method_preserves_combined_sum_baseline(self):
+        torch.manual_seed(11)
+        blocks = torch.randint(-4, 12, (2, 64, 8), dtype=torch.int32)
+
+        default_output, default_metadata = bucket_repacking(
+            blocks,
+            num_buckets=4,
+            return_metadata=True,
+        )
+        explicit_output, explicit_metadata = bucket_repacking(
+            blocks,
+            num_buckets=4,
+            score_method=BucketScoreMethod.COMBINED_SUM,
+            return_metadata=True,
+        )
+
+        torch.testing.assert_close(default_output, explicit_output)
+        self.assertEqual(default_metadata, explicit_metadata)
+
     def test_power_of_two_boundaries_and_stable_fifo_order(self):
         # score 范围为 [0,7],4 桶边界应为 2/4/6.
         blocks = torch.tensor(
@@ -80,6 +100,50 @@ class BucketRepackingTest(unittest.TestCase):
         repacked_rows = sorted(tuple(row) for row in repacked[0].tolist())
         self.assertEqual(repacked_rows, original_rows)
 
+    def test_kv_2d_builds_two_by_two_stable_buckets(self):
+        blocks = torch.tensor(
+            [
+                [
+                    [10, 0, 10, 0],
+                    [0, 0, 10, 0],
+                    [10, 0, 0, 0],
+                    [0, 0, 0, 0],
+                    [9, 0, 9, 0],
+                    [1, 0, 9, 0],
+                    [9, 0, 1, 0],
+                    [1, 0, 1, 0],
+                ]
+            ],
+            dtype=torch.int32,
+        )
+        repacked, metadata = bucket_repacking(
+            blocks,
+            num_buckets=4,
+            score_method=BucketScoreMethod.KV_2D,
+            return_metadata=True,
+        )
+        expected = torch.tensor(
+            [
+                [
+                    [0, 0, 0, 0],
+                    [1, 0, 1, 0],
+                    [0, 0, 10, 0],
+                    [1, 0, 9, 0],
+                    [10, 0, 0, 0],
+                    [9, 0, 1, 0],
+                    [10, 0, 10, 0],
+                    [9, 0, 9, 0],
+                ]
+            ],
+            dtype=torch.int32,
+        )
+
+        torch.testing.assert_close(repacked, expected)
+        self.assertEqual(metadata.bucket_counts, ((2, 2, 2, 2),))
+        self.assertEqual(metadata.bucket_score_method, "kv_2d")
+        self.assertEqual(metadata.k_subbucket_count, 2)
+        self.assertEqual(metadata.v_subbucket_count, 2)
+
     def test_bucket_metadata_uses_three_counts_for_four_buckets(self):
         k_tensor = torch.arange(8, dtype=torch.int32).reshape(1, 1, 1, 8, 1)
         v_tensor = torch.flip(k_tensor, dims=(3,))
@@ -116,6 +180,15 @@ class BucketRepackingTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "power of two"):
             bucket_repacking(blocks, num_buckets=3)
 
+    def test_kv_2d_rejects_fewer_than_four_buckets(self):
+        blocks = torch.zeros((1, 8, 2), dtype=torch.int32)
+        with self.assertRaisesRegex(ValueError, "at least 4"):
+            bucket_repacking(
+                blocks,
+                num_buckets=2,
+                score_method=BucketScoreMethod.KV_2D,
+            )
+
     def test_config_roundtrip_preserves_bucket_count(self):
         config = PackKVCacheConfig(
             model_name="synthetic",
@@ -129,11 +202,16 @@ class BucketRepackingTest(unittest.TestCase):
             v_quant_scale_rel=0.1,
             scale_method=ScaleMethod.PO2_NEAREST,
             bucket_count=8,
+            bucket_score_method=BucketScoreMethod.KV_2D,
         )
 
         restored = PackKVCacheConfig.from_str(str(config))
         self.assertEqual(restored, config)
         self.assertEqual(restored.bucket_count, 8)
+        self.assertEqual(
+            restored.bucket_score_method,
+            BucketScoreMethod.KV_2D,
+        )
 
 
 if __name__ == "__main__":

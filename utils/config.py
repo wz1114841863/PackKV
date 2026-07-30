@@ -1,6 +1,12 @@
 import ast
 
-from utils.compute import QuantMode, QuantMethod, RepackMethod, ScaleMethod
+from utils.compute import (
+    BucketScoreMethod,
+    QuantMode,
+    QuantMethod,
+    RepackMethod,
+    ScaleMethod,
+)
 
 
 class ExtractCacheConfig:
@@ -41,6 +47,7 @@ class PackKVCacheConfig:
         enable_quant: bool = True,
         scale_method: ScaleMethod = ScaleMethod.CONTINUOUS,
         bucket_count: int = 4,
+        bucket_score_method: BucketScoreMethod = BucketScoreMethod.COMBINED_SUM,
     ):
         self.enable_quant: bool = enable_quant
         self.model_name: str = model_name
@@ -55,6 +62,7 @@ class PackKVCacheConfig:
         self.v_quant_scale_rel: float = v_quant_scale_rel
         self.scale_method: ScaleMethod = scale_method
         self.bucket_count: int = bucket_count
+        self.bucket_score_method: BucketScoreMethod = bucket_score_method
 
     # to string print
     def __str__(self):
@@ -77,6 +85,11 @@ class PackKVCacheConfig:
                 self, "scale_method", ScaleMethod.CONTINUOUS
             ).value
             json_["bucket_count"] = getattr(self, "bucket_count", 4)
+            json_["bucket_score_method"] = getattr(
+                self,
+                "bucket_score_method",
+                BucketScoreMethod.COMBINED_SUM,
+            ).value
 
         return str(json_)
 
@@ -100,6 +113,12 @@ class PackKVCacheConfig:
                 json_.get("scale_method", ScaleMethod.CONTINUOUS.value)
             )
             bucket_count = json_.get("bucket_count", 4)
+            bucket_score_method = BucketScoreMethod(
+                json_.get(
+                    "bucket_score_method",
+                    BucketScoreMethod.COMBINED_SUM.value,
+                )
+            )
         else:
             quant_method = None
             repack_method = None
@@ -111,6 +130,7 @@ class PackKVCacheConfig:
             v_quant_scale_rel = None
             scale_method = ScaleMethod.CONTINUOUS
             bucket_count = 4
+            bucket_score_method = BucketScoreMethod.COMBINED_SUM
 
         return PackKVCacheConfig(
             model_name=json_["model_name"],
@@ -126,6 +146,7 @@ class PackKVCacheConfig:
             v_quant_scale_rel=v_quant_scale_rel,
             scale_method=scale_method,
             bucket_count=bucket_count,
+            bucket_score_method=bucket_score_method,
         )
 
     def __eq__(self, other):
@@ -159,6 +180,16 @@ class PackKVCacheConfig:
             return False
         if getattr(self, "bucket_count", 4) != getattr(other, "bucket_count", 4):
             return False
+        if getattr(
+            self,
+            "bucket_score_method",
+            BucketScoreMethod.COMBINED_SUM,
+        ) != getattr(
+            other,
+            "bucket_score_method",
+            BucketScoreMethod.COMBINED_SUM,
+        ):
+            return False
         return True
 
     def __hash__(self):
@@ -177,6 +208,11 @@ class PackKVCacheConfig:
                 self.v_quant_scale_rel,
                 getattr(self, "scale_method", ScaleMethod.CONTINUOUS),
                 getattr(self, "bucket_count", 4),
+                getattr(
+                    self,
+                    "bucket_score_method",
+                    BucketScoreMethod.COMBINED_SUM,
+                ),
             )
         )
 

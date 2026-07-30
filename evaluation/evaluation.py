@@ -14,6 +14,7 @@ from lm_eval import evaluator
 from models.qwen3 import Qwen3ForCausalLM
 from models.mistral import MistralForCausalLM
 from utils.compute import (
+    BucketScoreMethod,
     QuantMode,
     QuantMethod,
     quant_ints,
@@ -394,6 +395,9 @@ def crs_evaluation_with_data(
             "repack_bucket_count_field_bits": [],
             "repack_bucket_metadata_size": [],
             "repack_bucket_occupancy_hist": [],
+            "repack_bucket_score_method": [],
+            "repack_k_subbucket_count": [],
+            "repack_v_subbucket_count": [],
         }
     )
 
@@ -467,6 +471,9 @@ def crs_evaluation_with_data(
             res["repack_bucket_count_field_bits"].append(0)
             res["repack_bucket_metadata_size"].append(0)
             res["repack_bucket_occupancy_hist"].append("{}")
+            res["repack_bucket_score_method"].append("")
+            res["repack_k_subbucket_count"].append(0)
+            res["repack_v_subbucket_count"].append(0)
             continue
 
         k_quant_int, k_quant_zero, k_quant_scale = quant_ints(
@@ -533,6 +540,11 @@ def crs_evaluation_with_data(
                 before_and_after_repacking,
                 return_stats=True,
                 bucket_count=getattr(config, "bucket_count", 4),
+                bucket_score_method=getattr(
+                    config,
+                    "bucket_score_method",
+                    BucketScoreMethod.COMBINED_SUM,
+                ),
                 return_repack_metadata=True,
             )
             shared_bucket_metadata_size = repack_metadata.bucket_metadata_bytes
@@ -548,6 +560,15 @@ def crs_evaluation_with_data(
                     repack_metadata.bucket_occupancy_histogram or {},
                     sort_keys=True,
                 )
+            )
+            res["repack_bucket_score_method"].append(
+                repack_metadata.bucket_score_method
+            )
+            res["repack_k_subbucket_count"].append(
+                repack_metadata.k_subbucket_count
+            )
+            res["repack_v_subbucket_count"].append(
+                repack_metadata.v_subbucket_count
             )
 
             for cache_kind, stats_before, stats_after, origin_size, zero_size, scale_size, recent_size in (
@@ -749,6 +770,11 @@ def crs_evaluation_with_data_detail_rebuttal(
                 config.repack_method,
                 return_stats=True,
                 bucket_count=getattr(config, "bucket_count", 4),
+                bucket_score_method=getattr(
+                    config,
+                    "bucket_score_method",
+                    BucketScoreMethod.COMBINED_SUM,
+                ),
             )
             for cache_kind, stats in (("k", k_stats), ("v", v_stats)):
                 res[f"{cache_kind}_bitpack_min_value_size"].append(

@@ -58,6 +58,15 @@ class ScaleMethod(Enum):
     PO2_CEIL = "po2_ceil"
 
 
+class BucketScoreMethod(Enum):
+    """硬件 Bucket 的整数特征提取方式."""
+
+    COMBINED_SUM = "combined_sum"
+    K_SUM = "k_sum"
+    V_SUM = "v_sum"
+    KV_2D = "kv_2d"
+
+
 class RepackMethod(Enum):
     """重排策略"""
 
@@ -615,6 +624,9 @@ class RepackMetadataStats:
     bucket_metadata_bits: int = 0
     bucket_counts: Tuple[Tuple[int, ...], ...] = ()
     bucket_occupancy_histogram: Optional[Dict[int, int]] = None
+    bucket_score_method: str = ""
+    k_subbucket_count: int = 0
+    v_subbucket_count: int = 0
 
     @property
     def bucket_metadata_bytes(self) -> int:
@@ -636,9 +648,36 @@ def _validate_bucket_count(num_buckets: int, tokens_per_block: int) -> None:
         raise ValueError("num_buckets must be a power of two")
 
 
+def _equal_width_bucket_ids(
+    scores: torch.Tensor,
+    num_buckets: int,
+) -> torch.Tensor:
+    """用整数等宽阈值生成 bucket ID;桶数为1时返回全0."""
+    if num_buckets == 1:
+        return torch.zeros_like(scores, dtype=torch.int64)
+    score_min = scores.min(dim=1, keepdim=True).values
+    score_max = scores.max(dim=1, keepdim=True).values
+    span = score_max - score_min + 1
+    boundary_ids = torch.arange(
+        1,
+        num_buckets,
+        device=scores.device,
+        dtype=torch.int64,
+    )
+    shift = int(math.log2(num_buckets))
+    offsets = (
+        span.unsqueeze(2) * boundary_ids.view(1, 1, -1)
+        + num_buckets
+        - 1
+    ) >> shift
+    thresholds = score_min.unsqueeze(2) + offsets
+    return (scores.unsqueeze(2) >= thresholds).sum(dim=2).to(torch.int64)
+
+
 def bucket_repacking(
     blocks: torch.Tensor,
     num_buckets: int = 4,
+    score_method: BucketScoreMethod = BucketScoreMethod.COMBINED_SUM,
     return_metadata: bool = False,
 ):
     """两遍式/稳定 FIFO 的硬件 Bucket 重排参考模型.
@@ -647,7 +686,7 @@ def bucket_repacking(
     因而这里只生成一次 bucket ID,天然保证 K/V 使用相同置换.
 
     硬件映射:
-      1. 对每个 token 的量化 K/V 整数求和,得到整数 score;
+      1. 按 score_method 生成 combined/K/V 整数和;KV_2D 分别保留K/V score;
       2. 每个基础 block 求 score 的 min/max;
       3. 桶数限制为 2^n,等宽阈值仅需常数乘法/加法和右移;
       4. 比较器阵列生成 bucket ID,稳定写入多路 FIFO;
@@ -667,22 +706,43 @@ def bucket_repacking(
     if blocks.is_floating_point() and not torch.isfinite(blocks).all():
         raise ValueError("blocks contains NaN or Inf")
     _validate_bucket_count(num_buckets, tokens_per_block)
+    if isinstance(score_method, str):
+        score_method = BucketScoreMethod(score_method)
+    if score_method == BucketScoreMethod.KV_2D and num_buckets < 4:
+        raise ValueError("kv_2d requires at least 4 buckets")
 
     integer_blocks = blocks.to(torch.int64)
-    scores = integer_blocks.sum(dim=2)
-    score_min = scores.min(dim=1, keepdim=True).values
-    score_max = scores.max(dim=1, keepdim=True).values
-
-    # 闭区间 [min,max] 的长度.使用 ceil(span*i/num_buckets) 生成内部边界,
-    # 确保边界值归入高编号桶且 max 总能进入最后一个非空区间.
-    span = score_max - score_min + 1
-    boundary_ids = torch.arange(1, num_buckets, device=blocks.device, dtype=torch.int64)
-    shift = int(math.log2(num_buckets))
-    offsets = (
-        span.unsqueeze(2) * boundary_ids.view(1, 1, -1) + num_buckets - 1
-    ) >> shift
-    thresholds = score_min.unsqueeze(2) + offsets
-    bucket_ids = (scores.unsqueeze(2) >= thresholds).sum(dim=2).to(torch.int64)
+    half_feature_dim = feature_dim // 2
+    k_scores = integer_blocks[:, :, :half_feature_dim].sum(dim=2)
+    v_scores = integer_blocks[:, :, half_feature_dim:].sum(dim=2)
+    k_subbucket_count = 0
+    v_subbucket_count = 0
+    if score_method == BucketScoreMethod.COMBINED_SUM:
+        bucket_ids = _equal_width_bucket_ids(
+            k_scores + v_scores,
+            num_buckets,
+        )
+    elif score_method == BucketScoreMethod.K_SUM:
+        bucket_ids = _equal_width_bucket_ids(k_scores, num_buckets)
+    elif score_method == BucketScoreMethod.V_SUM:
+        bucket_ids = _equal_width_bucket_ids(v_scores, num_buckets)
+    elif score_method == BucketScoreMethod.KV_2D:
+        total_bucket_bits = int(math.log2(num_buckets))
+        k_bucket_bits = (total_bucket_bits + 1) // 2
+        v_bucket_bits = total_bucket_bits // 2
+        k_subbucket_count = 1 << k_bucket_bits
+        v_subbucket_count = 1 << v_bucket_bits
+        k_bucket_ids = _equal_width_bucket_ids(
+            k_scores,
+            k_subbucket_count,
+        )
+        v_bucket_ids = _equal_width_bucket_ids(
+            v_scores,
+            v_subbucket_count,
+        )
+        bucket_ids = k_bucket_ids * v_subbucket_count + v_bucket_ids
+    else:
+        raise ValueError(f"Unknown bucket score method: {score_method}")
 
     # 布尔筛选保持桶内原始顺序,等价于多路 FIFO 的稳定写入/顺序读出.
     repacked_batches = []
@@ -712,6 +772,9 @@ def bucket_repacking(
         bucket_metadata_bits=metadata_bits,
         bucket_counts=bucket_counts,
         bucket_occupancy_histogram=dict(sorted(occupancy_histogram.items())),
+        bucket_score_method=score_method.value,
+        k_subbucket_count=k_subbucket_count,
+        v_subbucket_count=v_subbucket_count,
     )
     if return_metadata:
         return repacked_blocks, metadata
@@ -721,12 +784,14 @@ def bucket_repacking(
 def hardware_bucket_repacking(
     blocks: torch.Tensor,
     num_main_buckets: int = 4,
+    score_method: BucketScoreMethod = BucketScoreMethod.COMBINED_SUM,
     return_metadata: bool = False,
 ):
     """兼容旧入口;统一使用 ``bucket_repacking`` 硬件参考模型."""
     return bucket_repacking(
         blocks,
         num_buckets=num_main_buckets,
+        score_method=score_method,
         return_metadata=return_metadata,
     )
 
@@ -875,6 +940,7 @@ def repack_and_encode(
     before_and_after_repacking=None,
     return_stats: bool = False,
     bucket_count: int = 4,
+    bucket_score_method: BucketScoreMethod = BucketScoreMethod.COMBINED_SUM,
     return_repack_metadata: bool = False,
 ):
     """执行不同的重排算法, 并对比重排前后的收益与代价"""
@@ -893,6 +959,7 @@ def repack_and_encode(
         blocks, repack_metadata = bucket_repacking(
             blocks,
             num_buckets=bucket_count,
+            score_method=bucket_score_method,
             return_metadata=True,
         )
     elif repack_method == RepackMethod.NONE:
