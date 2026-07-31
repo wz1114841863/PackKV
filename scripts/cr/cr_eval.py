@@ -23,9 +23,10 @@ from evaluation.evaluation import cr_evaluation
 from utils.util import get_logger, block_other_logger
 
 max_ctx_len_map = {
-    "Qwen/Qwen3-4B": 1024 * 4,  # 40K 上下文
-    "Qwen/Qwen3-8B": 1024 * 4,  # 40K 上下文
+    "Qwen/Qwen3-4B": 1024 * 4,
+    "Qwen/Qwen3-8B": 1024 * 4,
     "NousResearch/Meta-Llama-3-8B": 1024 * 4,  # 8K 上下文 (区别于 3.1 版本的 128K)
+    "mistralai/Ministral-8B-Instruct-2410": 1024 * 4,
     "JackFram/llama-160m": 1024 * 2,  # 2K 上下文
 }
 
@@ -263,13 +264,16 @@ def main():
         default="meta-llama/Llama-3-8B",
         help="需要评测的模型名称或本地路径",
     )
-    # parser.add_argument(
-    #     "-c",
-    #     "--ctx_len",
-    #     type=int,
-    #     default=2048,
-    #     help="用于提取高精度缓存的上下文长度 (Context Length)",
-    # )
+    parser.add_argument(
+        "-c",
+        "--ctx_len",
+        type=int,
+        default=None,
+        help=(
+            "用于提取高精度缓存的上下文长度;未指定时使用已知模型的默认值. "
+            "本地路径或未登记模型必须显式指定"
+        ),
+    )
 
     # PackKV 核心算法超参
     parser.add_argument(
@@ -355,6 +359,15 @@ def main():
     block_other_logger(logger)
     logger.setLevel(logging.INFO)
 
+    if args.ctx_len is None:
+        if args.model_name not in max_ctx_len_map:
+            parser.error(
+                f"模型 {args.model_name!r} 没有默认上下文长度;请显式传入 --ctx_len"
+            )
+        args.ctx_len = max_ctx_len_map[args.model_name]
+    if args.ctx_len <= 0:
+        parser.error("--ctx_len must be a positive integer")
+
     try:
         quant_method_enum = QuantMethod[args.quant_method]
         repack_method_enum = RepackMethod[args.repack_method]
@@ -394,7 +407,6 @@ def main():
         bucket_count=args.bucket_count,
         bucket_score_method=BucketScoreMethod(args.bucket_score_method),
     )
-    args.ctx_len = max_ctx_len_map[args.model_name]
     args.enable_save = True
     logger.info("=" * 50)
     logger.info(f"   开始压缩率 (CR) 评测: {args.model_name}")

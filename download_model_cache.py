@@ -32,6 +32,7 @@ MODELS = [
     "Qwen/Qwen3-4B",
     "Qwen/Qwen3-8B",
     "NousResearch/Meta-Llama-3-8B",
+    "mistralai/Ministral-8B-Instruct-2410",
 ]
 
 
