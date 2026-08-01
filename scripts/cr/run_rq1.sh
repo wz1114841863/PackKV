@@ -14,7 +14,8 @@
 #   bash scripts/cr/run_rq1.sh all
 #
 # 可覆盖参数：
-#   COLLECT_ROUND=5 PYTHON_BIN=.venv/bin/python bash scripts/cr/run_rq1.sh full
+#   COLLECT_ROUND=5 bash scripts/cr/run_rq1.sh full
+#   PYTHON_BIN=python3 bash scripts/cr/run_rq1.sh sanity
 #   MODELS="Qwen/Qwen3-4B NousResearch/Meta-Llama-3-8B" \
 #     CTX_LENS="2048 4096" bash scripts/cr/run_rq1.sh full
 
@@ -32,10 +33,10 @@ case "$MODE" in
         ;;
 esac
 
-PYTHON_BIN="${PYTHON_BIN:-$PROJECT_ROOT/.venv/bin/python}"
-if [[ ! -x "$PYTHON_BIN" ]]; then
-    echo "找不到可执行 Python: $PYTHON_BIN" >&2
-    echo "请设置 PYTHON_BIN，例如 PYTHON_BIN=/path/to/.venv/bin/python" >&2
+PYTHON_BIN="${PYTHON_BIN:-python}"
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    echo "当前环境中找不到 Python 命令: $PYTHON_BIN" >&2
+    echo "请先激活 Conda 环境,或通过 PYTHON_BIN 指定解释器" >&2
     exit 2
 fi
 
