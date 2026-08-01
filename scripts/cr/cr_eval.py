@@ -4,7 +4,10 @@ import argparse
 import logging
 import csv
 import datetime
+import json
+import statistics
 import re
+import uuid
 
 # 将项目根目录添加到系统路径,确保可直接运行 scripts/cr/cr_eval.py.
 PROJECT_ROOT = os.path.dirname(
@@ -31,6 +34,96 @@ max_ctx_len_map = {
 }
 
 STORAGE_MODEL = "stream-packed-v2-native-quant-metadata-bucket-counts"
+
+
+def sum_metric(res_dict, key):
+    """汇总逐层数值指标;缺失指标按0处理以兼容旧评测路径."""
+    values = res_dict.get(key, [])
+    if not isinstance(values, list):
+        return 0
+    return sum(value for value in values if isinstance(value, (int, float)))
+
+
+def aggregate_json_histogram(res_dict, key):
+    """合并逐层 JSON histogram,返回稳定排序的字典."""
+    merged = {}
+    for raw_histogram in res_dict.get(key, []):
+        if not raw_histogram:
+            continue
+        histogram = (
+            json.loads(raw_histogram)
+            if isinstance(raw_histogram, str)
+            else raw_histogram
+        )
+        for bucket, count in histogram.items():
+            bucket = str(bucket)
+            merged[bucket] = merged.get(bucket, 0) + int(count)
+    return dict(sorted(merged.items(), key=lambda item: int(item[0])))
+
+
+def layer_statistics(res_dict, key):
+    """返回逐层指标的 min/mean/max/population-std."""
+    values = [
+        float(value)
+        for value in res_dict.get(key, [])
+        if isinstance(value, (int, float))
+    ]
+    if not values:
+        return "", "", "", ""
+    std = statistics.pstdev(values) if len(values) > 1 else 0.0
+    return min(values), statistics.fmean(values), max(values), std
+
+
+def format_float_or_blank(value, digits=8):
+    return "" if value == "" else f"{value:.{digits}f}"
+
+
+def result_metadata(args, round_idx, generated_at):
+    """生成宏观表和统一逐层表共享的运行身份与实验配置."""
+    sample_id = args.sample_id if args.sample_id is not None else round_idx - 1
+    headers = [
+        "Generated_At",
+        "Suite_ID",
+        "Run_ID",
+        "Sample_ID",
+        "Model",
+        "Ctx_Len",
+        "Quant_Method",
+        "Scale_Method",
+        "High_Precision_Zero_Point",
+        "Repack_Method",
+        "K_Scale",
+        "V_Scale",
+        "Block_Size",
+        "Buffer_Size",
+        "Pack_Size",
+        "Bucket_Count",
+        "Bucket_Score_Method",
+        "Round",
+        "Storage_Model",
+    ]
+    values = [
+        generated_at.strftime("%Y-%m-%d %H:%M:%S.%f"),
+        args.suite_id,
+        args.run_id,
+        sample_id,
+        args.model_name,
+        args.ctx_len,
+        args.quant_method,
+        args.scale_method,
+        args.high_precision_zero_point,
+        args.repack_method,
+        args.k_scale,
+        args.v_scale,
+        args.block_size,
+        args.buffer_size,
+        args.pack_size,
+        args.bucket_count,
+        args.bucket_score_method,
+        round_idx,
+        STORAGE_MODEL,
+    ]
+    return headers, values
 
 
 def safe_filename_component(value):
@@ -67,47 +160,105 @@ def build_report_filename(args, round_idx, timestamp=None):
 
 def append_to_macro_summary_csv(
     args,
-    k_original_bytes,
-    v_original_bytes,
-    k_compressed_bytes,
-    v_compressed_bytes,
-    k_global_cr,
-    v_global_cr,
-    overall_global_cr,
-    k_save_pct,
-    v_save_pct,
+    res_dict,
+    round_idx,
     csv_path,
+    layer_detail_path,
 ):
-    """
-    将全局宏观结果追加 (Append) 到一个总的 CSV 汇总表中
-    """
+    """将全局结果、存储组成和层间统计追加到 v6 汇总表."""
     save_dir = "./csv_results"
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    # v5 增加 Bucket score 方法和 K/V 二级桶配置.
-    summary_file = os.path.join(save_dir, "Global_Macro_Summary_v5.csv")
+    summary_file = os.path.join(save_dir, "Global_Macro_Summary_v6.csv")
     file_exists = os.path.isfile(summary_file)
 
-    # 定义表头 (涵盖了你对比实验需要的所有超参和结果)
-    headers = [
-        "Timestamp",
-        "Model",
-        "Ctx_Len",
-        "Quant_Method",
-        "Scale_Method",
-        "High_Precision_Zero_Point",
-        "Repack_Method",
-        "K_Scale",
-        "V_Scale",
-        "Block_Size",
-        "Buffer_Size",
-        "Pack_Size",
-        "Bucket_Count",
-        "Bucket_Score_Method",
-        "Storage_Model",
+    generated_at = datetime.datetime.now()
+    metadata_headers, metadata_values = result_metadata(
+        args, round_idx, generated_at
+    )
+    k_original_bytes = sum_metric(res_dict, "k_original_size")
+    v_original_bytes = sum_metric(res_dict, "v_original_size")
+    k_quant_bytes = sum_metric(res_dict, "k_quant_size")
+    v_quant_bytes = sum_metric(res_dict, "v_quant_size")
+    k_before_repack_bytes = sum_metric(
+        res_dict, "k_encode_size_before_repack"
+    )
+    v_before_repack_bytes = sum_metric(
+        res_dict, "v_encode_size_before_repack"
+    )
+    k_compressed_bytes = sum_metric(res_dict, "k_encode_size_after_repack")
+    v_compressed_bytes = sum_metric(res_dict, "v_encode_size_after_repack")
+    k_global_cr = k_original_bytes / k_compressed_bytes
+    v_global_cr = v_original_bytes / v_compressed_bytes
+    overall_global_cr = (k_original_bytes + v_original_bytes) / (
+        k_compressed_bytes + v_compressed_bytes
+    )
+    k_save_pct = (1.0 - 1.0 / k_global_cr) * 100
+    v_save_pct = (1.0 - 1.0 / v_global_cr) * 100
+
+    component_suffixes = [
+        "recent_high_precision_size",
+        "quant_zero_point_size",
+        "quant_scale_size",
+        "bitpack_payload_size_after_repack",
+        "bitpack_min_size_after_repack",
+        "bitpack_encode_len_size_after_repack",
+        "permutation_metadata_size",
+        "bucket_metadata_size",
+        "block_metadata_size",
+    ]
+    components = {
+        cache_kind: {
+            suffix: sum_metric(res_dict, f"{cache_kind}_{suffix}")
+            for suffix in component_suffixes
+        }
+        for cache_kind in ("k", "v")
+    }
+    accounting_totals = {
+        cache_kind: sum(components[cache_kind].values())
+        for cache_kind in ("k", "v")
+    }
+    k_layer_stats = layer_statistics(res_dict, "k_encode_after_repack_cr")
+    v_layer_stats = layer_statistics(res_dict, "v_encode_after_repack_cr")
+    k_width_hist = aggregate_json_histogram(
+        res_dict, "k_bit_width_hist_after_repack"
+    )
+    v_width_hist = aggregate_json_histogram(
+        res_dict, "v_bit_width_hist_after_repack"
+    )
+    k_width_hist_before = aggregate_json_histogram(
+        res_dict, "k_bit_width_hist_before_repack"
+    )
+    v_width_hist_before = aggregate_json_histogram(
+        res_dict, "v_bit_width_hist_before_repack"
+    )
+    bucket_occupancy_hist = aggregate_json_histogram(
+        res_dict, "repack_bucket_occupancy_hist"
+    )
+    bucket_slot_count = sum(bucket_occupancy_hist.values())
+    bucket_empty_rate = (
+        bucket_occupancy_hist.get("0", 0) / bucket_slot_count
+        if bucket_slot_count
+        else ""
+    )
+
+    headers = metadata_headers + [
+        "Num_Layers",
         "K_Original_Bytes",
         "V_Original_Bytes",
+        "K_Quant_Payload_Bytes",
+        "V_Quant_Payload_Bytes",
+        "K_Quant_Total_Bytes",
+        "V_Quant_Total_Bytes",
+        "K_Quant_Global_CR",
+        "V_Quant_Global_CR",
+        "K_Bitpack_Payload_Before_Repack_Bytes",
+        "V_Bitpack_Payload_Before_Repack_Bytes",
+        "K_Encoded_Before_Repack_Bytes",
+        "V_Encoded_Before_Repack_Bytes",
+        "K_Encode_Before_Repack_Global_CR",
+        "V_Encode_Before_Repack_Global_CR",
         "K_Compressed_Bytes",
         "V_Compressed_Bytes",
         "K_Global_CR",
@@ -115,29 +266,74 @@ def append_to_macro_summary_csv(
         "Overall_Global_CR",
         "K_Mem_Saved(%)",
         "V_Mem_Saved(%)",
+        "K_Recent_FP_Bytes",
+        "V_Recent_FP_Bytes",
+        "K_Zero_Point_Bytes",
+        "V_Zero_Point_Bytes",
+        "K_Scale_Bytes",
+        "V_Scale_Bytes",
+        "K_Bitpack_Payload_Bytes",
+        "V_Bitpack_Payload_Bytes",
+        "K_Pack_Min_Bytes",
+        "V_Pack_Min_Bytes",
+        "K_Encode_Length_Bytes",
+        "V_Encode_Length_Bytes",
+        "K_Permutation_Metadata_Bytes",
+        "V_Permutation_Metadata_Bytes",
+        "K_Bucket_Metadata_Bytes",
+        "V_Bucket_Metadata_Bytes",
+        "K_Block_Metadata_Bytes",
+        "V_Block_Metadata_Bytes",
+        "K_Accounting_Error_Bytes",
+        "V_Accounting_Error_Bytes",
+        "K_Bitpack_Alignment_Bits",
+        "V_Bitpack_Alignment_Bits",
+        "K_Padding_Tokens",
+        "V_Padding_Tokens",
+        "K_Padding_Values",
+        "V_Padding_Values",
+        "K_Bit_Width_Hist_After",
+        "V_Bit_Width_Hist_After",
+        "K_Bit_Width_Hist_Before",
+        "V_Bit_Width_Hist_Before",
+        "Bucket_Occupancy_Hist",
+        "Bucket_Empty_Rate",
+        "K_Layer_CR_Min",
+        "K_Layer_CR_Mean",
+        "K_Layer_CR_Max",
+        "K_Layer_CR_Std",
+        "V_Layer_CR_Min",
+        "V_Layer_CR_Mean",
+        "V_Layer_CR_Max",
+        "V_Layer_CR_Std",
         "Detailed_Report_Path",
+        "Unified_Layer_Detail_Path",
     ]
 
-    # 组装当前运行的数据行
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    row_data = [
-        timestamp,
-        args.model_name,
-        args.ctx_len,
-        args.quant_method,
-        args.scale_method,
-        args.high_precision_zero_point,
-        args.repack_method,
-        args.k_scale,
-        args.v_scale,
-        args.block_size,
-        args.buffer_size,
-        args.pack_size,
-        args.bucket_count,
-        args.bucket_score_method,
-        STORAGE_MODEL,
+    row_data = metadata_values + [
+        len(res_dict.get("k_original_size", [])),
         k_original_bytes,
         v_original_bytes,
+        sum_metric(res_dict, "k_quant_payload_size"),
+        sum_metric(res_dict, "v_quant_payload_size"),
+        k_quant_bytes,
+        v_quant_bytes,
+        f"{k_original_bytes / k_quant_bytes:.4f}" if k_quant_bytes else "",
+        f"{v_original_bytes / v_quant_bytes:.4f}" if v_quant_bytes else "",
+        sum_metric(res_dict, "k_bitpack_payload_size_before_repack"),
+        sum_metric(res_dict, "v_bitpack_payload_size_before_repack"),
+        k_before_repack_bytes,
+        v_before_repack_bytes,
+        (
+            f"{k_original_bytes / k_before_repack_bytes:.4f}"
+            if k_before_repack_bytes
+            else ""
+        ),
+        (
+            f"{v_original_bytes / v_before_repack_bytes:.4f}"
+            if v_before_repack_bytes
+            else ""
+        ),
         k_compressed_bytes,
         v_compressed_bytes,
         f"{k_global_cr:.4f}",
@@ -145,7 +341,42 @@ def append_to_macro_summary_csv(
         f"{overall_global_cr:.4f}",
         f"{k_save_pct:.2f}%",
         f"{v_save_pct:.2f}%",
+        components["k"]["recent_high_precision_size"],
+        components["v"]["recent_high_precision_size"],
+        components["k"]["quant_zero_point_size"],
+        components["v"]["quant_zero_point_size"],
+        components["k"]["quant_scale_size"],
+        components["v"]["quant_scale_size"],
+        components["k"]["bitpack_payload_size_after_repack"],
+        components["v"]["bitpack_payload_size_after_repack"],
+        components["k"]["bitpack_min_size_after_repack"],
+        components["v"]["bitpack_min_size_after_repack"],
+        components["k"]["bitpack_encode_len_size_after_repack"],
+        components["v"]["bitpack_encode_len_size_after_repack"],
+        components["k"]["permutation_metadata_size"],
+        components["v"]["permutation_metadata_size"],
+        components["k"]["bucket_metadata_size"],
+        components["v"]["bucket_metadata_size"],
+        components["k"]["block_metadata_size"],
+        components["v"]["block_metadata_size"],
+        k_compressed_bytes - accounting_totals["k"],
+        v_compressed_bytes - accounting_totals["v"],
+        sum_metric(res_dict, "k_bitpack_alignment_bits_after_repack"),
+        sum_metric(res_dict, "v_bitpack_alignment_bits_after_repack"),
+        sum_metric(res_dict, "k_bitpack_padding_tokens_after_repack"),
+        sum_metric(res_dict, "v_bitpack_padding_tokens_after_repack"),
+        sum_metric(res_dict, "k_bitpack_padding_values_after_repack"),
+        sum_metric(res_dict, "v_bitpack_padding_values_after_repack"),
+        json.dumps(k_width_hist, sort_keys=True),
+        json.dumps(v_width_hist, sort_keys=True),
+        json.dumps(k_width_hist_before, sort_keys=True),
+        json.dumps(v_width_hist_before, sort_keys=True),
+        json.dumps(bucket_occupancy_hist, sort_keys=True),
+        f"{bucket_empty_rate:.8f}" if bucket_empty_rate != "" else "",
+        *[format_float_or_blank(value) for value in k_layer_stats],
+        *[format_float_or_blank(value) for value in v_layer_stats],
         f"{csv_path}",
+        f"{layer_detail_path}",
     ]
 
     try:
@@ -154,7 +385,7 @@ def append_to_macro_summary_csv(
                 existing_headers = next(csv.reader(f), None)
             if existing_headers != headers:
                 raise ValueError(
-                    "Global_Macro_Summary_v5.csv 表头与当前 schema 不一致"
+                    "Global_Macro_Summary_v6.csv 表头与当前 schema 不一致"
                 )
 
         # 使用 'a' 模式追加写入
@@ -192,43 +423,9 @@ def export_to_csv(args, res_dict, round_idx):
     if num_layers == 0:
         return None  # 如果没有逐层数据,跳过导出
 
-    # 准备 CSV 表头
-    metadata_headers = [
-        "Generated_At",
-        "Model",
-        "Ctx_Len",
-        "Quant_Method",
-        "Scale_Method",
-        "High_Precision_Zero_Point",
-        "Repack_Method",
-        "K_Scale",
-        "V_Scale",
-        "Block_Size",
-        "Buffer_Size",
-        "Pack_Size",
-        "Bucket_Count",
-        "Bucket_Score_Method",
-        "Round",
-        "Storage_Model",
-    ]
-    metadata_values = [
-        generated_at.strftime("%Y-%m-%d %H:%M:%S"),
-        args.model_name,
-        args.ctx_len,
-        args.quant_method,
-        args.scale_method,
-        args.high_precision_zero_point,
-        args.repack_method,
-        args.k_scale,
-        args.v_scale,
-        args.block_size,
-        args.buffer_size,
-        args.pack_size,
-        args.bucket_count,
-        args.bucket_score_method,
-        round_idx,
-        STORAGE_MODEL,
-    ]
+    metadata_headers, metadata_values = result_metadata(
+        args, round_idx, generated_at
+    )
     headers = metadata_headers + ["Layer"]
     # 提取所有值为列表的键作为列名
     list_keys = [
@@ -250,6 +447,53 @@ def export_to_csv(args, res_dict, round_idx):
         return csv_path
     except Exception as e:
         print(f"❌ 导出 CSV 失败: {e}")
+        return None
+
+
+def append_to_layer_detail_csv(args, res_dict, round_idx):
+    """将所有实验的逐层结果追加到统一明细表,便于一次性上传分析."""
+    save_dir = "./csv_results"
+    os.makedirs(save_dir, exist_ok=True)
+    detail_path = os.path.join(save_dir, "Layer_Detail_v1.csv")
+    file_exists = os.path.isfile(detail_path)
+
+    num_layers = len(res_dict.get("k_original_size", []))
+    if num_layers == 0:
+        return None
+
+    generated_at = datetime.datetime.now()
+    metadata_headers, metadata_values = result_metadata(
+        args, round_idx, generated_at
+    )
+    list_keys = [
+        key
+        for key, values in res_dict.items()
+        if isinstance(values, list) and len(values) == num_layers
+    ]
+    headers = metadata_headers + ["Layer_Index"] + list_keys
+
+    try:
+        if file_exists:
+            with open(detail_path, mode="r", newline="", encoding="utf-8") as f:
+                existing_headers = next(csv.reader(f), None)
+            if existing_headers != headers:
+                raise ValueError(
+                    "Layer_Detail_v1.csv 表头与当前 schema 不一致"
+                )
+
+        with open(detail_path, mode="a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(headers)
+            for layer_idx in range(num_layers):
+                writer.writerow(
+                    metadata_values
+                    + [layer_idx]
+                    + [res_dict[key][layer_idx] for key in list_keys]
+                )
+        return detail_path
+    except Exception as e:
+        print(f"❌ 写入统一逐层明细失败: {e}")
         return None
 
 
@@ -352,6 +596,24 @@ def main():
     #     help="是否将提取的高精度 Cache 保存到磁盘 (触发缓存命中机制)",
     # )
     parser.add_argument("--collect_round", type=int, default=1, help="提取数据的轮数")
+    parser.add_argument(
+        "--suite_id",
+        type=str,
+        default="manual",
+        help="实验套件标识,例如 RQ1_full 或 RQ1_sanity",
+    )
+    parser.add_argument(
+        "--run_id",
+        type=str,
+        default=None,
+        help="唯一运行标识;未指定时自动生成",
+    )
+    parser.add_argument(
+        "--sample_id",
+        type=int,
+        default=None,
+        help="输入缓存样本标识;未指定时使用从0开始的 round 索引",
+    )
 
     args = parser.parse_args()
 
@@ -367,6 +629,12 @@ def main():
         args.ctx_len = max_ctx_len_map[args.model_name]
     if args.ctx_len <= 0:
         parser.error("--ctx_len must be a positive integer")
+    if args.collect_round <= 0:
+        parser.error("--collect_round must be a positive integer")
+    args.suite_id = safe_filename_component(args.suite_id) or "manual"
+    if args.run_id is None:
+        timestamp = datetime.datetime.now().strftime("%Y%m%dT%H%M%S%f")
+        args.run_id = f"{args.suite_id}-{timestamp}-{uuid.uuid4().hex[:8]}"
 
     try:
         quant_method_enum = QuantMethod[args.quant_method]
@@ -417,6 +685,8 @@ def main():
     logger.info(f"   Block Size: {args.block_size}, Pack Size: {args.pack_size}")
     logger.info(f"   Bucket Count: {args.bucket_count}")
     logger.info(f"   Bucket Score Method: {args.bucket_score_method}")
+    logger.info(f"   Suite ID: {args.suite_id}")
+    logger.info(f"   Run ID: {args.run_id}")
     logger.info("=" * 50)
 
     results = cr_evaluation(
@@ -476,18 +746,20 @@ def main():
                     if csv_path:
                         print(f"   逐层详细数据已导出至 : {csv_path}")
 
+                    layer_detail_path = append_to_layer_detail_csv(
+                        args, res, i + 1
+                    )
+                    if layer_detail_path:
+                        print(
+                            f"   统一逐层明细已追加至 : {layer_detail_path}"
+                        )
+
                     summary_path = append_to_macro_summary_csv(
                         args,
-                        k_original_bytes,
-                        v_original_bytes,
-                        k_compressed_bytes,
-                        v_compressed_bytes,
-                        k_global_cr,
-                        v_global_cr,
-                        overall_global_cr,
-                        k_save_pct,
-                        v_save_pct,
+                        res,
+                        i + 1,
                         csv_path,
+                        layer_detail_path,
                     )
                     if summary_path:
                         print(f"   宏观结果已追加至 : {summary_path}")

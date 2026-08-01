@@ -14,7 +14,7 @@
 #   bash scripts/cr/run_rq1.sh all
 #
 # 可覆盖参数：
-#   COLLECT_ROUND=5 bash scripts/cr/run_rq1.sh full
+#   COLLECT_ROUND=1 bash scripts/cr/run_rq1.sh full
 #   PYTHON_BIN=python3 bash scripts/cr/run_rq1.sh sanity
 #   MODELS="Qwen/Qwen3-4B NousResearch/Meta-Llama-3-8B" \
 #     CTX_LENS="2048 4096" bash scripts/cr/run_rq1.sh full
@@ -43,8 +43,10 @@ fi
 read -r -a MODEL_LIST <<< "${MODELS:-Qwen/Qwen3-4B Qwen/Qwen3-8B NousResearch/Meta-Llama-3-8B mistralai/Ministral-8B-Instruct-2410}"
 read -r -a CTX_LIST <<< "${CTX_LENS:-2048 4096 8192}"
 
-COLLECT_ROUND="${COLLECT_ROUND:-5}"
-SANITY_COLLECT_ROUND="${SANITY_COLLECT_ROUND:-3}"
+# 当前直接 CR Cache 采集路径在 cache miss 时只可靠支持一轮.
+# 多样本实验需要后续单独实现不同文本片段的采集,不能简单增大此值.
+COLLECT_ROUND="${COLLECT_ROUND:-1}"
+SANITY_COLLECT_ROUND="${SANITY_COLLECT_ROUND:-1}"
 BLOCK_SIZE="${BLOCK_SIZE:-64}"
 BUFFER_SIZE="${BUFFER_SIZE:-192}"
 PACK_SIZE="${PACK_SIZE:-16}"
@@ -79,6 +81,7 @@ run_one() {
         --model_name "$model" \
         --ctx_len "$ctx_len" \
         --collect_round "$rounds" \
+        --suite_id "RQ1_${phase}" \
         --quant_method PackKV \
         --repack_method "$repack_method" \
         --block_size "$BLOCK_SIZE" \
