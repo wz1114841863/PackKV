@@ -56,6 +56,7 @@ class ScaleMethod(Enum):
     PO2_NEAREST = "po2_nearest"
     PO2_FLOOR = "po2_floor"
     PO2_CEIL = "po2_ceil"
+    PO2_PACK_AWARE = "po2_pack_aware"
 
 
 class BucketScoreMethod(Enum):
@@ -200,6 +201,7 @@ def quant_ints(
     quant_mode: QuantMode,
     high_precision_zero_point: bool = False,
     scale_method: ScaleMethod = ScaleMethod.CONTINUOUS,
+    record_k_stats: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     if not math.isfinite(quant_scale_rel) or quant_scale_rel <= 0:
         raise ValueError("quant_scale_rel must be a finite positive number")
@@ -235,6 +237,11 @@ def quant_ints(
             k = torch.floor(log2_scale)
         elif scale_method == ScaleMethod.PO2_CEIL:
             k = torch.ceil(log2_scale)
+        elif scale_method == ScaleMethod.PO2_PACK_AWARE:
+            raise ValueError(
+                "po2_pack_aware requires joint K/V quantization; "
+                "use packing_aware_quantize_kv in the offline CR path"
+            )
         else:
             raise ValueError(f"Unknown scale_method: {scale_method}")
         dtype_info = torch.finfo(scale_raw.dtype)
@@ -242,7 +249,7 @@ def quant_ints(
         max_k = math.floor(math.log2(dtype_info.max))
         k = torch.clamp(k, min=min_k, max=max_k)
         quant_scale = torch.exp2(k).to(scale_raw.dtype)
-        if os.environ.get("PACKKV_GLOBAL_K_STATS", "1") != "0":
+        if record_k_stats and os.environ.get("PACKKV_GLOBAL_K_STATS", "1") != "0":
             with torch.no_grad():
                 unique_ks, counts = torch.unique(k.flatten(), return_counts=True)
                 for exponent, count in zip(unique_ks.tolist(), counts.tolist()):
@@ -674,28 +681,12 @@ def _equal_width_bucket_ids(
     return (scores.unsqueeze(2) >= thresholds).sum(dim=2).to(torch.int64)
 
 
-def bucket_repacking(
+def _build_bucket_permutation(
     blocks: torch.Tensor,
-    num_buckets: int = 4,
-    score_method: BucketScoreMethod = BucketScoreMethod.COMBINED_SUM,
-    return_metadata: bool = False,
-):
-    """两遍式/稳定 FIFO 的硬件 Bucket 重排参考模型.
-
-    输入 ``blocks`` 为 [block, token, K+V feature].K/V 已沿最后一维拼接,
-    因而这里只生成一次 bucket ID,天然保证 K/V 使用相同置换.
-
-    硬件映射:
-      1. 按 score_method 生成 combined/K/V 整数和;KV_2D 分别保留K/V score;
-      2. 每个基础 block 求 score 的 min/max;
-      3. 桶数限制为 2^n,等宽阈值仅需常数乘法/加法和右移;
-      4. 比较器阵列生成 bucket ID,稳定写入多路 FIFO;
-      5. 按固定 bucket ID 顺序读出,不执行全排序.
-
-    最后一个桶计数可由 block token 总数和其他桶计数推导,因此元数据只
-    保存 ``num_buckets - 1`` 个计数.动态阈值只在编码端用于路由,不需要
-    随压缩流保存.
-    """
+    num_buckets: int,
+    score_method: BucketScoreMethod,
+) -> Tuple[torch.Tensor, RepackMetadataStats]:
+    """生成稳定 FIFO Bucket 的 token 置换及其可解码元数据."""
     if blocks.ndim != 3:
         raise ValueError("blocks must have shape [block, token, feature]")
     block_count, tokens_per_block, feature_dim = blocks.shape
@@ -718,10 +709,7 @@ def bucket_repacking(
     k_subbucket_count = 0
     v_subbucket_count = 0
     if score_method == BucketScoreMethod.COMBINED_SUM:
-        bucket_ids = _equal_width_bucket_ids(
-            k_scores + v_scores,
-            num_buckets,
-        )
+        bucket_ids = _equal_width_bucket_ids(k_scores + v_scores, num_buckets)
     elif score_method == BucketScoreMethod.K_SUM:
         bucket_ids = _equal_width_bucket_ids(k_scores, num_buckets)
     elif score_method == BucketScoreMethod.V_SUM:
@@ -732,32 +720,18 @@ def bucket_repacking(
         v_bucket_bits = total_bucket_bits // 2
         k_subbucket_count = 1 << k_bucket_bits
         v_subbucket_count = 1 << v_bucket_bits
-        k_bucket_ids = _equal_width_bucket_ids(
-            k_scores,
-            k_subbucket_count,
-        )
-        v_bucket_ids = _equal_width_bucket_ids(
-            v_scores,
-            v_subbucket_count,
-        )
+        k_bucket_ids = _equal_width_bucket_ids(k_scores, k_subbucket_count)
+        v_bucket_ids = _equal_width_bucket_ids(v_scores, v_subbucket_count)
         bucket_ids = k_bucket_ids * v_subbucket_count + v_bucket_ids
     else:
         raise ValueError(f"Unknown bucket score method: {score_method}")
 
-    # 布尔筛选保持桶内原始顺序,等价于多路 FIFO 的稳定写入/顺序读出.
-    repacked_batches = []
-    bucket_counts_tensor = torch.empty(
-        (block_count, num_buckets), device=blocks.device, dtype=torch.int64
+    # argsort 对 bucket ID 稳定排序，等价于按桶号顺序读取稳定 FIFO。
+    permutation = torch.argsort(bucket_ids, dim=1, stable=True)
+    bucket_counts_tensor = torch.stack(
+        [(bucket_ids == bucket_idx).sum(dim=1) for bucket_idx in range(num_buckets)],
+        dim=1,
     )
-    for block_idx in range(block_count):
-        bucket_parts = []
-        for bucket_idx in range(num_buckets):
-            in_bucket = bucket_ids[block_idx] == bucket_idx
-            bucket_counts_tensor[block_idx, bucket_idx] = in_bucket.sum()
-            bucket_parts.append(blocks[block_idx, in_bucket])
-        repacked_batches.append(torch.cat(bucket_parts, dim=0))
-    repacked_blocks = torch.stack(repacked_batches, dim=0)
-
     count_field_bits = max(1, math.ceil(math.log2(tokens_per_block + 1)))
     metadata_bits = block_count * (num_buckets - 1) * count_field_bits
     counts_cpu = bucket_counts_tensor.cpu().tolist()
@@ -776,6 +750,44 @@ def bucket_repacking(
         k_subbucket_count=k_subbucket_count,
         v_subbucket_count=v_subbucket_count,
     )
+    return permutation, metadata
+
+
+def _apply_token_permutation(
+    blocks: torch.Tensor, permutation: torch.Tensor
+) -> torch.Tensor:
+    if permutation.shape != blocks.shape[:2]:
+        raise ValueError("permutation shape must match [block, token]")
+    indices = permutation.unsqueeze(2).expand(-1, -1, blocks.shape[2])
+    return torch.gather(blocks, 1, indices)
+
+
+def bucket_repacking(
+    blocks: torch.Tensor,
+    num_buckets: int = 4,
+    score_method: BucketScoreMethod = BucketScoreMethod.COMBINED_SUM,
+    return_metadata: bool = False,
+):
+    """两遍式/稳定 FIFO 的硬件 Bucket 重排参考模型.
+
+    输入 ``blocks`` 为 [block, token, K+V feature].K/V 已沿最后一维拼接,
+    因而这里只生成一次 bucket ID,天然保证 K/V 使用相同置换.
+
+    硬件映射:
+      1. 按 score_method 生成 combined/K/V 整数和;KV_2D 分别保留K/V score;
+      2. 每个基础 block 求 score 的 min/max;
+      3. 桶数限制为 2^n,等宽阈值仅需常数乘法/加法和右移;
+      4. 比较器阵列生成 bucket ID,稳定写入多路 FIFO;
+      5. 按固定 bucket ID 顺序读出,不执行全排序.
+
+    最后一个桶计数可由 block token 总数和其他桶计数推导,因此元数据只
+    保存 ``num_buckets - 1`` 个计数.动态阈值只在编码端用于路由,不需要
+    随压缩流保存.
+    """
+    permutation, metadata = _build_bucket_permutation(
+        blocks, num_buckets, score_method
+    )
+    repacked_blocks = _apply_token_permutation(blocks, permutation)
     if return_metadata:
         return repacked_blocks, metadata
     return repacked_blocks
@@ -932,6 +944,181 @@ def bit_pack_detail_rebuttal(
     )
 
 
+@dataclass(frozen=True)
+class PackingAwareCacheStats:
+    """单层、单类 Cache 的 packing-aware 候选选择统计."""
+
+    total_blocks: int
+    candidate_different_blocks: int
+    ceil_selected_blocks: int
+    nearest_nmse_mean: float
+    selected_nmse_mean: float
+    nearest_payload_bits: int
+    selected_payload_bits: int
+    error_budget_violations: int
+
+    @property
+    def ceil_selected_rate(self) -> float:
+        return self.ceil_selected_blocks / self.total_blocks if self.total_blocks else 0.0
+
+    @property
+    def payload_bits_saved(self) -> int:
+        return self.nearest_payload_bits - self.selected_payload_bits
+
+
+def _quant_tensor_to_blocks(tensor: torch.Tensor) -> torch.Tensor:
+    """[B,H,block,token,D] -> [block,token,B*H*D]."""
+    return tensor.permute(2, 3, 0, 1, 4).flatten(2, 4)
+
+
+def _packed_payload_bits_per_block(
+    blocks: torch.Tensor, pack_len: int
+) -> torch.Tensor:
+    """返回每个基础 block 的 payload bit 数，不计候选无关的元数据."""
+    if blocks.ndim != 3 or blocks.shape[1] % pack_len != 0:
+        raise ValueError("block token count must be divisible by pack_len")
+    packs = blocks.to(torch.int64).view(
+        blocks.shape[0], -1, pack_len, blocks.shape[2]
+    )
+    widths = torch.ceil(
+        torch.log2(packs.max(dim=2).values - packs.min(dim=2).values + 1)
+    ).to(torch.int64)
+    return widths.sum(dim=(1, 2)) * pack_len
+
+
+def _block_nmse(
+    original: torch.Tensor,
+    quant_int: torch.Tensor,
+    quant_zero: torch.Tensor,
+    quant_scale: torch.Tensor,
+    high_precision_zero_point: bool,
+) -> torch.Tensor:
+    reconstructed = dequantize_ints(
+        quant_int, quant_zero, quant_scale, high_precision_zero_point
+    )
+    error = (original.to(torch.float32) - reconstructed.to(torch.float32)).square()
+    signal = original.to(torch.float32).square()
+    reduce_dims = (0, 1, 3, 4)
+    return error.sum(dim=reduce_dims) / signal.sum(dim=reduce_dims).clamp_min(1e-12)
+
+
+def _record_selected_po2_scales(scales: torch.Tensor) -> None:
+    if os.environ.get("PACKKV_GLOBAL_K_STATS", "1") == "0":
+        return
+    exponents = torch.round(torch.log2(scales.to(torch.float32)))
+    unique_ks, counts = torch.unique(exponents.flatten(), return_counts=True)
+    for exponent, count in zip(unique_ks.tolist(), counts.tolist()):
+        GLOBAL_K_COUNTER[int(exponent)] += count
+
+
+def packing_aware_quantize_kv(
+    k_tensor: torch.Tensor,
+    v_tensor: torch.Tensor,
+    block_size: int,
+    pack_size: int,
+    k_quant_scale_rel: float,
+    v_quant_scale_rel: float,
+    k_quant_mode: QuantMode,
+    v_quant_mode: QuantMode,
+    high_precision_zero_point: bool = False,
+    k_error_budget: float = 0.1,
+    v_error_budget: float = 0.1,
+    bucket_count: int = 4,
+    bucket_score_method: BucketScoreMethod = BucketScoreMethod.K_SUM,
+):
+    """误差约束下的 nearest/ceil 联合软件参考模型.
+
+    nearest K 生成唯一、固定的 Bucket 置换，K/V 共用该置换。每个基础
+    block 仅在 ceil 满足相对 nearest 的 NMSE 预算且严格减少 payload bits
+    时切换到 ceil；否则无条件回退 nearest。
+    """
+    if k_tensor.shape[:3] != v_tensor.shape[:3]:
+        raise ValueError("K/V batch, head and sequence dimensions must match")
+    if block_size % pack_size:
+        raise ValueError("packing-aware mode requires block_size divisible by pack_size")
+    if k_error_budget < 0 or v_error_budget < 0:
+        raise ValueError("packing-aware error budgets must be non-negative")
+    if BucketScoreMethod(bucket_score_method) != BucketScoreMethod.K_SUM:
+        raise ValueError("packing-aware reference currently requires bucket_score_method=k_sum")
+
+    def candidates(tensor, scale_rel, quant_mode):
+        nearest = quant_ints(
+            tensor, block_size, scale_rel, quant_mode,
+            high_precision_zero_point, ScaleMethod.PO2_NEAREST,
+            record_k_stats=False,
+        )
+        ceil = quant_ints(
+            tensor, block_size, scale_rel, quant_mode,
+            high_precision_zero_point, ScaleMethod.PO2_CEIL,
+            record_k_stats=False,
+        )
+        return nearest, ceil
+
+    k_nearest, k_ceil = candidates(k_tensor, k_quant_scale_rel, k_quant_mode)
+    v_nearest, v_ceil = candidates(v_tensor, v_quant_scale_rel, v_quant_mode)
+    k_nearest_blocks = _quant_tensor_to_blocks(k_nearest[0])
+    v_nearest_blocks = _quant_tensor_to_blocks(v_nearest[0])
+    nearest_kv_blocks = torch.cat([k_nearest_blocks, v_nearest_blocks], dim=2)
+    permutation, repack_metadata = _build_bucket_permutation(
+        nearest_kv_blocks, bucket_count, BucketScoreMethod.K_SUM
+    )
+
+    original_k = k_tensor.reshape(
+        k_tensor.shape[0], k_tensor.shape[1], -1, block_size, k_tensor.shape[3]
+    )
+    original_v = v_tensor.reshape(
+        v_tensor.shape[0], v_tensor.shape[1], -1, block_size, v_tensor.shape[3]
+    )
+
+    def choose(original, nearest, ceil, budget):
+        nearest_blocks = _apply_token_permutation(
+            _quant_tensor_to_blocks(nearest[0]), permutation
+        )
+        ceil_blocks = _apply_token_permutation(
+            _quant_tensor_to_blocks(ceil[0]), permutation
+        )
+        nearest_cost = _packed_payload_bits_per_block(nearest_blocks, pack_size)
+        ceil_cost = _packed_payload_bits_per_block(ceil_blocks, pack_size)
+        nearest_nmse = _block_nmse(
+            original, *nearest, high_precision_zero_point
+        )
+        ceil_nmse = _block_nmse(original, *ceil, high_precision_zero_point)
+        within_budget = ceil_nmse <= (1.0 + budget) * nearest_nmse + 1e-12
+        use_ceil = within_budget & (ceil_cost < nearest_cost)
+        mask = use_ceil.view(1, 1, -1, 1, 1)
+        selected = tuple(
+            torch.where(mask, ceil_value, nearest_value)
+            for nearest_value, ceil_value in zip(nearest, ceil)
+        )
+        selected_nmse = torch.where(use_ceil, ceil_nmse, nearest_nmse)
+        selected_cost = torch.where(use_ceil, ceil_cost, nearest_cost)
+        scale_diff = (nearest[2] != ceil[2]).permute(2, 0, 1, 3, 4).flatten(1).any(dim=1)
+        violations = selected_nmse > (1.0 + budget) * nearest_nmse + 1e-12
+        stats = PackingAwareCacheStats(
+            total_blocks=int(use_ceil.numel()),
+            candidate_different_blocks=int(scale_diff.sum().item()),
+            ceil_selected_blocks=int(use_ceil.sum().item()),
+            nearest_nmse_mean=float(nearest_nmse.mean().item()),
+            selected_nmse_mean=float(selected_nmse.mean().item()),
+            nearest_payload_bits=int(nearest_cost.sum().item()),
+            selected_payload_bits=int(selected_cost.sum().item()),
+            error_budget_violations=int(violations.sum().item()),
+        )
+        _record_selected_po2_scales(selected[2])
+        return selected, stats
+
+    k_selected, k_stats = choose(original_k, k_nearest, k_ceil, k_error_budget)
+    v_selected, v_stats = choose(original_v, v_nearest, v_ceil, v_error_budget)
+    return (
+        *k_selected,
+        *v_selected,
+        permutation,
+        repack_metadata,
+        k_stats,
+        v_stats,
+    )
+
+
 def repack_and_encode(
     k_tensor: torch.Tensor,
     v_tensor: torch.Tensor,
@@ -942,6 +1129,8 @@ def repack_and_encode(
     bucket_count: int = 4,
     bucket_score_method: BucketScoreMethod = BucketScoreMethod.COMBINED_SUM,
     return_repack_metadata: bool = False,
+    fixed_bucket_permutation: Optional[torch.Tensor] = None,
+    fixed_repack_metadata: Optional[RepackMetadataStats] = None,
 ):
     """执行不同的重排算法, 并对比重排前后的收益与代价"""
     k_blocks = k_tensor.permute(2, 3, 0, 1, 4).flatten(2, 4)
@@ -956,12 +1145,18 @@ def repack_and_encode(
     elif repack_method == RepackMethod.MEDIAN:
         blocks = median_repacking(blocks)
     elif repack_method == RepackMethod.BUCKET:
-        blocks, repack_metadata = bucket_repacking(
-            blocks,
-            num_buckets=bucket_count,
-            score_method=bucket_score_method,
-            return_metadata=True,
-        )
+        if fixed_bucket_permutation is None:
+            blocks, repack_metadata = bucket_repacking(
+                blocks,
+                num_buckets=bucket_count,
+                score_method=bucket_score_method,
+                return_metadata=True,
+            )
+        else:
+            if fixed_repack_metadata is None:
+                raise ValueError("fixed_repack_metadata is required with fixed permutation")
+            blocks = _apply_token_permutation(blocks, fixed_bucket_permutation)
+            repack_metadata = fixed_repack_metadata
     elif repack_method == RepackMethod.NONE:
         pass
     else:

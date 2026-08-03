@@ -99,6 +99,8 @@ def result_metadata(args, round_idx, generated_at):
         "Pack_Size",
         "Bucket_Count",
         "Bucket_Score_Method",
+        "K_Error_Budget",
+        "V_Error_Budget",
         "Round",
         "Storage_Model",
     ]
@@ -120,6 +122,8 @@ def result_metadata(args, round_idx, generated_at):
         args.pack_size,
         args.bucket_count,
         args.bucket_score_method,
+        args.k_error_budget,
+        args.v_error_budget,
         round_idx,
         STORAGE_MODEL,
     ]
@@ -155,6 +159,8 @@ def build_report_filename(args, round_idx, timestamp=None):
         f"round-{round_idx}",
         timestamp.strftime("%Y%m%d_%H%M%S"),
     ]
+    if args.scale_method == ScaleMethod.PO2_PACK_AWARE.value:
+        fields.insert(-2, f"err-{args.k_error_budget}-{args.v_error_budget}")
     return "_".join(fields) + ".csv"
 
 
@@ -165,12 +171,12 @@ def append_to_macro_summary_csv(
     csv_path,
     layer_detail_path,
 ):
-    """将全局结果、存储组成和层间统计追加到 v6 汇总表."""
+    """将全局结果、存储组成和 packing-aware 统计追加到 v7 汇总表."""
     save_dir = "./csv_results"
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    summary_file = os.path.join(save_dir, "Global_Macro_Summary_v6.csv")
+    summary_file = os.path.join(save_dir, "Global_Macro_Summary_v7.csv")
     file_exists = os.path.isfile(summary_file)
 
     generated_at = datetime.datetime.now()
@@ -242,6 +248,36 @@ def append_to_macro_summary_csv(
         if bucket_slot_count
         else ""
     )
+    pa_values = []
+    for cache_kind in ("k", "v"):
+        total_blocks = sum_metric(res_dict, f"{cache_kind}_pa_total_blocks")
+        selected_blocks = sum_metric(res_dict, f"{cache_kind}_pa_ceil_selected_blocks")
+        nearest_bits = sum_metric(res_dict, f"{cache_kind}_pa_nearest_payload_bits")
+        selected_bits = sum_metric(res_dict, f"{cache_kind}_pa_selected_payload_bits")
+        layer_blocks = res_dict.get(f"{cache_kind}_pa_total_blocks", [])
+        def weighted_mean(metric):
+            values = res_dict.get(metric, [])
+            denominator = sum(layer_blocks)
+            return (
+                sum(float(value) * int(count) for value, count in zip(values, layer_blocks))
+                / denominator
+                if denominator
+                else 0.0
+            )
+        pa_values.extend(
+            [
+                total_blocks,
+                sum_metric(res_dict, f"{cache_kind}_pa_candidate_different_blocks"),
+                selected_blocks,
+                f"{selected_blocks / total_blocks:.8f}" if total_blocks else "0.00000000",
+                f"{weighted_mean(f'{cache_kind}_pa_nearest_nmse_mean'):.10g}",
+                f"{weighted_mean(f'{cache_kind}_pa_selected_nmse_mean'):.10g}",
+                nearest_bits,
+                selected_bits,
+                nearest_bits - selected_bits,
+                sum_metric(res_dict, f"{cache_kind}_pa_error_budget_violations"),
+            ]
+        )
 
     headers = metadata_headers + [
         "Num_Layers",
@@ -298,6 +334,16 @@ def append_to_macro_summary_csv(
         "V_Bit_Width_Hist_Before",
         "Bucket_Occupancy_Hist",
         "Bucket_Empty_Rate",
+        "K_PA_Total_Blocks", "K_PA_Candidate_Different_Blocks",
+        "K_PA_Ceil_Selected_Blocks", "K_PA_Ceil_Selected_Rate",
+        "K_PA_Nearest_NMSE", "K_PA_Selected_NMSE",
+        "K_PA_Nearest_Payload_Bits", "K_PA_Selected_Payload_Bits",
+        "K_PA_Payload_Bits_Saved", "K_PA_Error_Budget_Violations",
+        "V_PA_Total_Blocks", "V_PA_Candidate_Different_Blocks",
+        "V_PA_Ceil_Selected_Blocks", "V_PA_Ceil_Selected_Rate",
+        "V_PA_Nearest_NMSE", "V_PA_Selected_NMSE",
+        "V_PA_Nearest_Payload_Bits", "V_PA_Selected_Payload_Bits",
+        "V_PA_Payload_Bits_Saved", "V_PA_Error_Budget_Violations",
         "K_Layer_CR_Min",
         "K_Layer_CR_Mean",
         "K_Layer_CR_Max",
@@ -373,6 +419,7 @@ def append_to_macro_summary_csv(
         json.dumps(v_width_hist_before, sort_keys=True),
         json.dumps(bucket_occupancy_hist, sort_keys=True),
         f"{bucket_empty_rate:.8f}" if bucket_empty_rate != "" else "",
+        *pa_values,
         *[format_float_or_blank(value) for value in k_layer_stats],
         *[format_float_or_blank(value) for value in v_layer_stats],
         f"{csv_path}",
@@ -385,7 +432,7 @@ def append_to_macro_summary_csv(
                 existing_headers = next(csv.reader(f), None)
             if existing_headers != headers:
                 raise ValueError(
-                    "Global_Macro_Summary_v6.csv 表头与当前 schema 不一致"
+                    "Global_Macro_Summary_v7.csv 表头与当前 schema 不一致"
                 )
 
         # 使用 'a' 模式追加写入
@@ -454,7 +501,7 @@ def append_to_layer_detail_csv(args, res_dict, round_idx):
     """将所有实验的逐层结果追加到统一明细表,便于一次性上传分析."""
     save_dir = "./csv_results"
     os.makedirs(save_dir, exist_ok=True)
-    detail_path = os.path.join(save_dir, "Layer_Detail_v1.csv")
+    detail_path = os.path.join(save_dir, "Layer_Detail_v2.csv")
     file_exists = os.path.isfile(detail_path)
 
     num_layers = len(res_dict.get("k_original_size", []))
@@ -478,7 +525,7 @@ def append_to_layer_detail_csv(args, res_dict, round_idx):
                 existing_headers = next(csv.reader(f), None)
             if existing_headers != headers:
                 raise ValueError(
-                    "Layer_Detail_v1.csv 表头与当前 schema 不一致"
+                    "Layer_Detail_v2.csv 表头与当前 schema 不一致"
                 )
 
         with open(detail_path, mode="a", newline="", encoding="utf-8") as f:
@@ -567,6 +614,14 @@ def main():
         help="量化步长策略",
     )
     parser.add_argument(
+        "--k_error_budget", type=float, default=0.1,
+        help="packing-aware ceil 相对 nearest 的 K block NMSE 增幅预算",
+    )
+    parser.add_argument(
+        "--v_error_budget", type=float, default=0.1,
+        help="packing-aware ceil 相对 nearest 的 V block NMSE 增幅预算",
+    )
+    parser.add_argument(
         "--high_precision_zero_point",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -631,6 +686,8 @@ def main():
         parser.error("--ctx_len must be a positive integer")
     if args.collect_round <= 0:
         parser.error("--collect_round must be a positive integer")
+    if args.k_error_budget < 0 or args.v_error_budget < 0:
+        parser.error("--k_error_budget and --v_error_budget must be non-negative")
     args.suite_id = safe_filename_component(args.suite_id) or "manual"
     if args.run_id is None:
         timestamp = datetime.datetime.now().strftime("%Y%m%dT%H%M%S%f")
@@ -659,6 +716,15 @@ def main():
         and args.bucket_count < 4
     ):
         parser.error("--bucket_score_method kv_2d requires --bucket_count >= 4")
+    if args.scale_method == ScaleMethod.PO2_PACK_AWARE.value and (
+        quant_method_enum != QuantMethod.PackKV
+        or repack_method_enum != RepackMethod.BUCKET
+        or args.bucket_score_method != BucketScoreMethod.K_SUM.value
+    ):
+        parser.error(
+            "po2_pack_aware currently requires --quant_method PackKV "
+            "--repack_method BUCKET --bucket_score_method k_sum"
+        )
 
     config = PackKVCacheConfig(
         enable_quant=False,
@@ -674,6 +740,8 @@ def main():
         scale_method=ScaleMethod(args.scale_method),
         bucket_count=args.bucket_count,
         bucket_score_method=BucketScoreMethod(args.bucket_score_method),
+        k_error_budget=args.k_error_budget,
+        v_error_budget=args.v_error_budget,
     )
     args.enable_save = True
     logger.info("=" * 50)
@@ -681,6 +749,9 @@ def main():
     logger.info(f"   Context Length: {args.ctx_len}")
     logger.info(f"   K Scale: {args.k_scale}, V Scale: {args.v_scale}")
     logger.info(f"   Scale Method: {args.scale_method}")
+    logger.info(
+        f"   Packing-aware NMSE Budget: K={args.k_error_budget}, V={args.v_error_budget}"
+    )
     logger.info(f"   High Precision Zero Point: {args.high_precision_zero_point}")
     logger.info(f"   Block Size: {args.block_size}, Pack Size: {args.pack_size}")
     logger.info(f"   Bucket Count: {args.bucket_count}")

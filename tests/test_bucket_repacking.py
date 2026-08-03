@@ -203,11 +203,15 @@ class BucketRepackingTest(unittest.TestCase):
             scale_method=ScaleMethod.PO2_NEAREST,
             bucket_count=8,
             bucket_score_method=BucketScoreMethod.KV_2D,
+            k_error_budget=0.2,
+            v_error_budget=0.3,
         )
 
         restored = PackKVCacheConfig.from_str(str(config))
         self.assertEqual(restored, config)
         self.assertEqual(restored.bucket_count, 8)
+        self.assertEqual(restored.k_error_budget, 0.2)
+        self.assertEqual(restored.v_error_budget, 0.3)
         self.assertEqual(
             restored.bucket_score_method,
             BucketScoreMethod.KV_2D,

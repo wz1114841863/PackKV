@@ -81,6 +81,12 @@ def parse_arguments():
 def main():
     args = parse_arguments()
 
+    if args.scale_method == ScaleMethod.PO2_PACK_AWARE.value:
+        raise SystemExit(
+            "po2_pack_aware 当前仅实现离线 K/V 联合压缩率参考路径；"
+            "尚未接入在线 Cache 精度评测。"
+        )
+
     # 清楚lm_eval内存缓存, 避免 lm_eval偷懒返回错误的旧数据
     cache_dir = os.path.expanduser("~/.cache/lm-eval")
     if os.path.exists(cache_dir):

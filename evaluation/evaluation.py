@@ -24,6 +24,7 @@ from utils.compute import (
     quant_ints_throughput,
     ScaleMethod,
     dequantize_ints,
+    packing_aware_quantize_kv,
 )
 from utils.config import PackKVCacheConfig, ExtractCacheConfig
 from utils.lm_eval_warp import LMEvalWrapper
@@ -398,6 +399,26 @@ def crs_evaluation_with_data(
             "repack_bucket_score_method": [],
             "repack_k_subbucket_count": [],
             "repack_v_subbucket_count": [],
+            "k_pa_total_blocks": [],
+            "v_pa_total_blocks": [],
+            "k_pa_candidate_different_blocks": [],
+            "v_pa_candidate_different_blocks": [],
+            "k_pa_ceil_selected_blocks": [],
+            "v_pa_ceil_selected_blocks": [],
+            "k_pa_ceil_selected_rate": [],
+            "v_pa_ceil_selected_rate": [],
+            "k_pa_nearest_nmse_mean": [],
+            "v_pa_nearest_nmse_mean": [],
+            "k_pa_selected_nmse_mean": [],
+            "v_pa_selected_nmse_mean": [],
+            "k_pa_nearest_payload_bits": [],
+            "v_pa_nearest_payload_bits": [],
+            "k_pa_selected_payload_bits": [],
+            "v_pa_selected_payload_bits": [],
+            "k_pa_payload_bits_saved": [],
+            "v_pa_payload_bits_saved": [],
+            "k_pa_error_budget_violations": [],
+            "v_pa_error_budget_violations": [],
         }
     )
 
@@ -474,24 +495,76 @@ def crs_evaluation_with_data(
             res["repack_bucket_score_method"].append("")
             res["repack_k_subbucket_count"].append(0)
             res["repack_v_subbucket_count"].append(0)
+            for cache_kind in ("k", "v"):
+                for suffix in (
+                    "total_blocks", "candidate_different_blocks",
+                    "ceil_selected_blocks", "ceil_selected_rate",
+                    "nearest_nmse_mean", "selected_nmse_mean",
+                    "nearest_payload_bits", "selected_payload_bits",
+                    "payload_bits_saved", "error_budget_violations",
+                ):
+                    res[f"{cache_kind}_pa_{suffix}"].append(0)
             continue
 
-        k_quant_int, k_quant_zero, k_quant_scale = quant_ints(
-            k_to_quant,
-            config.block_size,
-            config.k_quant_scale_rel,
-            config.quant_method.value[0],
-            config.high_precision_zero_point,
-            getattr(config, "scale_method", ScaleMethod.CONTINUOUS),
-        )
-        v_quant_int, v_quant_zero, v_quant_scale = quant_ints(
-            v_to_quant,
-            config.block_size,
-            config.v_quant_scale_rel,
-            config.quant_method.value[1],
-            config.high_precision_zero_point,
-            getattr(config, "scale_method", ScaleMethod.CONTINUOUS),
-        )
+        fixed_bucket_permutation = None
+        fixed_repack_metadata = None
+        pa_stats = None
+        scale_method = getattr(config, "scale_method", ScaleMethod.CONTINUOUS)
+        if scale_method == ScaleMethod.PO2_PACK_AWARE:
+            (
+                k_quant_int, k_quant_zero, k_quant_scale,
+                v_quant_int, v_quant_zero, v_quant_scale,
+                fixed_bucket_permutation, fixed_repack_metadata,
+                k_pa_stats, v_pa_stats,
+            ) = packing_aware_quantize_kv(
+                k_to_quant,
+                v_to_quant,
+                config.block_size,
+                config.pack_size,
+                config.k_quant_scale_rel,
+                config.v_quant_scale_rel,
+                config.quant_method.value[0],
+                config.quant_method.value[1],
+                config.high_precision_zero_point,
+                getattr(config, "k_error_budget", 0.1),
+                getattr(config, "v_error_budget", 0.1),
+                getattr(config, "bucket_count", 4),
+                getattr(config, "bucket_score_method", BucketScoreMethod.K_SUM),
+            )
+            pa_stats = {"k": k_pa_stats, "v": v_pa_stats}
+        else:
+            k_quant_int, k_quant_zero, k_quant_scale = quant_ints(
+                k_to_quant,
+                config.block_size,
+                config.k_quant_scale_rel,
+                config.quant_method.value[0],
+                config.high_precision_zero_point,
+                scale_method,
+            )
+            v_quant_int, v_quant_zero, v_quant_scale = quant_ints(
+                v_to_quant,
+                config.block_size,
+                config.v_quant_scale_rel,
+                config.quant_method.value[1],
+                config.high_precision_zero_point,
+                scale_method,
+            )
+        for cache_kind in ("k", "v"):
+            stats = pa_stats[cache_kind] if pa_stats else None
+            values = {
+                "total_blocks": stats.total_blocks if stats else 0,
+                "candidate_different_blocks": stats.candidate_different_blocks if stats else 0,
+                "ceil_selected_blocks": stats.ceil_selected_blocks if stats else 0,
+                "ceil_selected_rate": stats.ceil_selected_rate if stats else 0,
+                "nearest_nmse_mean": stats.nearest_nmse_mean if stats else 0,
+                "selected_nmse_mean": stats.selected_nmse_mean if stats else 0,
+                "nearest_payload_bits": stats.nearest_payload_bits if stats else 0,
+                "selected_payload_bits": stats.selected_payload_bits if stats else 0,
+                "payload_bits_saved": stats.payload_bits_saved if stats else 0,
+                "error_budget_violations": stats.error_budget_violations if stats else 0,
+            }
+            for suffix, value in values.items():
+                res[f"{cache_kind}_pa_{suffix}"].append(value)
         k_quant_bit_num = get_pseudo_quant_bit_num(k_quant_int)
         v_quant_bit_num = get_pseudo_quant_bit_num(v_quant_int)
         k_quant_payload_bits = k_quant_int.numel() * k_quant_bit_num
@@ -546,6 +619,8 @@ def crs_evaluation_with_data(
                     BucketScoreMethod.COMBINED_SUM,
                 ),
                 return_repack_metadata=True,
+                fixed_bucket_permutation=fixed_bucket_permutation,
+                fixed_repack_metadata=fixed_repack_metadata,
             )
             shared_bucket_metadata_size = repack_metadata.bucket_metadata_bytes
             res["repack_bucket_count"].append(repack_metadata.bucket_count)

@@ -1,4 +1,5 @@
 import ast
+import math
 
 from utils.compute import (
     BucketScoreMethod,
@@ -48,7 +49,13 @@ class PackKVCacheConfig:
         scale_method: ScaleMethod = ScaleMethod.CONTINUOUS,
         bucket_count: int = 4,
         bucket_score_method: BucketScoreMethod = BucketScoreMethod.COMBINED_SUM,
+        k_error_budget: float = 0.1,
+        v_error_budget: float = 0.1,
     ):
+        if not math.isfinite(k_error_budget) or k_error_budget < 0:
+            raise ValueError("k_error_budget must be finite and non-negative")
+        if not math.isfinite(v_error_budget) or v_error_budget < 0:
+            raise ValueError("v_error_budget must be finite and non-negative")
         self.enable_quant: bool = enable_quant
         self.model_name: str = model_name
         self.quant_method: QuantMethod = quant_method
@@ -63,6 +70,8 @@ class PackKVCacheConfig:
         self.scale_method: ScaleMethod = scale_method
         self.bucket_count: int = bucket_count
         self.bucket_score_method: BucketScoreMethod = bucket_score_method
+        self.k_error_budget: float = k_error_budget
+        self.v_error_budget: float = v_error_budget
 
     # to string print
     def __str__(self):
@@ -90,6 +99,8 @@ class PackKVCacheConfig:
                 "bucket_score_method",
                 BucketScoreMethod.COMBINED_SUM,
             ).value
+            json_["k_error_budget"] = getattr(self, "k_error_budget", 0.1)
+            json_["v_error_budget"] = getattr(self, "v_error_budget", 0.1)
 
         return str(json_)
 
@@ -119,6 +130,8 @@ class PackKVCacheConfig:
                     BucketScoreMethod.COMBINED_SUM.value,
                 )
             )
+            k_error_budget = json_.get("k_error_budget", 0.1)
+            v_error_budget = json_.get("v_error_budget", 0.1)
         else:
             quant_method = None
             repack_method = None
@@ -131,6 +144,8 @@ class PackKVCacheConfig:
             scale_method = ScaleMethod.CONTINUOUS
             bucket_count = 4
             bucket_score_method = BucketScoreMethod.COMBINED_SUM
+            k_error_budget = 0.1
+            v_error_budget = 0.1
 
         return PackKVCacheConfig(
             model_name=json_["model_name"],
@@ -147,6 +162,8 @@ class PackKVCacheConfig:
             scale_method=scale_method,
             bucket_count=bucket_count,
             bucket_score_method=bucket_score_method,
+            k_error_budget=k_error_budget,
+            v_error_budget=v_error_budget,
         )
 
     def __eq__(self, other):
@@ -190,6 +207,14 @@ class PackKVCacheConfig:
             BucketScoreMethod.COMBINED_SUM,
         ):
             return False
+        if getattr(self, "k_error_budget", 0.1) != getattr(
+            other, "k_error_budget", 0.1
+        ):
+            return False
+        if getattr(self, "v_error_budget", 0.1) != getattr(
+            other, "v_error_budget", 0.1
+        ):
+            return False
         return True
 
     def __hash__(self):
@@ -213,6 +238,8 @@ class PackKVCacheConfig:
                     "bucket_score_method",
                     BucketScoreMethod.COMBINED_SUM,
                 ),
+                getattr(self, "k_error_budget", 0.1),
+                getattr(self, "v_error_budget", 0.1),
             )
         )
 
