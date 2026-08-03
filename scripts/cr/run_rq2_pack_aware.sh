@@ -33,13 +33,14 @@ elif [[ "$MODE" == "full" ]]; then
     "NousResearch/Meta-Llama-3-8B"
     "mistralai/Ministral-8B-Instruct-2410"
   )
-  # 同预算用于和 v7 的 block 粒度实验对照；非对称预算体现 K 激进、V 保守。
+  # 预算约束整层 selected SSE 相对 nearest SSE 的增幅。
   BUDGET_PAIRS=(
     "0.00:0.00"
+    "0.05:0.05"
     "0.10:0.10"
     "0.25:0.25"
-    "0.25:0.05"
-    "0.50:0.10"
+    "0.25:0.10"
+    "0.50:0.25"
   )
 else
   echo "用法: $0 [sanity|full]" >&2
@@ -64,7 +65,7 @@ run_one() {
     -m "$model" \
     "${COMMON_ARGS[@]}" \
     --scale_method "$method" \
-    --suite_id "RQ2_pack_v2_${MODE}" \
+    --suite_id "RQ2_layer_budget_${MODE}" \
     "${extra_args[@]}" \
     2>&1 | tee "$log_file"
   local status=${PIPESTATUS[0]}
@@ -86,6 +87,6 @@ for model in "${MODELS[@]}"; do
 done
 
 echo "完成: mode=$MODE, 失败任务数=$failed"
-echo "宏观汇总: csv_results/Global_Macro_Summary_v8.csv"
-echo "统一逐层明细: csv_results/Layer_Detail_v3.csv"
+echo "宏观汇总: csv_results/Global_Macro_Summary_v9.csv"
+echo "统一逐层明细: csv_results/Layer_Detail_v4.csv"
 exit "$failed"

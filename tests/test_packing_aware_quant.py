@@ -52,14 +52,19 @@ class PackingAwareQuantTest(unittest.TestCase):
             self.assertEqual(stats.total_packs, 8)
             self.assertEqual(stats.error_budget_violations, 0)
             self.assertEqual(
-                stats.ceil_selected_packs + stats.error_rejected_beneficial_packs,
+                stats.ceil_selected_packs + stats.budget_rejected_beneficial_packs,
                 stats.payload_beneficial_packs,
             )
             self.assertEqual(
-                stats.ceil_selected_packs
-                + stats.payload_rejected_error_eligible_packs,
-                stats.error_eligible_packs,
+                stats.positive_delta_candidates
+                + stats.nonpositive_delta_selected_packs,
+                stats.payload_beneficial_packs,
             )
+            self.assertLessEqual(
+                stats.selected_sse,
+                1.25 * stats.nearest_sse + 1e-5 * max(1.0, stats.nearest_sse),
+            )
+            self.assertLessEqual(stats.error_budget_utilization, 1.00001)
             self.assertLessEqual(
                 stats.payload_benefit_ceiling_bits, stats.selected_payload_bits
             )

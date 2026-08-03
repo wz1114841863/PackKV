@@ -946,19 +946,25 @@ def bit_pack_detail_rebuttal(
 
 @dataclass(frozen=True)
 class PackingAwareCacheStats:
-    """单层、单类 Cache 的 pack 粒度候选选择统计."""
+    """单层全局误差预算下的 pack 粒度候选选择统计."""
 
     total_blocks: int
     total_packs: int
     candidate_different_packs: int
-    error_eligible_packs: int
     payload_beneficial_packs: int
-    error_rejected_beneficial_packs: int
-    payload_rejected_error_eligible_packs: int
+    positive_delta_candidates: int
+    nonpositive_delta_selected_packs: int
+    budget_rejected_beneficial_packs: int
     ceil_selected_packs: int
     nearest_nmse_mean: float
     ceil_nmse_mean: float
     selected_nmse_mean: float
+    nearest_sse: float
+    ceil_sse: float
+    selected_sse: float
+    error_budget_sse: float
+    used_delta_sse: float
+    error_budget_utilization: float
     nearest_payload_bits: int
     ceil_payload_bits: int
     payload_benefit_ceiling_bits: int
@@ -994,7 +1000,7 @@ def _packed_payload_bits_per_pack(
     return widths.sum(dim=2) * pack_len
 
 
-def _pack_nmse(
+def _pack_error_and_signal(
     original: torch.Tensor,
     quant_int: torch.Tensor,
     quant_zero: torch.Tensor,
@@ -1002,7 +1008,7 @@ def _pack_nmse(
     high_precision_zero_point: bool,
     permutation: torch.Tensor,
     pack_len: int,
-) -> torch.Tensor:
+) -> Tuple[torch.Tensor, torch.Tensor]:
     reconstructed = dequantize_ints(
         quant_int, quant_zero, quant_scale, high_precision_zero_point
     )
@@ -1019,7 +1025,7 @@ def _pack_nmse(
     shape = (error_blocks.shape[0], -1, pack_len, error_blocks.shape[2])
     error_sum = error_blocks.reshape(shape).sum(dim=(2, 3))
     signal_sum = signal_blocks.reshape(shape).sum(dim=(2, 3))
-    return error_sum / signal_sum.clamp_min(1e-12)
+    return error_sum, signal_sum
 
 
 def _record_selected_po2_scales(scales: torch.Tensor) -> None:
@@ -1049,8 +1055,10 @@ def packing_aware_quantize_kv(
     """误差约束下的 nearest/ceil 联合软件参考模型.
 
     nearest K 生成唯一、固定的 Bucket 置换，K/V 共用该置换。重排后的
-    每个 pack 独立判断：仅在 ceil 满足相对 nearest 的 NMSE 预算且严格
-    减少 payload bits 时切换到 ceil；否则回退 nearest。
+    每个 pack 计算 ceil 相对 nearest 的 payload 节省和增量 SSE。对有压缩
+    收益的候选按 ``saved_bits / positive_delta_sse`` 降序排列，在整层
+    ``selected_SSE <= (1 + budget) * nearest_SSE`` 下选择前缀。非正增量
+    且有压缩收益的候选总是选择。
     """
     if k_tensor.shape[:3] != v_tensor.shape[:3]:
         raise ValueError("K/V batch, head and sequence dimensions must match")
@@ -1099,15 +1107,40 @@ def packing_aware_quantize_kv(
         )
         nearest_cost = _packed_payload_bits_per_pack(nearest_blocks, pack_size)
         ceil_cost = _packed_payload_bits_per_pack(ceil_blocks, pack_size)
-        nearest_nmse = _pack_nmse(
+        nearest_error, signal = _pack_error_and_signal(
             original, *nearest, high_precision_zero_point, permutation, pack_size
         )
-        ceil_nmse = _pack_nmse(
+        ceil_error, _ = _pack_error_and_signal(
             original, *ceil, high_precision_zero_point, permutation, pack_size
         )
-        within_budget = ceil_nmse <= (1.0 + budget) * nearest_nmse + 1e-12
         payload_beneficial = ceil_cost < nearest_cost
-        use_ceil = within_budget & payload_beneficial
+        saved_bits = nearest_cost - ceil_cost
+        delta_error = ceil_error - nearest_error
+        nonpositive = payload_beneficial & (delta_error <= 0)
+        positive_candidates = payload_beneficial & (delta_error > 0)
+
+        nearest_sse = nearest_error.sum()
+        error_budget_sse = budget * nearest_sse
+        # 非正增量候选可释放误差预算；随后按收益效率选择正增量候选前缀。
+        used_nonpositive_delta = delta_error[nonpositive].sum()
+        remaining_budget = (error_budget_sse - used_nonpositive_delta).clamp_min(0)
+        efficiency = saved_bits.to(torch.float64) / delta_error.to(torch.float64).clamp_min(1e-30)
+        candidate_indices = torch.nonzero(positive_candidates.flatten(), as_tuple=False).flatten()
+        use_ceil_flat = nonpositive.flatten().clone()
+        if candidate_indices.numel():
+            order = torch.argsort(
+                efficiency.flatten()[candidate_indices], descending=True, stable=True
+            )
+            ranked_indices = candidate_indices[order]
+            cumulative_delta = torch.cumsum(
+                delta_error.flatten()[ranked_indices].to(torch.float64), dim=0
+            )
+            accepted = cumulative_delta <= remaining_budget.to(torch.float64) + 1e-12
+            # 前缀策略保持单一效率阈值，便于后续离散为硬件 bucket。
+            prefix_len = int(accepted.sum().item())
+            if prefix_len:
+                use_ceil_flat[ranked_indices[:prefix_len]] = True
+        use_ceil = use_ceil_flat.view_as(payload_beneficial)
 
         # use_ceil 位于 Bucket 输出顺序；scatter 回原 token 顺序后再选择
         # quant/zero/scale，随后统一的 fixed permutation 会恢复相同 pack。
@@ -1119,7 +1152,10 @@ def packing_aware_quantize_kv(
             torch.where(mask, ceil_value, nearest_value)
             for nearest_value, ceil_value in zip(nearest, ceil)
         )
-        selected_nmse = torch.where(use_ceil, ceil_nmse, nearest_nmse)
+        selected_error = torch.where(use_ceil, ceil_error, nearest_error)
+        nearest_nmse = nearest_error / signal.clamp_min(1e-12)
+        ceil_nmse = ceil_error / signal.clamp_min(1e-12)
+        selected_nmse = selected_error / signal.clamp_min(1e-12)
         selected_cost = torch.where(use_ceil, ceil_cost, nearest_cost)
         nearest_scale_blocks = _apply_token_permutation(
             _quant_tensor_to_blocks(nearest[2]), permutation
@@ -1130,29 +1166,42 @@ def packing_aware_quantize_kv(
         scale_diff = (nearest_scale_blocks != ceil_scale_blocks).reshape(
             nearest_scale_blocks.shape[0], -1, pack_size, nearest_scale_blocks.shape[2]
         ).any(dim=(2, 3))
-        violations = selected_nmse > (1.0 + budget) * nearest_nmse + 1e-12
+        selected_sse = selected_error.sum()
+        used_delta_sse = selected_sse - nearest_sse
+        tolerance = 1e-5 * nearest_sse.abs().clamp_min(1.0)
+        violations = selected_sse > (1.0 + budget) * nearest_sse + tolerance
         potential_cost = torch.where(payload_beneficial, ceil_cost, nearest_cost)
+        positive_budget = float(error_budget_sse.item())
+        utilization = (
+            max(0.0, float(used_delta_sse.item())) / positive_budget
+            if positive_budget > 0
+            else 0.0
+        )
         stats = PackingAwareCacheStats(
             total_blocks=int(permutation.shape[0]),
             total_packs=int(use_ceil.numel()),
             candidate_different_packs=int(scale_diff.sum().item()),
-            error_eligible_packs=int(within_budget.sum().item()),
             payload_beneficial_packs=int(payload_beneficial.sum().item()),
-            error_rejected_beneficial_packs=int(
-                (payload_beneficial & ~within_budget).sum().item()
-            ),
-            payload_rejected_error_eligible_packs=int(
-                (within_budget & ~payload_beneficial).sum().item()
+            positive_delta_candidates=int(positive_candidates.sum().item()),
+            nonpositive_delta_selected_packs=int(nonpositive.sum().item()),
+            budget_rejected_beneficial_packs=int(
+                (payload_beneficial & ~use_ceil).sum().item()
             ),
             ceil_selected_packs=int(use_ceil.sum().item()),
             nearest_nmse_mean=float(nearest_nmse.mean().item()),
             ceil_nmse_mean=float(ceil_nmse.mean().item()),
             selected_nmse_mean=float(selected_nmse.mean().item()),
+            nearest_sse=float(nearest_sse.item()),
+            ceil_sse=float(ceil_error.sum().item()),
+            selected_sse=float(selected_sse.item()),
+            error_budget_sse=positive_budget,
+            used_delta_sse=float(used_delta_sse.item()),
+            error_budget_utilization=utilization,
             nearest_payload_bits=int(nearest_cost.sum().item()),
             ceil_payload_bits=int(ceil_cost.sum().item()),
             payload_benefit_ceiling_bits=int(potential_cost.sum().item()),
             selected_payload_bits=int(selected_cost.sum().item()),
-            error_budget_violations=int(violations.sum().item()),
+            error_budget_violations=int(violations.item()),
         )
         _record_selected_po2_scales(selected[2])
         return selected, stats

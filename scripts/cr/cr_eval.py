@@ -34,6 +34,7 @@ max_ctx_len_map = {
 }
 
 STORAGE_MODEL = "stream-packed-v2-native-quant-metadata-bucket-counts"
+PA_SELECTION_POLICY = "layer-budget-efficiency-prefix"
 
 
 def sum_metric(res_dict, key):
@@ -101,6 +102,7 @@ def result_metadata(args, round_idx, generated_at):
         "Bucket_Score_Method",
         "K_Error_Budget",
         "V_Error_Budget",
+        "PA_Selection_Policy",
         "Round",
         "Storage_Model",
     ]
@@ -124,6 +126,11 @@ def result_metadata(args, round_idx, generated_at):
         args.bucket_score_method,
         args.k_error_budget,
         args.v_error_budget,
+        (
+            PA_SELECTION_POLICY
+            if args.scale_method == ScaleMethod.PO2_PACK_AWARE.value
+            else ""
+        ),
         round_idx,
         STORAGE_MODEL,
     ]
@@ -161,6 +168,7 @@ def build_report_filename(args, round_idx, timestamp=None):
     ]
     if args.scale_method == ScaleMethod.PO2_PACK_AWARE.value:
         fields.insert(-2, f"err-{args.k_error_budget}-{args.v_error_budget}")
+        fields.insert(-2, "pa-layer-budget")
     return "_".join(fields) + ".csv"
 
 
@@ -171,12 +179,12 @@ def append_to_macro_summary_csv(
     csv_path,
     layer_detail_path,
 ):
-    """将全局结果/存储组成和 pack 粒度诊断追加到 v8 汇总表."""
+    """将全局结果和逐层全局误差预算诊断追加到 v9 汇总表."""
     save_dir = "./csv_results"
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    summary_file = os.path.join(save_dir, "Global_Macro_Summary_v8.csv")
+    summary_file = os.path.join(save_dir, "Global_Macro_Summary_v9.csv")
     file_exists = os.path.isfile(summary_file)
 
     generated_at = datetime.datetime.now()
@@ -252,7 +260,6 @@ def append_to_macro_summary_csv(
     for cache_kind in ("k", "v"):
         total_blocks = sum_metric(res_dict, f"{cache_kind}_pa_total_blocks")
         total_packs = sum_metric(res_dict, f"{cache_kind}_pa_total_packs")
-        error_eligible = sum_metric(res_dict, f"{cache_kind}_pa_error_eligible_packs")
         payload_beneficial = sum_metric(
             res_dict, f"{cache_kind}_pa_payload_beneficial_packs"
         )
@@ -263,6 +270,11 @@ def append_to_macro_summary_csv(
             res_dict, f"{cache_kind}_pa_payload_benefit_ceiling_bits"
         )
         selected_bits = sum_metric(res_dict, f"{cache_kind}_pa_selected_payload_bits")
+        nearest_sse = sum_metric(res_dict, f"{cache_kind}_pa_nearest_sse")
+        ceil_sse = sum_metric(res_dict, f"{cache_kind}_pa_ceil_sse")
+        selected_sse = sum_metric(res_dict, f"{cache_kind}_pa_selected_sse")
+        error_budget_sse = sum_metric(res_dict, f"{cache_kind}_pa_error_budget_sse")
+        used_delta_sse = selected_sse - nearest_sse
         layer_packs = res_dict.get(f"{cache_kind}_pa_total_packs", [])
         def weighted_mean(metric):
             values = res_dict.get(metric, [])
@@ -278,17 +290,26 @@ def append_to_macro_summary_csv(
                 total_blocks,
                 total_packs,
                 sum_metric(res_dict, f"{cache_kind}_pa_candidate_different_packs"),
-                error_eligible,
-                f"{error_eligible / total_packs:.8f}" if total_packs else "0.00000000",
                 payload_beneficial,
                 f"{payload_beneficial / total_packs:.8f}" if total_packs else "0.00000000",
-                sum_metric(res_dict, f"{cache_kind}_pa_error_rejected_beneficial_packs"),
-                sum_metric(res_dict, f"{cache_kind}_pa_payload_rejected_error_eligible_packs"),
+                sum_metric(res_dict, f"{cache_kind}_pa_positive_delta_candidates"),
+                sum_metric(res_dict, f"{cache_kind}_pa_nonpositive_delta_selected_packs"),
+                sum_metric(res_dict, f"{cache_kind}_pa_budget_rejected_beneficial_packs"),
                 selected_packs,
                 f"{selected_packs / total_packs:.8f}" if total_packs else "0.00000000",
                 f"{weighted_mean(f'{cache_kind}_pa_nearest_nmse_mean'):.10g}",
                 f"{weighted_mean(f'{cache_kind}_pa_ceil_nmse_mean'):.10g}",
                 f"{weighted_mean(f'{cache_kind}_pa_selected_nmse_mean'):.10g}",
+                f"{nearest_sse:.10g}",
+                f"{ceil_sse:.10g}",
+                f"{selected_sse:.10g}",
+                f"{error_budget_sse:.10g}",
+                f"{used_delta_sse:.10g}",
+                (
+                    f"{max(0.0, used_delta_sse) / error_budget_sse:.8f}"
+                    if error_budget_sse > 0
+                    else "0.00000000"
+                ),
                 nearest_bits,
                 ceil_bits,
                 potential_bits,
@@ -355,23 +376,27 @@ def append_to_macro_summary_csv(
         "Bucket_Occupancy_Hist",
         "Bucket_Empty_Rate",
         "K_PA_Total_Blocks", "K_PA_Total_Packs", "K_PA_Candidate_Different_Packs",
-        "K_PA_Error_Eligible_Packs", "K_PA_Error_Eligible_Rate",
         "K_PA_Payload_Beneficial_Packs", "K_PA_Payload_Beneficial_Rate",
-        "K_PA_Error_Rejected_Beneficial_Packs",
-        "K_PA_Payload_Rejected_Error_Eligible_Packs",
+        "K_PA_Positive_Delta_Candidates", "K_PA_Nonpositive_Delta_Selected_Packs",
+        "K_PA_Budget_Rejected_Beneficial_Packs",
         "K_PA_Ceil_Selected_Packs", "K_PA_Ceil_Selected_Rate",
         "K_PA_Nearest_NMSE", "K_PA_Ceil_NMSE", "K_PA_Selected_NMSE",
+        "K_PA_Nearest_SSE", "K_PA_Ceil_SSE", "K_PA_Selected_SSE",
+        "K_PA_Error_Budget_SSE", "K_PA_Used_Delta_SSE",
+        "K_PA_Error_Budget_Utilization",
         "K_PA_Nearest_Payload_Bits", "K_PA_Ceil_Payload_Bits",
         "K_PA_Payload_Benefit_Ceiling_Bits", "K_PA_Max_Payload_Bits_Savable",
         "K_PA_Selected_Payload_Bits", "K_PA_Payload_Bits_Saved",
         "K_PA_Error_Budget_Violations",
         "V_PA_Total_Blocks", "V_PA_Total_Packs", "V_PA_Candidate_Different_Packs",
-        "V_PA_Error_Eligible_Packs", "V_PA_Error_Eligible_Rate",
         "V_PA_Payload_Beneficial_Packs", "V_PA_Payload_Beneficial_Rate",
-        "V_PA_Error_Rejected_Beneficial_Packs",
-        "V_PA_Payload_Rejected_Error_Eligible_Packs",
+        "V_PA_Positive_Delta_Candidates", "V_PA_Nonpositive_Delta_Selected_Packs",
+        "V_PA_Budget_Rejected_Beneficial_Packs",
         "V_PA_Ceil_Selected_Packs", "V_PA_Ceil_Selected_Rate",
         "V_PA_Nearest_NMSE", "V_PA_Ceil_NMSE", "V_PA_Selected_NMSE",
+        "V_PA_Nearest_SSE", "V_PA_Ceil_SSE", "V_PA_Selected_SSE",
+        "V_PA_Error_Budget_SSE", "V_PA_Used_Delta_SSE",
+        "V_PA_Error_Budget_Utilization",
         "V_PA_Nearest_Payload_Bits", "V_PA_Ceil_Payload_Bits",
         "V_PA_Payload_Benefit_Ceiling_Bits", "V_PA_Max_Payload_Bits_Savable",
         "V_PA_Selected_Payload_Bits", "V_PA_Payload_Bits_Saved",
@@ -464,7 +489,7 @@ def append_to_macro_summary_csv(
                 existing_headers = next(csv.reader(f), None)
             if existing_headers != headers:
                 raise ValueError(
-                    "Global_Macro_Summary_v8.csv 表头与当前 schema 不一致"
+                    "Global_Macro_Summary_v9.csv 表头与当前 schema 不一致"
                 )
 
         # 使用 'a' 模式追加写入
@@ -533,7 +558,7 @@ def append_to_layer_detail_csv(args, res_dict, round_idx):
     """将所有实验的逐层结果追加到统一明细表,便于一次性上传分析."""
     save_dir = "./csv_results"
     os.makedirs(save_dir, exist_ok=True)
-    detail_path = os.path.join(save_dir, "Layer_Detail_v3.csv")
+    detail_path = os.path.join(save_dir, "Layer_Detail_v4.csv")
     file_exists = os.path.isfile(detail_path)
 
     num_layers = len(res_dict.get("k_original_size", []))
@@ -557,7 +582,7 @@ def append_to_layer_detail_csv(args, res_dict, round_idx):
                 existing_headers = next(csv.reader(f), None)
             if existing_headers != headers:
                 raise ValueError(
-                    "Layer_Detail_v3.csv 表头与当前 schema 不一致"
+                    "Layer_Detail_v4.csv 表头与当前 schema 不一致"
                 )
 
         with open(detail_path, mode="a", newline="", encoding="utf-8") as f:
@@ -647,11 +672,11 @@ def main():
     )
     parser.add_argument(
         "--k_error_budget", type=float, default=0.1,
-        help="packing-aware ceil 相对 nearest 的 K block NMSE 增幅预算",
+        help="packing-aware 每层 K selected SSE 相对 nearest SSE 的增幅预算",
     )
     parser.add_argument(
         "--v_error_budget", type=float, default=0.1,
-        help="packing-aware ceil 相对 nearest 的 V block NMSE 增幅预算",
+        help="packing-aware 每层 V selected SSE 相对 nearest SSE 的增幅预算",
     )
     parser.add_argument(
         "--high_precision_zero_point",
@@ -782,7 +807,7 @@ def main():
     logger.info(f"   K Scale: {args.k_scale}, V Scale: {args.v_scale}")
     logger.info(f"   Scale Method: {args.scale_method}")
     logger.info(
-        f"   Packing-aware NMSE Budget: K={args.k_error_budget}, V={args.v_error_budget}"
+        f"   Packing-aware Layer SSE Budget: K={args.k_error_budget}, V={args.v_error_budget}"
     )
     logger.info(f"   High Precision Zero Point: {args.high_precision_zero_point}")
     logger.info(f"   Block Size: {args.block_size}, Pack Size: {args.pack_size}")
