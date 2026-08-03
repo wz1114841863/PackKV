@@ -399,26 +399,23 @@ def crs_evaluation_with_data(
             "repack_bucket_score_method": [],
             "repack_k_subbucket_count": [],
             "repack_v_subbucket_count": [],
-            "k_pa_total_blocks": [],
-            "v_pa_total_blocks": [],
-            "k_pa_candidate_different_blocks": [],
-            "v_pa_candidate_different_blocks": [],
-            "k_pa_ceil_selected_blocks": [],
-            "v_pa_ceil_selected_blocks": [],
-            "k_pa_ceil_selected_rate": [],
-            "v_pa_ceil_selected_rate": [],
-            "k_pa_nearest_nmse_mean": [],
-            "v_pa_nearest_nmse_mean": [],
-            "k_pa_selected_nmse_mean": [],
-            "v_pa_selected_nmse_mean": [],
-            "k_pa_nearest_payload_bits": [],
-            "v_pa_nearest_payload_bits": [],
-            "k_pa_selected_payload_bits": [],
-            "v_pa_selected_payload_bits": [],
-            "k_pa_payload_bits_saved": [],
-            "v_pa_payload_bits_saved": [],
-            "k_pa_error_budget_violations": [],
-            "v_pa_error_budget_violations": [],
+        }
+    )
+    pa_metric_names = (
+        "total_blocks", "total_packs", "candidate_different_packs",
+        "error_eligible_packs", "payload_beneficial_packs",
+        "error_rejected_beneficial_packs",
+        "payload_rejected_error_eligible_packs", "ceil_selected_packs",
+        "ceil_selected_rate", "nearest_nmse_mean", "ceil_nmse_mean",
+        "selected_nmse_mean", "nearest_payload_bits", "ceil_payload_bits",
+        "payload_benefit_ceiling_bits", "selected_payload_bits",
+        "payload_bits_saved", "error_budget_violations",
+    )
+    res.update(
+        {
+            f"{cache_kind}_pa_{metric}": []
+            for cache_kind in ("k", "v")
+            for metric in pa_metric_names
         }
     )
 
@@ -496,13 +493,7 @@ def crs_evaluation_with_data(
             res["repack_k_subbucket_count"].append(0)
             res["repack_v_subbucket_count"].append(0)
             for cache_kind in ("k", "v"):
-                for suffix in (
-                    "total_blocks", "candidate_different_blocks",
-                    "ceil_selected_blocks", "ceil_selected_rate",
-                    "nearest_nmse_mean", "selected_nmse_mean",
-                    "nearest_payload_bits", "selected_payload_bits",
-                    "payload_bits_saved", "error_budget_violations",
-                ):
+                for suffix in pa_metric_names:
                     res[f"{cache_kind}_pa_{suffix}"].append(0)
             continue
 
@@ -553,12 +544,20 @@ def crs_evaluation_with_data(
             stats = pa_stats[cache_kind] if pa_stats else None
             values = {
                 "total_blocks": stats.total_blocks if stats else 0,
-                "candidate_different_blocks": stats.candidate_different_blocks if stats else 0,
-                "ceil_selected_blocks": stats.ceil_selected_blocks if stats else 0,
+                "total_packs": stats.total_packs if stats else 0,
+                "candidate_different_packs": stats.candidate_different_packs if stats else 0,
+                "error_eligible_packs": stats.error_eligible_packs if stats else 0,
+                "payload_beneficial_packs": stats.payload_beneficial_packs if stats else 0,
+                "error_rejected_beneficial_packs": stats.error_rejected_beneficial_packs if stats else 0,
+                "payload_rejected_error_eligible_packs": stats.payload_rejected_error_eligible_packs if stats else 0,
+                "ceil_selected_packs": stats.ceil_selected_packs if stats else 0,
                 "ceil_selected_rate": stats.ceil_selected_rate if stats else 0,
                 "nearest_nmse_mean": stats.nearest_nmse_mean if stats else 0,
+                "ceil_nmse_mean": stats.ceil_nmse_mean if stats else 0,
                 "selected_nmse_mean": stats.selected_nmse_mean if stats else 0,
                 "nearest_payload_bits": stats.nearest_payload_bits if stats else 0,
+                "ceil_payload_bits": stats.ceil_payload_bits if stats else 0,
+                "payload_benefit_ceiling_bits": stats.payload_benefit_ceiling_bits if stats else 0,
                 "selected_payload_bits": stats.selected_payload_bits if stats else 0,
                 "payload_bits_saved": stats.payload_bits_saved if stats else 0,
                 "error_budget_violations": stats.error_budget_violations if stats else 0,

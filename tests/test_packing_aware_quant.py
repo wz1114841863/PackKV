@@ -49,7 +49,20 @@ class PackingAwareQuantTest(unittest.TestCase):
         )
         for stats in (k_stats, v_stats):
             self.assertEqual(stats.total_blocks, 2)
+            self.assertEqual(stats.total_packs, 8)
             self.assertEqual(stats.error_budget_violations, 0)
+            self.assertEqual(
+                stats.ceil_selected_packs + stats.error_rejected_beneficial_packs,
+                stats.payload_beneficial_packs,
+            )
+            self.assertEqual(
+                stats.ceil_selected_packs
+                + stats.payload_rejected_error_eligible_packs,
+                stats.error_eligible_packs,
+            )
+            self.assertLessEqual(
+                stats.payload_benefit_ceiling_bits, stats.selected_payload_bits
+            )
             self.assertLessEqual(stats.selected_payload_bits, stats.nearest_payload_bits)
             self.assertGreaterEqual(stats.payload_bits_saved, 0)
 
@@ -60,7 +73,7 @@ class PackingAwareQuantTest(unittest.TestCase):
         result = self._run(k, v)
         k_q, _, _, v_q, _, _, permutation, metadata = result[:8]
         trace = []
-        repack_and_encode(
+        encoded_stats = repack_and_encode(
             k_q,
             v_q,
             pack_size=16,
@@ -70,12 +83,15 @@ class PackingAwareQuantTest(unittest.TestCase):
             bucket_score_method=BucketScoreMethod.K_SUM,
             fixed_bucket_permutation=permutation,
             fixed_repack_metadata=metadata,
+            return_stats=True,
         )
         before, after = trace[0]
         expected = torch.gather(
             before, 1, permutation.unsqueeze(2).expand_as(before)
         )
         torch.testing.assert_close(after, expected)
+        self.assertEqual(encoded_stats[2].payload_bits, result[-2].selected_payload_bits)
+        self.assertEqual(encoded_stats[3].payload_bits, result[-1].selected_payload_bits)
 
     def test_zero_and_constant_blocks_do_not_create_nan(self):
         k = torch.zeros(1, 1, 64, 4)

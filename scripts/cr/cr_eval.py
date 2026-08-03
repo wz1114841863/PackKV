@@ -171,12 +171,12 @@ def append_to_macro_summary_csv(
     csv_path,
     layer_detail_path,
 ):
-    """将全局结果、存储组成和 packing-aware 统计追加到 v7 汇总表."""
+    """将全局结果/存储组成和 pack 粒度诊断追加到 v8 汇总表."""
     save_dir = "./csv_results"
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    summary_file = os.path.join(save_dir, "Global_Macro_Summary_v7.csv")
+    summary_file = os.path.join(save_dir, "Global_Macro_Summary_v8.csv")
     file_exists = os.path.isfile(summary_file)
 
     generated_at = datetime.datetime.now()
@@ -251,15 +251,24 @@ def append_to_macro_summary_csv(
     pa_values = []
     for cache_kind in ("k", "v"):
         total_blocks = sum_metric(res_dict, f"{cache_kind}_pa_total_blocks")
-        selected_blocks = sum_metric(res_dict, f"{cache_kind}_pa_ceil_selected_blocks")
+        total_packs = sum_metric(res_dict, f"{cache_kind}_pa_total_packs")
+        error_eligible = sum_metric(res_dict, f"{cache_kind}_pa_error_eligible_packs")
+        payload_beneficial = sum_metric(
+            res_dict, f"{cache_kind}_pa_payload_beneficial_packs"
+        )
+        selected_packs = sum_metric(res_dict, f"{cache_kind}_pa_ceil_selected_packs")
         nearest_bits = sum_metric(res_dict, f"{cache_kind}_pa_nearest_payload_bits")
+        ceil_bits = sum_metric(res_dict, f"{cache_kind}_pa_ceil_payload_bits")
+        potential_bits = sum_metric(
+            res_dict, f"{cache_kind}_pa_payload_benefit_ceiling_bits"
+        )
         selected_bits = sum_metric(res_dict, f"{cache_kind}_pa_selected_payload_bits")
-        layer_blocks = res_dict.get(f"{cache_kind}_pa_total_blocks", [])
+        layer_packs = res_dict.get(f"{cache_kind}_pa_total_packs", [])
         def weighted_mean(metric):
             values = res_dict.get(metric, [])
-            denominator = sum(layer_blocks)
+            denominator = sum(layer_packs)
             return (
-                sum(float(value) * int(count) for value, count in zip(values, layer_blocks))
+                sum(float(value) * int(count) for value, count in zip(values, layer_packs))
                 / denominator
                 if denominator
                 else 0.0
@@ -267,12 +276,23 @@ def append_to_macro_summary_csv(
         pa_values.extend(
             [
                 total_blocks,
-                sum_metric(res_dict, f"{cache_kind}_pa_candidate_different_blocks"),
-                selected_blocks,
-                f"{selected_blocks / total_blocks:.8f}" if total_blocks else "0.00000000",
+                total_packs,
+                sum_metric(res_dict, f"{cache_kind}_pa_candidate_different_packs"),
+                error_eligible,
+                f"{error_eligible / total_packs:.8f}" if total_packs else "0.00000000",
+                payload_beneficial,
+                f"{payload_beneficial / total_packs:.8f}" if total_packs else "0.00000000",
+                sum_metric(res_dict, f"{cache_kind}_pa_error_rejected_beneficial_packs"),
+                sum_metric(res_dict, f"{cache_kind}_pa_payload_rejected_error_eligible_packs"),
+                selected_packs,
+                f"{selected_packs / total_packs:.8f}" if total_packs else "0.00000000",
                 f"{weighted_mean(f'{cache_kind}_pa_nearest_nmse_mean'):.10g}",
+                f"{weighted_mean(f'{cache_kind}_pa_ceil_nmse_mean'):.10g}",
                 f"{weighted_mean(f'{cache_kind}_pa_selected_nmse_mean'):.10g}",
                 nearest_bits,
+                ceil_bits,
+                potential_bits,
+                nearest_bits - potential_bits,
                 selected_bits,
                 nearest_bits - selected_bits,
                 sum_metric(res_dict, f"{cache_kind}_pa_error_budget_violations"),
@@ -334,16 +354,28 @@ def append_to_macro_summary_csv(
         "V_Bit_Width_Hist_Before",
         "Bucket_Occupancy_Hist",
         "Bucket_Empty_Rate",
-        "K_PA_Total_Blocks", "K_PA_Candidate_Different_Blocks",
-        "K_PA_Ceil_Selected_Blocks", "K_PA_Ceil_Selected_Rate",
-        "K_PA_Nearest_NMSE", "K_PA_Selected_NMSE",
-        "K_PA_Nearest_Payload_Bits", "K_PA_Selected_Payload_Bits",
-        "K_PA_Payload_Bits_Saved", "K_PA_Error_Budget_Violations",
-        "V_PA_Total_Blocks", "V_PA_Candidate_Different_Blocks",
-        "V_PA_Ceil_Selected_Blocks", "V_PA_Ceil_Selected_Rate",
-        "V_PA_Nearest_NMSE", "V_PA_Selected_NMSE",
-        "V_PA_Nearest_Payload_Bits", "V_PA_Selected_Payload_Bits",
-        "V_PA_Payload_Bits_Saved", "V_PA_Error_Budget_Violations",
+        "K_PA_Total_Blocks", "K_PA_Total_Packs", "K_PA_Candidate_Different_Packs",
+        "K_PA_Error_Eligible_Packs", "K_PA_Error_Eligible_Rate",
+        "K_PA_Payload_Beneficial_Packs", "K_PA_Payload_Beneficial_Rate",
+        "K_PA_Error_Rejected_Beneficial_Packs",
+        "K_PA_Payload_Rejected_Error_Eligible_Packs",
+        "K_PA_Ceil_Selected_Packs", "K_PA_Ceil_Selected_Rate",
+        "K_PA_Nearest_NMSE", "K_PA_Ceil_NMSE", "K_PA_Selected_NMSE",
+        "K_PA_Nearest_Payload_Bits", "K_PA_Ceil_Payload_Bits",
+        "K_PA_Payload_Benefit_Ceiling_Bits", "K_PA_Max_Payload_Bits_Savable",
+        "K_PA_Selected_Payload_Bits", "K_PA_Payload_Bits_Saved",
+        "K_PA_Error_Budget_Violations",
+        "V_PA_Total_Blocks", "V_PA_Total_Packs", "V_PA_Candidate_Different_Packs",
+        "V_PA_Error_Eligible_Packs", "V_PA_Error_Eligible_Rate",
+        "V_PA_Payload_Beneficial_Packs", "V_PA_Payload_Beneficial_Rate",
+        "V_PA_Error_Rejected_Beneficial_Packs",
+        "V_PA_Payload_Rejected_Error_Eligible_Packs",
+        "V_PA_Ceil_Selected_Packs", "V_PA_Ceil_Selected_Rate",
+        "V_PA_Nearest_NMSE", "V_PA_Ceil_NMSE", "V_PA_Selected_NMSE",
+        "V_PA_Nearest_Payload_Bits", "V_PA_Ceil_Payload_Bits",
+        "V_PA_Payload_Benefit_Ceiling_Bits", "V_PA_Max_Payload_Bits_Savable",
+        "V_PA_Selected_Payload_Bits", "V_PA_Payload_Bits_Saved",
+        "V_PA_Error_Budget_Violations",
         "K_Layer_CR_Min",
         "K_Layer_CR_Mean",
         "K_Layer_CR_Max",
@@ -432,7 +464,7 @@ def append_to_macro_summary_csv(
                 existing_headers = next(csv.reader(f), None)
             if existing_headers != headers:
                 raise ValueError(
-                    "Global_Macro_Summary_v7.csv 表头与当前 schema 不一致"
+                    "Global_Macro_Summary_v8.csv 表头与当前 schema 不一致"
                 )
 
         # 使用 'a' 模式追加写入
@@ -501,7 +533,7 @@ def append_to_layer_detail_csv(args, res_dict, round_idx):
     """将所有实验的逐层结果追加到统一明细表,便于一次性上传分析."""
     save_dir = "./csv_results"
     os.makedirs(save_dir, exist_ok=True)
-    detail_path = os.path.join(save_dir, "Layer_Detail_v2.csv")
+    detail_path = os.path.join(save_dir, "Layer_Detail_v3.csv")
     file_exists = os.path.isfile(detail_path)
 
     num_layers = len(res_dict.get("k_original_size", []))
@@ -525,7 +557,7 @@ def append_to_layer_detail_csv(args, res_dict, round_idx):
                 existing_headers = next(csv.reader(f), None)
             if existing_headers != headers:
                 raise ValueError(
-                    "Layer_Detail_v2.csv 表头与当前 schema 不一致"
+                    "Layer_Detail_v3.csv 表头与当前 schema 不一致"
                 )
 
         with open(detail_path, mode="a", newline="", encoding="utf-8") as f:

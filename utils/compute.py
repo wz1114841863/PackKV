@@ -946,20 +946,28 @@ def bit_pack_detail_rebuttal(
 
 @dataclass(frozen=True)
 class PackingAwareCacheStats:
-    """单层、单类 Cache 的 packing-aware 候选选择统计."""
+    """单层、单类 Cache 的 pack 粒度候选选择统计."""
 
     total_blocks: int
-    candidate_different_blocks: int
-    ceil_selected_blocks: int
+    total_packs: int
+    candidate_different_packs: int
+    error_eligible_packs: int
+    payload_beneficial_packs: int
+    error_rejected_beneficial_packs: int
+    payload_rejected_error_eligible_packs: int
+    ceil_selected_packs: int
     nearest_nmse_mean: float
+    ceil_nmse_mean: float
     selected_nmse_mean: float
     nearest_payload_bits: int
+    ceil_payload_bits: int
+    payload_benefit_ceiling_bits: int
     selected_payload_bits: int
     error_budget_violations: int
 
     @property
     def ceil_selected_rate(self) -> float:
-        return self.ceil_selected_blocks / self.total_blocks if self.total_blocks else 0.0
+        return self.ceil_selected_packs / self.total_packs if self.total_packs else 0.0
 
     @property
     def payload_bits_saved(self) -> int:
@@ -971,10 +979,10 @@ def _quant_tensor_to_blocks(tensor: torch.Tensor) -> torch.Tensor:
     return tensor.permute(2, 3, 0, 1, 4).flatten(2, 4)
 
 
-def _packed_payload_bits_per_block(
+def _packed_payload_bits_per_pack(
     blocks: torch.Tensor, pack_len: int
 ) -> torch.Tensor:
-    """返回每个基础 block 的 payload bit 数，不计候选无关的元数据."""
+    """返回 [block, pack] 的 payload bit 数，不计候选无关元数据."""
     if blocks.ndim != 3 or blocks.shape[1] % pack_len != 0:
         raise ValueError("block token count must be divisible by pack_len")
     packs = blocks.to(torch.int64).view(
@@ -983,23 +991,35 @@ def _packed_payload_bits_per_block(
     widths = torch.ceil(
         torch.log2(packs.max(dim=2).values - packs.min(dim=2).values + 1)
     ).to(torch.int64)
-    return widths.sum(dim=(1, 2)) * pack_len
+    return widths.sum(dim=2) * pack_len
 
 
-def _block_nmse(
+def _pack_nmse(
     original: torch.Tensor,
     quant_int: torch.Tensor,
     quant_zero: torch.Tensor,
     quant_scale: torch.Tensor,
     high_precision_zero_point: bool,
+    permutation: torch.Tensor,
+    pack_len: int,
 ) -> torch.Tensor:
     reconstructed = dequantize_ints(
         quant_int, quant_zero, quant_scale, high_precision_zero_point
     )
-    error = (original.to(torch.float32) - reconstructed.to(torch.float32)).square()
-    signal = original.to(torch.float32).square()
-    reduce_dims = (0, 1, 3, 4)
-    return error.sum(dim=reduce_dims) / signal.sum(dim=reduce_dims).clamp_min(1e-12)
+    error_blocks = _apply_token_permutation(
+        _quant_tensor_to_blocks(
+            (original.to(torch.float32) - reconstructed.to(torch.float32)).square()
+        ),
+        permutation,
+    )
+    signal_blocks = _apply_token_permutation(
+        _quant_tensor_to_blocks(original.to(torch.float32).square()),
+        permutation,
+    )
+    shape = (error_blocks.shape[0], -1, pack_len, error_blocks.shape[2])
+    error_sum = error_blocks.reshape(shape).sum(dim=(2, 3))
+    signal_sum = signal_blocks.reshape(shape).sum(dim=(2, 3))
+    return error_sum / signal_sum.clamp_min(1e-12)
 
 
 def _record_selected_po2_scales(scales: torch.Tensor) -> None:
@@ -1028,9 +1048,9 @@ def packing_aware_quantize_kv(
 ):
     """误差约束下的 nearest/ceil 联合软件参考模型.
 
-    nearest K 生成唯一、固定的 Bucket 置换，K/V 共用该置换。每个基础
-    block 仅在 ceil 满足相对 nearest 的 NMSE 预算且严格减少 payload bits
-    时切换到 ceil；否则无条件回退 nearest。
+    nearest K 生成唯一、固定的 Bucket 置换，K/V 共用该置换。重排后的
+    每个 pack 独立判断：仅在 ceil 满足相对 nearest 的 NMSE 预算且严格
+    减少 payload bits 时切换到 ceil；否则回退 nearest。
     """
     if k_tensor.shape[:3] != v_tensor.shape[:3]:
         raise ValueError("K/V batch, head and sequence dimensions must match")
@@ -1077,30 +1097,60 @@ def packing_aware_quantize_kv(
         ceil_blocks = _apply_token_permutation(
             _quant_tensor_to_blocks(ceil[0]), permutation
         )
-        nearest_cost = _packed_payload_bits_per_block(nearest_blocks, pack_size)
-        ceil_cost = _packed_payload_bits_per_block(ceil_blocks, pack_size)
-        nearest_nmse = _block_nmse(
-            original, *nearest, high_precision_zero_point
+        nearest_cost = _packed_payload_bits_per_pack(nearest_blocks, pack_size)
+        ceil_cost = _packed_payload_bits_per_pack(ceil_blocks, pack_size)
+        nearest_nmse = _pack_nmse(
+            original, *nearest, high_precision_zero_point, permutation, pack_size
         )
-        ceil_nmse = _block_nmse(original, *ceil, high_precision_zero_point)
+        ceil_nmse = _pack_nmse(
+            original, *ceil, high_precision_zero_point, permutation, pack_size
+        )
         within_budget = ceil_nmse <= (1.0 + budget) * nearest_nmse + 1e-12
-        use_ceil = within_budget & (ceil_cost < nearest_cost)
-        mask = use_ceil.view(1, 1, -1, 1, 1)
+        payload_beneficial = ceil_cost < nearest_cost
+        use_ceil = within_budget & payload_beneficial
+
+        # use_ceil 位于 Bucket 输出顺序；scatter 回原 token 顺序后再选择
+        # quant/zero/scale，随后统一的 fixed permutation 会恢复相同 pack。
+        permuted_token_mask = use_ceil.repeat_interleave(pack_size, dim=1)
+        original_token_mask = torch.zeros_like(permuted_token_mask)
+        original_token_mask.scatter_(1, permutation, permuted_token_mask)
+        mask = original_token_mask.view(1, 1, original_token_mask.shape[0], block_size, 1)
         selected = tuple(
             torch.where(mask, ceil_value, nearest_value)
             for nearest_value, ceil_value in zip(nearest, ceil)
         )
         selected_nmse = torch.where(use_ceil, ceil_nmse, nearest_nmse)
         selected_cost = torch.where(use_ceil, ceil_cost, nearest_cost)
-        scale_diff = (nearest[2] != ceil[2]).permute(2, 0, 1, 3, 4).flatten(1).any(dim=1)
+        nearest_scale_blocks = _apply_token_permutation(
+            _quant_tensor_to_blocks(nearest[2]), permutation
+        )
+        ceil_scale_blocks = _apply_token_permutation(
+            _quant_tensor_to_blocks(ceil[2]), permutation
+        )
+        scale_diff = (nearest_scale_blocks != ceil_scale_blocks).reshape(
+            nearest_scale_blocks.shape[0], -1, pack_size, nearest_scale_blocks.shape[2]
+        ).any(dim=(2, 3))
         violations = selected_nmse > (1.0 + budget) * nearest_nmse + 1e-12
+        potential_cost = torch.where(payload_beneficial, ceil_cost, nearest_cost)
         stats = PackingAwareCacheStats(
-            total_blocks=int(use_ceil.numel()),
-            candidate_different_blocks=int(scale_diff.sum().item()),
-            ceil_selected_blocks=int(use_ceil.sum().item()),
+            total_blocks=int(permutation.shape[0]),
+            total_packs=int(use_ceil.numel()),
+            candidate_different_packs=int(scale_diff.sum().item()),
+            error_eligible_packs=int(within_budget.sum().item()),
+            payload_beneficial_packs=int(payload_beneficial.sum().item()),
+            error_rejected_beneficial_packs=int(
+                (payload_beneficial & ~within_budget).sum().item()
+            ),
+            payload_rejected_error_eligible_packs=int(
+                (within_budget & ~payload_beneficial).sum().item()
+            ),
+            ceil_selected_packs=int(use_ceil.sum().item()),
             nearest_nmse_mean=float(nearest_nmse.mean().item()),
+            ceil_nmse_mean=float(ceil_nmse.mean().item()),
             selected_nmse_mean=float(selected_nmse.mean().item()),
             nearest_payload_bits=int(nearest_cost.sum().item()),
+            ceil_payload_bits=int(ceil_cost.sum().item()),
+            payload_benefit_ceiling_bits=int(potential_cost.sum().item()),
             selected_payload_bits=int(selected_cost.sum().item()),
             error_budget_violations=int(violations.sum().item()),
         )
