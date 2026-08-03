@@ -125,8 +125,11 @@ def cut_tensor(
     这模拟了硬件执行流中,数据从片上 SRAM (Buffer) 满载后,被压缩写回大容量 DRAM 的过程."""
     buffer = safe_cat(buffer, new_tensor, dim)
     len_ = buffer.shape[dim]
-    res_num = len_ % block_size
-    to_compress_block_num = (len_ + block_size - res_num - recent_size) // block_size
+    if block_size <= 0 or recent_size < 0:
+        raise ValueError("block_size must be positive and recent_size non-negative")
+    # 仅压缩在保留 recent_size 后仍完整存在的 block；与离线 CR 的
+    # get_compressible_prefix_length 口径一致。
+    to_compress_block_num = max(0, (len_ - recent_size) // block_size)
     to_compress = None
     if to_compress_block_num > 0:
         to_compress = buffer[:, :, : to_compress_block_num * block_size, :]
@@ -440,6 +443,108 @@ def quant_error(
         )
 
     return safe_cat(error_cache, to_compress, dim=2), in_buffer
+
+
+def quant_error_kv_packing_aware(
+    k_error_cache: Optional[torch.Tensor],
+    v_error_cache: Optional[torch.Tensor],
+    k_buffer: Optional[torch.Tensor],
+    v_buffer: Optional[torch.Tensor],
+    new_k: torch.Tensor,
+    new_v: torch.Tensor,
+    block_size: int,
+    recent_size: int,
+    pack_size: int,
+    k_quant_scale_rel: float,
+    v_quant_scale_rel: float,
+    k_quant_mode: QuantMode,
+    v_quant_mode: QuantMode,
+    high_precision_zero_point: bool = False,
+    k_error_budget: float = 0.1,
+    v_error_budget: float = 0.1,
+    bucket_count: int = 4,
+    bucket_score_method: BucketScoreMethod = BucketScoreMethod.K_SUM,
+) -> Tuple[
+    Optional[torch.Tensor],
+    Optional[torch.Tensor],
+    torch.Tensor,
+    torch.Tensor,
+]:
+    """在线精度评测使用的 K/V 联合伪量化入口.
+
+    Bucket 置换只用于估计 pack cost 和选择 nearest/ceil。反量化结果保持
+    原 token 顺序返回给 Attention，因此不会把 decode 的置换不变性错误
+    推广到带 causal mask 的 prefill。流式 decode 后续形成的新 block 各自
+    使用一次预算；这与离线整层 oracle 的预算作用域并不完全相同。
+    """
+    if new_k.shape[:3] != new_v.shape[:3]:
+        raise ValueError("new K/V batch, head and sequence dimensions must match")
+    k_to_compress, k_in_buffer = cut_tensor(
+        k_buffer, new_k, block_size, recent_size, dim=2
+    )
+    v_to_compress, v_in_buffer = cut_tensor(
+        v_buffer, new_v, block_size, recent_size, dim=2
+    )
+    if (k_to_compress is None) != (v_to_compress is None):
+        raise ValueError("K/V compression boundaries diverged")
+    if k_in_buffer.shape[2] != v_in_buffer.shape[2]:
+        raise ValueError("K/V buffer lengths diverged")
+
+    if k_to_compress is not None:
+        if k_to_compress.shape[2] != v_to_compress.shape[2]:
+            raise ValueError("K/V compressible lengths diverged")
+        (
+            k_quant_int,
+            k_quant_zero,
+            k_quant_scale,
+            v_quant_int,
+            v_quant_zero,
+            v_quant_scale,
+            _,
+            _,
+            _,
+            _,
+        ) = packing_aware_quantize_kv(
+            k_to_compress,
+            v_to_compress,
+            block_size,
+            pack_size,
+            k_quant_scale_rel,
+            v_quant_scale_rel,
+            k_quant_mode,
+            v_quant_mode,
+            high_precision_zero_point,
+            k_error_budget,
+            v_error_budget,
+            bucket_count,
+            bucket_score_method,
+        )
+        k_reconstructed = dequantize_ints(
+            k_quant_int,
+            k_quant_zero,
+            k_quant_scale,
+            high_precision_zero_point,
+        ).reshape(
+            k_to_compress.shape[0],
+            k_to_compress.shape[1],
+            -1,
+            k_to_compress.shape[3],
+        )
+        v_reconstructed = dequantize_ints(
+            v_quant_int,
+            v_quant_zero,
+            v_quant_scale,
+            high_precision_zero_point,
+        ).reshape(
+            v_to_compress.shape[0],
+            v_to_compress.shape[1],
+            -1,
+            v_to_compress.shape[3],
+        )
+        k_error_cache = safe_cat(k_error_cache, k_reconstructed, dim=2)
+        v_error_cache = safe_cat(v_error_cache, v_reconstructed, dim=2)
+
+    return k_error_cache, v_error_cache, k_in_buffer, v_in_buffer
 
 
 def quant_without_repacking(

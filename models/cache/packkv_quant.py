@@ -7,9 +7,11 @@ from utils.compute import (
     apply_rotary_pos_emb_single,
     safe_cat,
     quant_error,
+    quant_error_kv_packing_aware,
     quant_without_repacking,
     QuantMethod,
     ScaleMethod,
+    BucketScoreMethod,
 )
 from utils.util import JumpOutException
 
@@ -134,44 +136,68 @@ class PackKVCachePytorchQuant(Cache):
                 else 0
             )
 
-        self.compressed_k_cache[layer_idx], self.k_cache_buffer[layer_idx] = (
-            # 量化调用的是quant_error, 这是个伪量化函数
-            quant_error(
-                # quant_without_repacking(
-                self.compressed_k_cache[layer_idx],
-                self.k_cache_buffer[layer_idx],
-                key_states,  # 新来的 Token
-                PackKVCacheConfigStatic.config.block_size,
-                PackKVCacheConfigStatic.config.buffer_size,
-                PackKVCacheConfigStatic.config.k_quant_scale_rel,
-                PackKVCacheConfigStatic.config.quant_method.value[0],
-                PackKVCacheConfigStatic.config.high_precision_zero_point,
-                getattr(
-                    PackKVCacheConfigStatic.config,
-                    "scale_method",
-                    ScaleMethod.CONTINUOUS,
-                ),
-            )
+        scale_method = getattr(
+            PackKVCacheConfigStatic.config,
+            "scale_method",
+            ScaleMethod.CONTINUOUS,
         )
-
-        self.compressed_v_cache[layer_idx], self.v_cache_buffer[layer_idx] = (
-            quant_error(
-                # quant_without_repacking(
+        if scale_method == ScaleMethod.PO2_PACK_AWARE:
+            (
+                self.compressed_k_cache[layer_idx],
                 self.compressed_v_cache[layer_idx],
+                self.k_cache_buffer[layer_idx],
                 self.v_cache_buffer[layer_idx],
+            ) = quant_error_kv_packing_aware(
+                self.compressed_k_cache[layer_idx],
+                self.compressed_v_cache[layer_idx],
+                self.k_cache_buffer[layer_idx],
+                self.v_cache_buffer[layer_idx],
+                key_states,
                 value_states,
                 PackKVCacheConfigStatic.config.block_size,
                 PackKVCacheConfigStatic.config.buffer_size,
+                PackKVCacheConfigStatic.config.pack_size,
+                PackKVCacheConfigStatic.config.k_quant_scale_rel,
                 PackKVCacheConfigStatic.config.v_quant_scale_rel,
+                PackKVCacheConfigStatic.config.quant_method.value[0],
                 PackKVCacheConfigStatic.config.quant_method.value[1],
                 PackKVCacheConfigStatic.config.high_precision_zero_point,
+                getattr(PackKVCacheConfigStatic.config, "k_error_budget", 0.1),
+                getattr(PackKVCacheConfigStatic.config, "v_error_budget", 0.1),
+                getattr(PackKVCacheConfigStatic.config, "bucket_count", 4),
                 getattr(
                     PackKVCacheConfigStatic.config,
-                    "scale_method",
-                    ScaleMethod.CONTINUOUS,
+                    "bucket_score_method",
+                    BucketScoreMethod.K_SUM,
                 ),
             )
-        )
+        else:
+            self.compressed_k_cache[layer_idx], self.k_cache_buffer[layer_idx] = (
+                quant_error(
+                    self.compressed_k_cache[layer_idx],
+                    self.k_cache_buffer[layer_idx],
+                    key_states,
+                    PackKVCacheConfigStatic.config.block_size,
+                    PackKVCacheConfigStatic.config.buffer_size,
+                    PackKVCacheConfigStatic.config.k_quant_scale_rel,
+                    PackKVCacheConfigStatic.config.quant_method.value[0],
+                    PackKVCacheConfigStatic.config.high_precision_zero_point,
+                    scale_method,
+                )
+            )
+            self.compressed_v_cache[layer_idx], self.v_cache_buffer[layer_idx] = (
+                quant_error(
+                    self.compressed_v_cache[layer_idx],
+                    self.v_cache_buffer[layer_idx],
+                    value_states,
+                    PackKVCacheConfigStatic.config.block_size,
+                    PackKVCacheConfigStatic.config.buffer_size,
+                    PackKVCacheConfigStatic.config.v_quant_scale_rel,
+                    PackKVCacheConfigStatic.config.quant_method.value[1],
+                    PackKVCacheConfigStatic.config.high_precision_zero_point,
+                    scale_method,
+                )
+            )
         # 计算新增组数 & 记录高精度Buffer
         if layer_idx == 0:
             new_k_len = (

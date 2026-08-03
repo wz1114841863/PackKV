@@ -3,12 +3,23 @@ import sys
 import os
 import argparse
 import shutil
+
+# 允许从仓库根目录直接执行 scripts/accuracy/accuracy_eval.py。
+PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
+sys.path.insert(0, PROJECT_ROOT)
+
 from evaluation.evaluation import accuracy_evaluation
-from utils.compute import QuantMethod, RepackMethod, ScaleMethod
+from utils.compute import (
+    BucketScoreMethod,
+    QuantMethod,
+    RepackMethod,
+    ScaleMethod,
+)
 from utils.config import PackKVCacheConfig
 from utils.util import get_logger, block_other_logger
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 logger = get_logger(__file__)
 block_other_logger(logger)
 
@@ -74,6 +85,27 @@ def parse_arguments():
         default=False,
         help="保存浮点 minimum；默认沿用原精度脚本的整数 zero point",
     )
+    parser.add_argument("--k_error_budget", type=float, default=0.1)
+    parser.add_argument("--v_error_budget", type=float, default=0.1)
+    parser.add_argument("--block_size", type=int, default=64)
+    parser.add_argument("--buffer_size", type=int, default=192)
+    parser.add_argument("--pack_size", type=int, default=16)
+    parser.add_argument("--bucket_count", type=int, default=4)
+    parser.add_argument(
+        "--bucket_score_method",
+        choices=[method.value for method in BucketScoreMethod],
+        default=BucketScoreMethod.K_SUM.value,
+    )
+    parser.add_argument(
+        "--no_quant",
+        action="store_true",
+        help="关闭量化，生成全精度基线",
+    )
+    parser.add_argument(
+        "--clear_lm_eval_cache",
+        action="store_true",
+        help="运行前删除 ~/.cache/lm-eval；默认不删除",
+    )
 
     return parser.parse_args()
 
@@ -81,23 +113,46 @@ def parse_arguments():
 def main():
     args = parse_arguments()
 
-    if args.scale_method == ScaleMethod.PO2_PACK_AWARE.value:
+    if args.k_error_budget < 0 or args.v_error_budget < 0:
+        raise SystemExit("K/V error budget must be non-negative")
+    if args.block_size <= 0 or args.pack_size <= 0 or args.buffer_size < 0:
+        raise SystemExit("block_size/pack_size must be positive and buffer_size non-negative")
+    if args.block_size % args.pack_size:
+        raise SystemExit("block_size must be divisible by pack_size")
+    if args.scale_method == ScaleMethod.PO2_PACK_AWARE.value and (
+        args.quant_method != "PackKV"
+        or args.bucket_score_method != BucketScoreMethod.K_SUM.value
+    ):
         raise SystemExit(
-            "po2_pack_aware 当前仅实现离线 K/V 联合压缩率参考路径；"
-            "尚未接入在线 Cache 精度评测。"
+            "po2_pack_aware requires --quant_method PackKV "
+            "--bucket_score_method k_sum"
         )
+    if args.scale_method == ScaleMethod.PO2_PACK_AWARE.value and (
+        args.bucket_count < 2
+        or args.bucket_count > args.block_size
+        or args.bucket_count & (args.bucket_count - 1)
+    ):
+        raise SystemExit("bucket_count must be a power of two in [2, block_size]")
 
-    # 清楚lm_eval内存缓存, 避免 lm_eval偷懒返回错误的旧数据
+    # 删除缓存是显式可选的破坏性操作；默认保留 lm-eval 缓存。
     cache_dir = os.path.expanduser("~/.cache/lm-eval")
-    if os.path.exists(cache_dir):
+    if args.clear_lm_eval_cache and os.path.exists(cache_dir):
         shutil.rmtree(cache_dir)
-        logger.info("已清楚缓存.")
+        logger.info("已清除 lm-eval 缓存.")
 
     # 处理 batch_size 参数类型转换
     try:
         final_batch_size = int(args.batch_size)
     except ValueError:
         final_batch_size = args.batch_size  # 如果传的是 "auto" 则保持字符串
+    if (
+        args.scale_method == ScaleMethod.PO2_PACK_AWARE.value
+        and final_batch_size != 1
+    ):
+        raise SystemExit(
+            "po2_pack_aware 精度参考路径当前要求 --batch_size 1，"
+            "避免不同样本共享同一 pack 选择掩码"
+        )
 
     # 选择量化算法枚举
     chosen_method = (
@@ -106,17 +161,25 @@ def main():
 
     # 组装 PackKV 算法控制配方
     config = PackKVCacheConfig(
-        enable_quant=True,
+        enable_quant=not args.no_quant,
         model_name=args.model,
         quant_method=chosen_method,
-        repack_method=RepackMethod.NONE,
+        repack_method=(
+            RepackMethod.BUCKET
+            if args.scale_method == ScaleMethod.PO2_PACK_AWARE.value
+            else RepackMethod.NONE
+        ),
         high_precision_zero_point=args.high_precision_zero_point,
-        block_size=64,
-        buffer_size=128 + 64,
-        pack_size=16,
+        block_size=args.block_size,
+        buffer_size=args.buffer_size,
+        pack_size=args.pack_size,
         k_quant_scale_rel=args.k_scale,
         v_quant_scale_rel=args.v_scale,
         scale_method=ScaleMethod(args.scale_method),
+        bucket_count=args.bucket_count,
+        bucket_score_method=BucketScoreMethod(args.bucket_score_method),
+        k_error_budget=args.k_error_budget,
+        v_error_budget=args.v_error_budget,
     )
 
     logger.info("========================================")
@@ -126,6 +189,10 @@ def main():
         f"  量化方案: {args.quant_method} (K_scale={args.k_scale}, V_scale={args.v_scale})"
     )
     logger.info(f"  Scale 策略: {args.scale_method}")
+    logger.info(f"  启用量化: {not args.no_quant}")
+    logger.info(
+        f"  Layer SSE 预算: K={args.k_error_budget}, V={args.v_error_budget}"
+    )
     logger.info(f"  高精度零点: {args.high_precision_zero_point}")
     logger.info("========================================")
 

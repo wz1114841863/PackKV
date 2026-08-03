@@ -8,6 +8,9 @@ from utils.compute import (
     RepackMethod,
     ScaleMethod,
     packing_aware_quantize_kv,
+    quant_error_kv_packing_aware,
+    dequantize_ints,
+    cut_tensor,
     quant_ints,
     repack_and_encode,
 )
@@ -118,6 +121,59 @@ class PackingAwareQuantTest(unittest.TestCase):
                 False,
                 ScaleMethod.PO2_PACK_AWARE,
             )
+
+    def test_online_joint_path_preserves_original_token_order(self):
+        torch.manual_seed(23)
+        k = torch.randn(1, 2, 64, 4)
+        v = torch.randn(1, 2, 64, 4)
+        direct = self._run(k, v, budget=0.25)
+        expected_k = dequantize_ints(*direct[:3], False).reshape_as(k)
+        expected_v = dequantize_ints(*direct[3:6], False).reshape_as(v)
+        k_cache, v_cache, k_buffer, v_buffer = quant_error_kv_packing_aware(
+            None, None, None, None, k, v,
+            block_size=64,
+            recent_size=0,
+            pack_size=16,
+            k_quant_scale_rel=0.1,
+            v_quant_scale_rel=0.1,
+            k_quant_mode=QuantMode.TokenQuant,
+            v_quant_mode=QuantMode.TokenQuant,
+            high_precision_zero_point=False,
+            k_error_budget=0.25,
+            v_error_budget=0.25,
+            bucket_count=4,
+            bucket_score_method=BucketScoreMethod.K_SUM,
+        )
+        torch.testing.assert_close(k_cache, expected_k)
+        torch.testing.assert_close(v_cache, expected_v)
+        self.assertEqual(k_buffer.shape[2], 0)
+        self.assertEqual(v_buffer.shape[2], 0)
+
+    def test_online_joint_path_keeps_kv_stream_boundaries_aligned(self):
+        torch.manual_seed(29)
+        k = torch.randn(1, 1, 256, 4)
+        v = torch.randn(1, 1, 256, 4)
+        state = quant_error_kv_packing_aware(
+            None, None, None, None, k, v,
+            64, 192, 16, 0.1, 0.1,
+            QuantMode.TokenQuant, QuantMode.TokenQuant,
+            False, 0.1, 0.1, 4, BucketScoreMethod.K_SUM,
+        )
+        self.assertEqual(state[0].shape[2], 64)
+        self.assertEqual(state[1].shape[2], 64)
+        self.assertEqual(state[2].shape[2], 192)
+        self.assertEqual(state[3].shape[2], 192)
+
+    def test_online_cut_matches_offline_recent_window_rule(self):
+        tensor_255 = torch.zeros(1, 1, 255, 2)
+        compressed, buffer = cut_tensor(None, tensor_255, 64, 192)
+        self.assertIsNone(compressed)
+        self.assertEqual(buffer.shape[2], 255)
+
+        tensor_256 = torch.zeros(1, 1, 256, 2)
+        compressed, buffer = cut_tensor(None, tensor_256, 64, 192)
+        self.assertEqual(compressed.shape[2], 64)
+        self.assertEqual(buffer.shape[2], 192)
 
 
 if __name__ == "__main__":
