@@ -18,6 +18,7 @@ max_ctx_len_map = {
     "meta-llama/Llama-2-7b-hf": 1024 * 4,
     "meta-llama/Llama-2-13b-hf": 1024 * 4,
     "meta-llama/Llama-3.1-8B": 1024 * 128,
+    "NousResearch/Meta-Llama-3.1-8B": 1024 * 128,
     "deepseek-ai/DeepSeek-R1-Distill-Llama-8B": 1024 * 16,
     "mistralai/Ministral-8B-Instruct-2410": 1024 * 128,
     "microsoft/phi-4": 1024 * 16

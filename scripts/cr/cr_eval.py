@@ -29,6 +29,7 @@ max_ctx_len_map = {
     "Qwen/Qwen3-4B": 1024 * 4,
     "Qwen/Qwen3-8B": 1024 * 4,
     "NousResearch/Meta-Llama-3-8B": 1024 * 4,  # 8K 上下文 (区别于 3.1 版本的 128K)
+    "NousResearch/Meta-Llama-3.1-8B": 1024 * 128,
     "mistralai/Ministral-8B-Instruct-2410": 1024 * 4,
     "JackFram/llama-160m": 1024 * 2,  # 2K 上下文
 }

@@ -39,6 +39,7 @@ MODEL_CLASS_MAP = {
     "deepseek-ai/DeepSeek-R1-Distill-Llama-8B": LlamaForCausalLM,
     "mistralai/Ministral-8B-Instruct-2410": MistralForCausalLM,
     "NousResearch/Meta-Llama-3-8B": LlamaForCausalLM,
+    "NousResearch/Meta-Llama-3.1-8B": LlamaForCausalLM,
     "mistralai/Ministral-3-8B-Instruct-2512": MistralForCausalLM,
     "microsoft/phi-4": Phi3ForCausalLM,
 }

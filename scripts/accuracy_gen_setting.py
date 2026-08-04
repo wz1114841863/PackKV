@@ -17,7 +17,8 @@ BUFFER_SIZE = 128 + 64
 
 model_list = [
     "meta-llama/Llama-2-7b-hf",
-    "meta-llama/Llama-3.1-8B",
+    # 使用与论文模型架构一致的非 gated 社区镜像.
+    "NousResearch/Meta-Llama-3.1-8B",
     "meta-llama/Llama-2-13b-hf",
     # "meta-llama/Llama-2-7b-hf",
     "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",

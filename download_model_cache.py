@@ -1,15 +1,21 @@
 #! /usr/bin/env python
+import argparse
 import os
 import time
-import torch
 import socket
+
+# huggingface_hub 会在导入时读取部分环境变量,因此必须先配置镜像与超时.
+os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "60")
+
+import torch
 from huggingface_hub import snapshot_download
 from transformers import (
     AutoTokenizer,
     AutoConfig,
     AutoModelForCausalLM,
 )
-import torch
 
 """
 文件说明:
@@ -22,15 +28,11 @@ import torch
 # 从而成功触发下面的 except 逻辑.
 socket.setdefaulttimeout(60)
 
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"  # 关掉容易卡死的加速器
-os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"  # 换成稳定的镜像源
-os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "60"  # 增加 HF 专属下载超时设置
-
 # 想要预先下载的模型列表
 MODELS = [
     "Qwen/Qwen3-4B",
     "Qwen/Qwen3-8B",
-    "NousResearch/Meta-Llama-3-8B",
+    "NousResearch/Meta-Llama-3.1-8B",
     "mistralai/Ministral-8B-Instruct-2410",
 ]
 
@@ -98,8 +100,28 @@ def touch_model(model_name):
         print(f"[Error] 加载失败 {model_name}: {e}")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="预下载并可选校验 Hugging Face 模型")
+    parser.add_argument(
+        "--model",
+        dest="models",
+        action="append",
+        help="只处理指定模型;可重复传入.未指定时处理 MODELS 中的全部模型",
+    )
+    parser.add_argument(
+        "--skip-load-check",
+        action="store_true",
+        help="仅下载到缓存,不将完整模型加载到设备进行校验",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
+    args = parse_args()
+    models = args.models or MODELS
     print(f"Current HF_HOME: {os.getenv('HF_HOME')}")
-    for m in MODELS:
+    print(f"HF_ENDPOINT: {os.getenv('HF_ENDPOINT')}")
+    for m in models:
         robust_download(m)
-        touch_model(m)
+        if not args.skip_load_check:
+            touch_model(m)
