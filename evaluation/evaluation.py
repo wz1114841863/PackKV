@@ -2,6 +2,7 @@ import torch
 import os
 import math
 import json
+from importlib import metadata
 from datetime import datetime
 from datasets import load_dataset
 from torch import nn
@@ -61,6 +62,69 @@ MODEL_CLASS_MAP = {
 }
 
 
+def _package_version(distribution_name: str) -> str:
+    try:
+        return metadata.version(distribution_name)
+    except metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def _accuracy_run_metadata(
+    config: PackKVCacheConfig,
+    task: str,
+    batch_size: int | str,
+    limit: int | None,
+    effective_model_dtype: str,
+) -> dict:
+    """构造独立于 lm-eval results.json 的 PackKV 实验元数据."""
+    quant_method = (
+        getattr(config, "quant_method", None) if config.enable_quant else None
+    )
+    quant_modes = quant_method.value if quant_method is not None else (None, None)
+    repack_method = getattr(config, "repack_method", None)
+    scale_method = getattr(config, "scale_method", ScaleMethod.CONTINUOUS)
+    bucket_score_method = getattr(
+        config,
+        "bucket_score_method",
+        BucketScoreMethod.COMBINED_SUM,
+    )
+    return {
+        "schema_version": 1,
+        "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "model": config.model_name,
+        "task": task,
+        "limit": limit,
+        "batch_size": batch_size,
+        "enable_quant": bool(config.enable_quant),
+        "quant_method": quant_method.name if quant_method is not None else None,
+        "k_quant_mode": quant_modes[0].value if quant_modes[0] is not None else None,
+        "v_quant_mode": quant_modes[1].value if quant_modes[1] is not None else None,
+        "scale_method": scale_method.value,
+        "k_scale": getattr(config, "k_quant_scale_rel", None),
+        "v_scale": getattr(config, "v_quant_scale_rel", None),
+        "repack_method": (
+            repack_method.name if repack_method is not None else None
+        ),
+        "high_precision_zero_point": bool(
+            getattr(config, "high_precision_zero_point", False)
+        ),
+        "block_size": getattr(config, "block_size", None),
+        "buffer_size": getattr(config, "buffer_size", None),
+        "pack_size": getattr(config, "pack_size", None),
+        "bucket_count": getattr(config, "bucket_count", None),
+        "bucket_score_method": bucket_score_method.value,
+        "k_error_budget": getattr(config, "k_error_budget", None),
+        "v_error_budget": getattr(config, "v_error_budget", None),
+        "effective_model_dtype": effective_model_dtype,
+        "software_versions": {
+            "python": f"{os.sys.version_info.major}.{os.sys.version_info.minor}.{os.sys.version_info.micro}",
+            "torch": torch.__version__,
+            "transformers": _package_version("transformers"),
+            "lm_eval": _package_version("lm_eval"),
+        },
+    }
+
+
 def accuracy_evaluation(
     config: PackKVCacheConfig,
     benchmark: str | list[str],
@@ -97,6 +161,7 @@ def accuracy_evaluation(
     model.generation_config.top_k = None
 
     lm_eval_warp = LMEvalWrapper(model, tokenizer, batch_size)
+    effective_model_dtype = str(model.dtype)
     task_list = [benchmark] if isinstance(benchmark, str) else benchmark
     with torch.inference_mode():
         results = evaluator.simple_evaluate(
@@ -122,6 +187,19 @@ def accuracy_evaluation(
         with open(res_file, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2, ensure_ascii=False, default=str)
         logger.info(f"已成功将汇总指标保存至: {res_file}")
+
+        # PackKV 配置使用独立 sidecar,保持 lm-eval results.json 标准结构不变.
+        packkv_config_file = os.path.join(target_path, "packkv_config.json")
+        run_metadata = _accuracy_run_metadata(
+            config=config,
+            task=current_task,
+            batch_size=batch_size,
+            limit=limit,
+            effective_model_dtype=effective_model_dtype,
+        )
+        with open(packkv_config_file, "w", encoding="utf-8") as f:
+            json.dump(run_metadata, f, indent=2, ensure_ascii=False)
+        logger.info(f"已成功保存 PackKV 实验配置至: {packkv_config_file}")
 
         # 保存细节错题集 samples_task.json
         if samples_data:
