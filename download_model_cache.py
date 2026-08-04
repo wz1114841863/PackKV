@@ -4,59 +4,54 @@
 """
 批量下载并校验 Hugging Face 模型.
 
-功能:
-1. 使用 huggingface_hub.snapshot_download 下载模型到本地缓存;
-2. 默认通过 HF_ENDPOINT 指定的镜像下载;
-3. 只下载 Safetensors 权重及模型运行所需文件;
-4. 排除 .bin/.pt/.pth/GGUF 和 original/ 原始权重;
-5. 下载完成后使用本地快照进行加载校验;
-6. 下载失败时自动重试,但不会继续执行加载校验.
+针对当前环境设计:
+    transformers==4.52.4
+    tokenizers==0.21.4
+    huggingface_hub==0.36.2
+    datasets==3.6.0
 
-示例:
-    python download_models.py
-
-只下载指定模型:
-    python download_models.py \
-        --model NousResearch/Meta-Llama-3.1-8B
-
-指定多个模型:
-    python download_models.py \
-        --model Qwen/Qwen3-4B \
-        --model NousResearch/Meta-Llama-3.1-8B
-
-只下载,不执行模型加载校验:
-    python download_models.py \
-        --model NousResearch/Meta-Llama-3.1-8B \
-        --skip-load-check
+主要改进:
+1. 强制使用 Hugging Face 官方端点;
+2. 支持为特定模型固定 revision;
+3. 只下载 Transformers 所需文件;
+4. 排除 original//.pth/.bin 等不需要的权重;
+5. 将 snapshot_download 并发数降为 1;
+6. snapshot_download 失败后,自动逐文件下载;
+7. 下载失败后不执行模型加载;
+8. 直接从本地快照路径加载;
+9. 不设置全局 socket 超时.
 """
+
+# ============================================================
+# 环境变量必须在导入 huggingface_hub 之前设置
+# ============================================================
 
 import os
 
+# 强制使用官方站,不再使用 setdefault 和 hf-mirror.
+os.environ["HF_ENDPOINT"] = "https://huggingface.co"
+
+# HEAD/ETag/元数据查询超时.
+os.environ["HF_HUB_ETAG_TIMEOUT"] = "120"
+
+# 实际文件下载超时.
+os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "600"
+
+# 不强制禁用 Xet.
+# 如果安装了 hf_xet,由 huggingface_hub 自动使用;
+# 如果没有安装,则自动使用普通 HTTP 下载.
+os.environ.pop("HF_HUB_DISABLE_XET", None)
+
+# 已弃用,不再强制设置.
+os.environ.pop("HF_HUB_ENABLE_HF_TRANSFER", None)
+
+
 # ============================================================
-# 必须在导入 huggingface_hub / transformers 之前设置环境变量
+# 标准库和第三方库
 # ============================================================
-
-# 允许在启动命令中通过环境变量覆盖镜像地址.
-os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-
-# 元数据/ETag/HEAD 请求超时.
-os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "60")
-
-# 单个文件下载阶段的超时时间.
-os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "600")
-
-# 第三方镜像可能无法完整兼容 Hugging Face Xet 重定向.
-os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
-
-# 不使用已经弃用的 hf_transfer 下载方式.
-os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
-
-# 如需查看详细 HTTP/cURL 调试日志,可在启动前设置:
-# export HF_DEBUG=1
-# os.environ.setdefault("HF_DEBUG", "1")
-
 
 import argparse
+import fnmatch
 import gc
 import time
 import traceback
@@ -64,12 +59,13 @@ from pathlib import Path
 from typing import Optional
 
 import torch
-from huggingface_hub import snapshot_download
+import huggingface_hub
+from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 
 # ============================================================
-# 默认模型列表
+# 模型列表
 # ============================================================
 
 MODELS = [
@@ -80,43 +76,40 @@ MODELS = [
 ]
 
 
+# 为需要严格固定版本的模型指定 commit.
+# 其他模型默认使用 main.
+MODEL_REVISIONS = {
+    "NousResearch/Meta-Llama-3.1-8B":
+        "1f47e50cdbe801ad8a5174156ec3a0655108fb9f",
+}
+
+
 # ============================================================
-# 下载文件规则
+# 文件筛选规则
 # ============================================================
 
-# 使用白名单,只获取模型运行通常需要的文件.
-#
-# 相比 ignore_patterns,allow_patterns 更严格:
-# 即使仓库以后增加了 .pth/GGUF 或其他大文件,也不会误下载.
+# 允许下载的文件.
 ALLOW_PATTERNS = [
-    # Transformers Safetensors 权重
+    # Safetensors 权重
     "*.safetensors",
     "*.safetensors.index.json",
 
-    # 模型配置
-    "config.json",
-    "generation_config.json",
-    "preprocessor_config.json",
-    "processor_config.json",
+    # 模型/生成和处理器配置
+    "*.json",
 
-    # Tokenizer 配置和资源
-    "tokenizer.json",
-    "tokenizer_config.json",
-    "special_tokens_map.json",
-    "added_tokens.json",
-    "vocab.json",
-    "merges.txt",
-    "vocab.txt",
+    # Tokenizer 文件
+    "tokenizer*",
     "*.model",
     "*.tiktoken",
-    "*.jinja",
-    "chat_template.json",
-    "chat_template.jinja",
+    "merges.txt",
+    "vocab.txt",
+    "vocab.json",
 
-    # 部分模型使用自定义 Transformers 代码
+    # 自定义模型代码和模板
     "*.py",
+    "*.jinja",
 
-    # 仓库说明和许可证
+    # 说明和许可证
     "README*",
     "LICENSE*",
     "NOTICE*",
@@ -124,30 +117,31 @@ ALLOW_PATTERNS = [
     ".gitattributes",
 ]
 
-# 双重保险:即使某个 allow pattern 意外匹配,也排除这些文件.
+# 强制排除的文件.
+# ignore 规则的优先级高于 allow 规则.
 IGNORE_PATTERNS = [
+    # Meta 原始格式目录
+    "original/*",
+    "original/**",
+
     # 非 Safetensors 权重
     "*.bin",
     "*.pt",
     "*.pth",
     "*.ckpt",
 
-    # 其他框架权重
+    # 其他框架格式
     "*.flax",
     "*.h5",
     "*.tflite",
     "*.msgpack",
 
-    # 量化和推理格式
+    # 量化或其他推理格式
     "*.gguf",
     "*.ggml",
     "*.onnx",
 
-    # Meta 原始格式权重目录
-    "original/*",
-    "original/**",
-
-    # 通常不需要的训练产物
+    # 训练状态
     "optimizer.pt",
     "scheduler.pt",
     "training_args.bin",
@@ -155,112 +149,280 @@ IGNORE_PATTERNS = [
 
 
 # ============================================================
-# 工具函数
+# 基础工具
 # ============================================================
 
-def get_load_dtype() -> torch.dtype:
+def matches_any(filename: str, patterns: list[str]) -> bool:
+    """判断仓库文件路径是否匹配任意模式."""
+    return any(fnmatch.fnmatch(filename, pattern) for pattern in patterns)
+
+
+def should_download(filename: str) -> bool:
     """
-    根据运行设备选择加载数据类型.
+    判断文件是否应该下载.
 
-    CUDA 且支持 BF16:
-        torch.bfloat16
-
-    CUDA 但不支持 BF16:
-        torch.float16
-
-    无 CUDA:
-        torch.float32
+    ignore 优先:
+    如果同时匹配 allow 和 ignore,则不下载.
     """
-    if torch.cuda.is_available():
-        if torch.cuda.is_bf16_supported():
-            return torch.bfloat16
-        return torch.float16
+    if matches_any(filename, IGNORE_PATTERNS):
+        return False
 
-    return torch.float32
+    return matches_any(filename, ALLOW_PATTERNS)
 
 
 def clear_memory() -> None:
-    """
-    尽可能释放 Python/CPU 和 CUDA 缓存.
-    """
+    """释放 Python 和 CUDA 缓存."""
     gc.collect()
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-        torch.cuda.ipc_collect()
+
+        try:
+            torch.cuda.ipc_collect()
+        except Exception:
+            pass
 
 
-def check_safetensors_files(snapshot_path: str) -> list[Path]:
-    """
-    检查下载目录中是否包含 Safetensors 权重文件.
-    """
-    path = Path(snapshot_path)
+def get_load_dtype() -> torch.dtype:
+    """根据设备能力选择模型加载精度."""
+    if not torch.cuda.is_available():
+        return torch.float32
 
-    if not path.exists():
+    if torch.cuda.is_bf16_supported():
+        return torch.bfloat16
+
+    return torch.float16
+
+
+def verify_snapshot(snapshot_path: str) -> None:
+    """检查本地快照是否包含基本配置和 Safetensors 权重."""
+    root = Path(snapshot_path)
+
+    if not root.exists():
         raise FileNotFoundError(f"快照目录不存在:{snapshot_path}")
 
-    files = sorted(path.rglob("*.safetensors"))
+    config_path = root / "config.json"
 
-    if not files:
+    if not config_path.exists():
         raise FileNotFoundError(
-            f"在快照目录中没有发现 .safetensors 权重:{snapshot_path}"
+            f"快照中缺少 config.json:{snapshot_path}"
         )
 
-    return files
+    weight_files = sorted(root.rglob("*.safetensors"))
+
+    if not weight_files:
+        raise FileNotFoundError(
+            f"快照中没有发现 Safetensors 权重:{snapshot_path}"
+        )
+
+    total_size = sum(path.stat().st_size for path in weight_files)
+
+    print(f"[Verify] Safetensors 文件数量:{len(weight_files)}")
+    print(f"[Verify] Safetensors 总大小:{total_size / 1024**3:.2f} GiB")
 
 
 # ============================================================
-# 下载函数
+# 方案一:snapshot_download
+# ============================================================
+
+def download_with_snapshot(
+    model_name: str,
+    revision: str,
+    max_workers: int,
+) -> str:
+    """
+    使用 snapshot_download 下载经过筛选的模型快照.
+    """
+    return snapshot_download(
+        repo_id=model_name,
+        revision=revision,
+        allow_patterns=ALLOW_PATTERNS,
+        ignore_patterns=IGNORE_PATTERNS,
+        max_workers=max_workers,
+    )
+
+
+# ============================================================
+# 方案二:逐文件下载
+# ============================================================
+
+def find_snapshot_root(file_path: str, commit_hash: str) -> Path:
+    """
+    根据 hf_hub_download 返回的文件路径找到 snapshot 根目录.
+
+    文件路径通常类似:
+        .../snapshots/<commit_hash>/config.json
+    """
+    path = Path(file_path)
+
+    candidates = [path.parent, *path.parents]
+
+    for candidate in candidates:
+        if candidate.name == commit_hash:
+            return candidate
+
+    raise RuntimeError(
+        f"无法从下载路径定位快照目录:{file_path}"
+    )
+
+
+def download_single_file_with_retry(
+    model_name: str,
+    filename: str,
+    revision: str,
+    max_retries: int,
+) -> str:
+    """逐文件下载并重试."""
+    for attempt in range(1, max_retries + 1):
+        try:
+            print(
+                f"[File] {filename} "
+                f"({attempt}/{max_retries})"
+            )
+
+            return hf_hub_download(
+                repo_id=model_name,
+                filename=filename,
+                revision=revision,
+            )
+
+        except KeyboardInterrupt:
+            raise
+
+        except Exception as exc:
+            print(
+                f"[File warning] {filename}: "
+                f"{type(exc).__name__}: {exc}"
+            )
+
+            if attempt >= max_retries:
+                raise
+
+            wait_seconds = min(attempt * 5, 30)
+            print(f"[File retry] {wait_seconds} 秒后重试")
+            time.sleep(wait_seconds)
+
+    raise RuntimeError(f"文件下载失败:{filename}")
+
+
+def download_sequentially(
+    model_name: str,
+    revision: str,
+    max_retries: int,
+) -> str:
+    """
+    获取仓库文件列表并逐个下载.
+
+    优点:
+    1. 不会同时发起多个下载;
+    2. 可以直接看到具体是哪个文件失败;
+    3. 可以严格排除 original/ 和 .pth;
+    4. 已经缓存的文件不会重复下载.
+    """
+    print("[Fallback] 改为逐文件下载")
+
+    api = HfApi(endpoint="https://huggingface.co")
+
+    info = api.model_info(
+        repo_id=model_name,
+        revision=revision,
+    )
+
+    commit_hash = info.sha
+
+    if not commit_hash:
+        raise RuntimeError(
+            f"无法获取模型 commit hash:{model_name}"
+        )
+
+    repo_files = [
+        sibling.rfilename
+        for sibling in info.siblings
+        if sibling.rfilename
+    ]
+
+    selected_files = [
+        filename
+        for filename in repo_files
+        if should_download(filename)
+    ]
+
+    # 先下载小型配置文件,再下载大型 Safetensors.
+    selected_files.sort(
+        key=lambda name: (
+            name.endswith(".safetensors"),
+            name,
+        )
+    )
+
+    print(f"[Repo] 仓库文件数量:{len(repo_files)}")
+    print(f"[Repo] 筛选后文件数量:{len(selected_files)}")
+    print(f"[Commit] {commit_hash}")
+
+    if not selected_files:
+        raise RuntimeError(
+            f"筛选后没有需要下载的文件:{model_name}"
+        )
+
+    downloaded_paths: list[str] = []
+
+    for filename in selected_files:
+        local_path = download_single_file_with_retry(
+            model_name=model_name,
+            filename=filename,
+            revision=commit_hash,
+            max_retries=max_retries,
+        )
+
+        downloaded_paths.append(local_path)
+
+    snapshot_root = find_snapshot_root(
+        file_path=downloaded_paths[0],
+        commit_hash=commit_hash,
+    )
+
+    return str(snapshot_root)
+
+
+# ============================================================
+# 总下载函数
 # ============================================================
 
 def robust_download(
     model_name: str,
-    max_retries: int = 10,
-    max_workers: int = 2,
+    max_retries: int = 5,
+    max_workers: int = 1,
 ) -> Optional[str]:
     """
-    下载指定模型,并返回本地快照目录.
+    首先使用 snapshot_download.
 
-    下载成功:
-        返回 snapshot_download 生成的本地快照路径.
-
-    下载失败:
-        返回 None.
-
-    参数:
-        model_name:
-            Hugging Face 模型仓库名称.
-
-        max_retries:
-            最大尝试次数,包含第一次下载.
-
-        max_workers:
-            并发下载线程数量.第三方镜像建议设置为 1～4.
+    如果失败,则自动切换为逐文件下载,以定位并绕过并发问题.
     """
+    revision = MODEL_REVISIONS.get(model_name, "main")
+
     print(f"\n{'=' * 80}")
-    print(f"[Download] 正在检查/下载:{model_name}")
+    print(f"[Download] 模型:{model_name}")
+    print(f"[Revision] {revision}")
     print(f"[Endpoint] {os.getenv('HF_ENDPOINT')}")
-    print(f"[Retries] 最大尝试次数:{max_retries}")
-    print(f"[Workers] 并发下载数:{max_workers}")
+    print(f"[huggingface_hub] {huggingface_hub.__version__}")
+    print(f"[Max workers] {max_workers}")
 
     for attempt in range(1, max_retries + 1):
         try:
-            print(f"[Download] 第 {attempt}/{max_retries} 次尝试")
+            print(
+                f"[Snapshot] 第 {attempt}/{max_retries} 次尝试"
+            )
 
-            snapshot_path = snapshot_download(
-                repo_id=model_name,
-                allow_patterns=ALLOW_PATTERNS,
-                ignore_patterns=IGNORE_PATTERNS,
+            snapshot_path = download_with_snapshot(
+                model_name=model_name,
+                revision=revision,
                 max_workers=max_workers,
             )
 
-            safetensors_files = check_safetensors_files(snapshot_path)
-            total_size = sum(file.stat().st_size for file in safetensors_files)
+            verify_snapshot(snapshot_path)
 
-            print(f"[Download] ✅ {model_name} 准备就绪")
-            print(f"[Cache] {snapshot_path}")
-            print(f"[Safetensors] 分片数量:{len(safetensors_files)}")
-            print(f"[Safetensors] 权重大小:{total_size / 1024**3:.2f} GiB")
+            print(f"[Download] ✅ 下载完成:{model_name}")
+            print(f"[Snapshot] {snapshot_path}")
 
             return snapshot_path
 
@@ -270,22 +432,40 @@ def robust_download(
 
         except Exception as exc:
             print(
-                f"[Warning] 第 {attempt}/{max_retries} 次下载失败:"
+                f"[Snapshot warning] "
                 f"{type(exc).__name__}: {exc}"
             )
 
-            # 最后一次失败时输出完整堆栈,方便定位底层原因.
-            if attempt >= max_retries:
-                print(f"[Error] {model_name} 达到最大尝试次数.")
-                traceback.print_exc()
-                return None
+            if attempt < max_retries:
+                wait_seconds = min(attempt * 5, 30)
+                print(f"[Snapshot retry] {wait_seconds} 秒后重试")
+                time.sleep(wait_seconds)
 
-            # 逐步增加等待时间,最多等待 30 秒.
-            wait_seconds = min(5 * attempt, 30)
-            print(f"[Retry] {wait_seconds} 秒后重新尝试^^")
-            time.sleep(wait_seconds)
+    # snapshot_download 多次失败后,逐文件下载.
+    try:
+        snapshot_path = download_sequentially(
+            model_name=model_name,
+            revision=revision,
+            max_retries=max_retries,
+        )
 
-    return None
+        verify_snapshot(snapshot_path)
+
+        print(f"[Download] ✅ 逐文件下载完成:{model_name}")
+        print(f"[Snapshot] {snapshot_path}")
+
+        return snapshot_path
+
+    except KeyboardInterrupt:
+        raise
+
+    except Exception as exc:
+        print(
+            f"[Error] 模型下载失败:{model_name}\n"
+            f"[Exception] {type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return None
 
 
 # ============================================================
@@ -297,20 +477,14 @@ def touch_model(
     snapshot_path: str,
     trust_remote_code: bool = True,
 ) -> bool:
-    """
-    从已经下载完成的本地快照加载模型,校验配置/Tokenizer 和权重.
-
-    注意:
-    - 直接使用 snapshot_path,而不是再次通过 model_name 查询 Hub;
-    - local_files_only=True,确保加载阶段不访问网络;
-    - use_safetensors=True,禁止回退到 .bin 权重.
-    """
+    """从本地快照加载并校验模型."""
     print(f"\n[Loading] {model_name}")
     print(f"[Local snapshot] {snapshot_path}")
 
     dtype = get_load_dtype()
+
     print(f"[DType] {dtype}")
-    print(f"[CUDA] {torch.cuda.is_available()}")
+    print(f"[CUDA available] {torch.cuda.is_available()}")
 
     try:
         config = AutoConfig.from_pretrained(
@@ -323,7 +497,6 @@ def touch_model(
             snapshot_path,
             local_files_only=True,
             trust_remote_code=trust_remote_code,
-            use_fast=True,
         )
 
         load_kwargs = {
@@ -337,34 +510,33 @@ def touch_model(
 
         if torch.cuda.is_available():
             load_kwargs["device_map"] = "auto"
-        else:
-            # CPU 环境不使用 device_map="auto",避免不必要的 accelerate 依赖.
-            load_kwargs["device_map"] = None
 
         model = AutoModelForCausalLM.from_pretrained(
             snapshot_path,
             **load_kwargs,
         )
 
-        parameter_count = sum(parameter.numel() for parameter in model.parameters())
+        parameter_count = sum(
+            parameter.numel()
+            for parameter in model.parameters()
+        )
 
-        print(f"[Config] model_type={getattr(config, 'model_type', 'unknown')}")
+        print(f"[Config] model_type={config.model_type}")
         print(f"[Tokenizer] vocab_size={len(tokenizer):,}")
         print(f"[Parameters] {parameter_count:,}")
         print(
             f"[OK] 成功加载并校验:{model_name} "
-            f"(Safetensors, {str(dtype).replace('torch.', '').upper()})"
+            f"(Safetensors, {dtype})"
         )
 
         del model
         del tokenizer
         del config
-        clear_memory()
 
+        clear_memory()
         return True
 
     except KeyboardInterrupt:
-        print("\n[Interrupted] 用户终止模型加载.")
         clear_memory()
         raise
 
@@ -379,12 +551,12 @@ def touch_model(
 
 
 # ============================================================
-# 命令行参数
+# 参数解析
 # ============================================================
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="批量下载并校验 Hugging Face Safetensors 模型"
+        description="下载并校验 Hugging Face Safetensors 模型"
     )
 
     parser.add_argument(
@@ -392,35 +564,35 @@ def parse_args() -> argparse.Namespace:
         dest="models",
         action="append",
         help=(
-            "只处理指定模型,可以重复传入."
-            "未指定时处理脚本 MODELS 列表中的全部模型."
+            "指定模型,可以重复使用."
+            "未提供时下载 MODELS 中的全部模型."
         ),
     )
 
     parser.add_argument(
         "--skip-load-check",
         action="store_true",
-        help="只下载到本地缓存,不加载完整模型进行校验.",
+        help="只下载模型,不加载完整权重.",
     )
 
     parser.add_argument(
         "--max-retries",
         type=int,
-        default=10,
-        help="每个模型的最大下载尝试次数,默认 10.",
+        default=5,
+        help="每种下载方式的最大重试次数,默认 5.",
     )
 
     parser.add_argument(
         "--max-workers",
         type=int,
-        default=2,
-        help="并发下载线程数,默认 2.镜像不稳定时可设置为 1.",
+        default=1,
+        help="snapshot_download 并发数,默认 1.",
     )
 
     parser.add_argument(
         "--no-trust-remote-code",
         action="store_true",
-        help="加载模型时禁用 trust_remote_code.",
+        help="禁用 trust_remote_code.",
     )
 
     return parser.parse_args()
@@ -443,18 +615,24 @@ def main() -> int:
     trust_remote_code = not args.no_trust_remote_code
 
     print("=" * 80)
-    print("Hugging Face 模型下载与加载校验")
+    print("Hugging Face 模型下载与校验")
     print("=" * 80)
-    print(f"HF_HOME: {os.getenv('HF_HOME') or '未显式设置,使用默认缓存目录'}")
-    print(f"HF_ENDPOINT: {os.getenv('HF_ENDPOINT')}")
-    print(f"HF_HUB_ETAG_TIMEOUT: {os.getenv('HF_HUB_ETAG_TIMEOUT')}")
-    print(f"HF_HUB_DOWNLOAD_TIMEOUT: {os.getenv('HF_HUB_DOWNLOAD_TIMEOUT')}")
-    print(f"HF_HUB_DISABLE_XET: {os.getenv('HF_HUB_DISABLE_XET')}")
-    print(f"trust_remote_code: {trust_remote_code}")
-    print(f"待处理模型数量: {len(models)}")
+    print(f"HF_HOME={os.getenv('HF_HOME')}")
+    print(f"HF_ENDPOINT={os.getenv('HF_ENDPOINT')}")
+    print(
+        "HF_HUB_ETAG_TIMEOUT="
+        f"{os.getenv('HF_HUB_ETAG_TIMEOUT')}"
+    )
+    print(
+        "HF_HUB_DOWNLOAD_TIMEOUT="
+        f"{os.getenv('HF_HUB_DOWNLOAD_TIMEOUT')}"
+    )
+    print(
+        "huggingface_hub="
+        f"{huggingface_hub.__version__}"
+    )
+    print(f"待处理模型数量={len(models)}")
 
-    download_success = 0
-    load_success = 0
     failed_models: list[str] = []
 
     for model_name in models:
@@ -464,12 +642,9 @@ def main() -> int:
             max_workers=args.max_workers,
         )
 
-        # 下载失败后不执行加载.
         if snapshot_path is None:
             failed_models.append(model_name)
             continue
-
-        download_success += 1
 
         if args.skip_load_check:
             continue
@@ -480,28 +655,21 @@ def main() -> int:
             trust_remote_code=trust_remote_code,
         )
 
-        if loaded:
-            load_success += 1
-        else:
+        if not loaded:
             failed_models.append(model_name)
 
     print(f"\n{'=' * 80}")
     print("[Summary]")
-    print(f"模型总数:{len(models)}")
-    print(f"下载成功:{download_success}")
-
-    if args.skip_load_check:
-        print("加载校验:已跳过")
-    else:
-        print(f"加载成功:{load_success}")
 
     if failed_models:
-        print("[Failed models]")
+        print("以下模型处理失败:")
+
         for model_name in failed_models:
             print(f"  - {model_name}")
+
         return 1
 
-    print("[Done] ✅ 所有模型处理完成")
+    print("✅ 所有模型处理完成")
     return 0
 
 
