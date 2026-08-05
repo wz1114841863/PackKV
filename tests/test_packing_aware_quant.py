@@ -110,6 +110,19 @@ class PackingAwareQuantTest(unittest.TestCase):
         self.assertEqual(result[-2].error_budget_violations, 0)
         self.assertEqual(result[-1].error_budget_violations, 0)
 
+    def test_zero_budget_random_blocks_do_not_exceed_nearest_sse(self):
+        torch.manual_seed(17)
+        k = torch.randn(1, 2, 128, 8)
+        v = torch.randn(1, 2, 128, 8)
+        result = self._run(k, v, budget=0.0)
+        for stats in result[-2:]:
+            tolerance = 1e-5 * max(1.0, abs(stats.nearest_sse))
+            self.assertLessEqual(
+                stats.selected_sse,
+                stats.nearest_sse + tolerance,
+            )
+            self.assertEqual(stats.error_budget_violations, 0)
+
     def test_standalone_entry_rejects_joint_method(self):
         tensor = torch.zeros(1, 1, 64, 4)
         with self.assertRaisesRegex(ValueError, "joint K/V"):

@@ -206,16 +206,18 @@ def quant_ints(
     scale_method: ScaleMethod = ScaleMethod.CONTINUOUS,
     record_k_stats: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if tensor.ndim != 4:
+        raise ValueError("tensor must have shape [batch, head, sequence, dim]")
+    if block_size <= 0:
+        raise ValueError("block_size must be positive")
     if not math.isfinite(quant_scale_rel) or quant_scale_rel <= 0:
         raise ValueError("quant_scale_rel must be a finite positive number")
     if not tensor.is_floating_point():
         raise TypeError("tensor must have a floating-point dtype")
     if not torch.isfinite(tensor).all():
         raise ValueError("tensor contains NaN or Inf")
-
-    assert (
-        tensor.shape[2] % block_size == 0
-    ), "Tensor shape is not divisible by block size"
+    if tensor.shape[2] % block_size:
+        raise ValueError("sequence length must be divisible by block_size")
     # 根据block_size进行reshape
     tensor = tensor.reshape(
         tensor.shape[0], tensor.shape[1], -1, block_size, tensor.shape[3]
@@ -267,6 +269,22 @@ def quant_ints(
         value_quant = (tensor / quant_scale).round() - min_int
         min_val = min_int
 
+    if not (
+        torch.isfinite(value_quant).all()
+        and torch.isfinite(min_val).all()
+        and torch.isfinite(quant_scale).all()
+    ):
+        zero_point_hint = (
+            " Try high_precision_zero_point=True for constant or very narrow "
+            "low-precision blocks."
+            if not high_precision_zero_point
+            else ""
+        )
+        raise FloatingPointError(
+            "quantization produced NaN or Inf; the selected metadata dtype "
+            "cannot represent this scale/zero point." + zero_point_hint
+        )
+
     return value_quant, min_val, quant_scale
 
 
@@ -278,8 +296,12 @@ def dequantize_ints(
 ) -> torch.Tensor:
     """与 quant_ints 的两种 zero-point 语义严格对应."""
     if high_precision_zero_point:
-        return quant_int * quant_scale + quant_zero
-    return (quant_int + quant_zero) * quant_scale
+        result = quant_int * quant_scale + quant_zero
+    else:
+        result = (quant_int + quant_zero) * quant_scale
+    if not torch.isfinite(result).all():
+        raise FloatingPointError("dequantization produced NaN or Inf")
+    return result
 
 
 def quant_ints_2k(
