@@ -467,6 +467,141 @@ def quant_error(
     return safe_cat(error_cache, to_compress, dim=2), in_buffer
 
 
+def quant_error_kv_bucket_repacked(
+    k_error_cache: Optional[torch.Tensor],
+    v_error_cache: Optional[torch.Tensor],
+    k_buffer: Optional[torch.Tensor],
+    v_buffer: Optional[torch.Tensor],
+    new_k: torch.Tensor,
+    new_v: torch.Tensor,
+    block_size: int,
+    recent_size: int,
+    k_quant_scale_rel: float,
+    v_quant_scale_rel: float,
+    k_quant_mode: QuantMode,
+    v_quant_mode: QuantMode,
+    high_precision_zero_point: bool = False,
+    scale_method: ScaleMethod = ScaleMethod.CONTINUOUS,
+    bucket_count: int = 4,
+    bucket_score_method: BucketScoreMethod = BucketScoreMethod.K_SUM,
+) -> Tuple[
+    Optional[torch.Tensor],
+    Optional[torch.Tensor],
+    torch.Tensor,
+    torch.Tensor,
+    Optional[torch.Tensor],
+    Optional[torch.Tensor],
+]:
+    """在线精度评测的量化后 BUCKET 重排参考路径.
+
+    新压缩 block 的 K/V 量化整数生成同一 bucket 置换，反量化后的 K/V
+    使用该置换共同重排并保存。prefill 当前调用仍返回原 token 顺序，避免
+    破坏 causal mask；后续单 token decode 返回重排后的缓存。这样实际执行
+    decode 置换不变性，而不是仅把 ``repack_method`` 记录在配置中。
+
+    当前参考路径不支持在已有重排缓存上继续多 token/chunked prefill，因为
+    仅凭 bucket counts 不能恢复原始时间顺序。
+    """
+    if new_k.shape != new_v.shape:
+        raise ValueError("new K/V shapes must match for shared bucket repacking")
+    if scale_method == ScaleMethod.PO2_PACK_AWARE:
+        raise ValueError("packing-aware quantization uses its dedicated joint path")
+
+    is_prefill = new_k.shape[2] != 1
+    if is_prefill and (k_error_cache is not None or v_error_cache is not None):
+        raise ValueError(
+            "chunked prefill after bucket-repacked cache is not supported"
+        )
+
+    k_to_compress, k_in_buffer = cut_tensor(
+        k_buffer, new_k, block_size, recent_size, dim=2
+    )
+    v_to_compress, v_in_buffer = cut_tensor(
+        v_buffer, new_v, block_size, recent_size, dim=2
+    )
+    if (k_to_compress is None) != (v_to_compress is None):
+        raise ValueError("K/V compression boundaries diverged")
+    if k_in_buffer.shape[2] != v_in_buffer.shape[2]:
+        raise ValueError("K/V buffer lengths diverged")
+
+    k_attention_cache = k_error_cache
+    v_attention_cache = v_error_cache
+    if k_to_compress is not None:
+        if k_to_compress.shape != v_to_compress.shape:
+            raise ValueError("K/V compressible shapes diverged")
+        k_quant_int, k_quant_zero, k_quant_scale = quant_ints(
+            k_to_compress,
+            block_size,
+            k_quant_scale_rel,
+            k_quant_mode,
+            high_precision_zero_point,
+            scale_method,
+        )
+        v_quant_int, v_quant_zero, v_quant_scale = quant_ints(
+            v_to_compress,
+            block_size,
+            v_quant_scale_rel,
+            v_quant_mode,
+            high_precision_zero_point,
+            scale_method,
+        )
+        quant_blocks = torch.cat(
+            [
+                _quant_tensor_to_blocks(k_quant_int),
+                _quant_tensor_to_blocks(v_quant_int),
+            ],
+            dim=2,
+        )
+        permutation, _ = _build_bucket_permutation(
+            quant_blocks,
+            bucket_count,
+            bucket_score_method,
+        )
+
+        k_reconstructed = dequantize_ints(
+            k_quant_int,
+            k_quant_zero,
+            k_quant_scale,
+            high_precision_zero_point,
+        )
+        v_reconstructed = dequantize_ints(
+            v_quant_int,
+            v_quant_zero,
+            v_quant_scale,
+            high_precision_zero_point,
+        )
+
+        def apply_permutation(tensor: torch.Tensor) -> torch.Tensor:
+            indices = permutation.view(
+                1, 1, permutation.shape[0], permutation.shape[1], 1
+            ).expand_as(tensor)
+            return torch.gather(tensor, 3, indices)
+
+        k_repacked = apply_permutation(k_reconstructed).reshape_as(k_to_compress)
+        v_repacked = apply_permutation(v_reconstructed).reshape_as(v_to_compress)
+        k_reconstructed = k_reconstructed.reshape_as(k_to_compress)
+        v_reconstructed = v_reconstructed.reshape_as(v_to_compress)
+
+        # 存储始终采用重排顺序；只有当前 prefill Attention 使用原顺序。
+        k_error_cache = safe_cat(k_error_cache, k_repacked, dim=2)
+        v_error_cache = safe_cat(v_error_cache, v_repacked, dim=2)
+        if is_prefill:
+            k_attention_cache = k_reconstructed
+            v_attention_cache = v_reconstructed
+        else:
+            k_attention_cache = k_error_cache
+            v_attention_cache = v_error_cache
+
+    return (
+        k_error_cache,
+        v_error_cache,
+        k_in_buffer,
+        v_in_buffer,
+        k_attention_cache,
+        v_attention_cache,
+    )
+
+
 def quant_error_kv_packing_aware(
     k_error_cache: Optional[torch.Tensor],
     v_error_cache: Optional[torch.Tensor],

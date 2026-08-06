@@ -7,9 +7,11 @@ from utils.compute import (
     apply_rotary_pos_emb_single,
     safe_cat,
     quant_error,
+    quant_error_kv_bucket_repacked,
     quant_error_kv_packing_aware,
     quant_without_repacking,
     QuantMethod,
+    RepackMethod,
     ScaleMethod,
     BucketScoreMethod,
 )
@@ -141,6 +143,8 @@ class PackKVCachePytorchQuant(Cache):
             "scale_method",
             ScaleMethod.CONTINUOUS,
         )
+        attention_k_cache = None
+        attention_v_cache = None
         if scale_method == ScaleMethod.PO2_PACK_AWARE:
             (
                 self.compressed_k_cache[layer_idx],
@@ -164,6 +168,39 @@ class PackKVCachePytorchQuant(Cache):
                 PackKVCacheConfigStatic.config.high_precision_zero_point,
                 getattr(PackKVCacheConfigStatic.config, "k_error_budget", 0.1),
                 getattr(PackKVCacheConfigStatic.config, "v_error_budget", 0.1),
+                getattr(PackKVCacheConfigStatic.config, "bucket_count", 4),
+                getattr(
+                    PackKVCacheConfigStatic.config,
+                    "bucket_score_method",
+                    BucketScoreMethod.K_SUM,
+                ),
+            )
+        elif (
+            PackKVCacheConfigStatic.config.repack_method
+            == RepackMethod.BUCKET
+        ):
+            (
+                self.compressed_k_cache[layer_idx],
+                self.compressed_v_cache[layer_idx],
+                self.k_cache_buffer[layer_idx],
+                self.v_cache_buffer[layer_idx],
+                attention_k_cache,
+                attention_v_cache,
+            ) = quant_error_kv_bucket_repacked(
+                self.compressed_k_cache[layer_idx],
+                self.compressed_v_cache[layer_idx],
+                self.k_cache_buffer[layer_idx],
+                self.v_cache_buffer[layer_idx],
+                key_states,
+                value_states,
+                PackKVCacheConfigStatic.config.block_size,
+                PackKVCacheConfigStatic.config.buffer_size,
+                PackKVCacheConfigStatic.config.k_quant_scale_rel,
+                PackKVCacheConfigStatic.config.v_quant_scale_rel,
+                PackKVCacheConfigStatic.config.quant_method.value[0],
+                PackKVCacheConfigStatic.config.quant_method.value[1],
+                PackKVCacheConfigStatic.config.high_precision_zero_point,
+                scale_method,
                 getattr(PackKVCacheConfigStatic.config, "bucket_count", 4),
                 getattr(
                     PackKVCacheConfigStatic.config,
@@ -221,10 +258,13 @@ class PackKVCachePytorchQuant(Cache):
 
         # + self.k_avg[layer_idx]
         # 通过 safe_cat 将压缩后的老缓存和未压缩的新缓冲区在序列维度（dim=2）上拼接起来，返回给注意力层进行点积计算。
+        if attention_k_cache is None:
+            attention_k_cache = self.compressed_k_cache[layer_idx]
+            attention_v_cache = self.compressed_v_cache[layer_idx]
         return safe_cat(
-            self.compressed_k_cache[layer_idx], self.k_cache_buffer[layer_idx], dim=2
+            attention_k_cache, self.k_cache_buffer[layer_idx], dim=2
         ), safe_cat(
-            self.compressed_v_cache[layer_idx], self.v_cache_buffer[layer_idx], dim=2
+            attention_v_cache, self.v_cache_buffer[layer_idx], dim=2
         )
 
     def update_disable(

@@ -80,6 +80,16 @@ def parse_arguments():
         help="量化步长策略",
     )
     parser.add_argument(
+        "--repack_method",
+        type=str,
+        choices=["AUTO", "NONE", "BUCKET"],
+        default="AUTO",
+        help=(
+            "在线精度参考中的重排策略；AUTO 对 po2_pack_aware 使用 BUCKET，"
+            "其他量化使用 NONE"
+        ),
+    )
+    parser.add_argument(
         "--high_precision_zero_point",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -113,6 +123,15 @@ def parse_arguments():
 def main():
     args = parse_arguments()
 
+    if args.repack_method == "AUTO":
+        chosen_repack_method = (
+            RepackMethod.BUCKET
+            if args.scale_method == ScaleMethod.PO2_PACK_AWARE.value
+            else RepackMethod.NONE
+        )
+    else:
+        chosen_repack_method = RepackMethod[args.repack_method]
+
     if args.k_error_budget < 0 or args.v_error_budget < 0:
         raise SystemExit("K/V error budget must be non-negative")
     if args.block_size <= 0 or args.pack_size <= 0 or args.buffer_size < 0:
@@ -122,17 +141,22 @@ def main():
     if args.scale_method == ScaleMethod.PO2_PACK_AWARE.value and (
         args.quant_method != "PackKV"
         or args.bucket_score_method != BucketScoreMethod.K_SUM.value
+        or chosen_repack_method != RepackMethod.BUCKET
     ):
         raise SystemExit(
             "po2_pack_aware requires --quant_method PackKV "
-            "--bucket_score_method k_sum"
+            "--bucket_score_method k_sum --repack_method BUCKET/AUTO"
         )
-    if args.scale_method == ScaleMethod.PO2_PACK_AWARE.value and (
+    if chosen_repack_method == RepackMethod.BUCKET and (
         args.bucket_count < 2
         or args.bucket_count > args.block_size
         or args.bucket_count & (args.bucket_count - 1)
     ):
         raise SystemExit("bucket_count must be a power of two in [2, block_size]")
+    if chosen_repack_method == RepackMethod.BUCKET and args.quant_method != "PackKV":
+        raise SystemExit("BUCKET accuracy reference currently requires PackKV")
+    if args.no_quant and chosen_repack_method != RepackMethod.NONE:
+        raise SystemExit("repacking is unavailable when --no_quant is set")
 
     # 删除缓存是显式可选的破坏性操作；默认保留 lm-eval 缓存。
     cache_dir = os.path.expanduser("~/.cache/lm-eval")
@@ -145,13 +169,10 @@ def main():
         final_batch_size = int(args.batch_size)
     except ValueError:
         final_batch_size = args.batch_size  # 如果传的是 "auto" 则保持字符串
-    if (
-        args.scale_method == ScaleMethod.PO2_PACK_AWARE.value
-        and final_batch_size != 1
-    ):
+    if chosen_repack_method == RepackMethod.BUCKET and final_batch_size != 1:
         raise SystemExit(
-            "po2_pack_aware 精度参考路径当前要求 --batch_size 1，"
-            "避免不同样本共享同一 pack 选择掩码"
+            "BUCKET 精度参考路径当前要求 --batch_size 1，"
+            "避免不同样本共享同一 token 置换"
         )
 
     # 选择量化算法枚举
@@ -164,11 +185,7 @@ def main():
         enable_quant=not args.no_quant,
         model_name=args.model,
         quant_method=chosen_method,
-        repack_method=(
-            RepackMethod.BUCKET
-            if args.scale_method == ScaleMethod.PO2_PACK_AWARE.value
-            else RepackMethod.NONE
-        ),
+        repack_method=chosen_repack_method,
         high_precision_zero_point=args.high_precision_zero_point,
         block_size=args.block_size,
         buffer_size=args.buffer_size,
@@ -189,6 +206,7 @@ def main():
         f"  量化方案: {args.quant_method} (K_scale={args.k_scale}, V_scale={args.v_scale})"
     )
     logger.info(f"  Scale 策略: {args.scale_method}")
+    logger.info(f"  重排策略: {chosen_repack_method.name}")
     logger.info(f"  启用量化: {not args.no_quant}")
     logger.info(
         f"  Layer SSE 预算: K={args.k_error_budget}, V={args.v_error_budget}"

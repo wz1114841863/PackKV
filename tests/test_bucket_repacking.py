@@ -8,6 +8,7 @@ from utils.compute import (
     RepackMethod,
     ScaleMethod,
     bucket_repacking,
+    quant_error_kv_bucket_repacked,
     repack_and_encode,
 )
 from utils.config import PackKVCacheConfig
@@ -143,6 +144,90 @@ class BucketRepackingTest(unittest.TestCase):
         self.assertEqual(metadata.bucket_score_method, "kv_2d")
         self.assertEqual(metadata.k_subbucket_count, 2)
         self.assertEqual(metadata.v_subbucket_count, 2)
+
+    def test_online_bucket_repacking_preserves_prefill_and_decode_attention(self):
+        torch.manual_seed(23)
+        k = torch.randn(1, 2, 64, 4)
+        v = torch.randn(1, 2, 64, 4)
+        (
+            stored_k,
+            stored_v,
+            k_buffer,
+            v_buffer,
+            prefill_k,
+            prefill_v,
+        ) = quant_error_kv_bucket_repacked(
+            None,
+            None,
+            None,
+            None,
+            k,
+            v,
+            block_size=64,
+            recent_size=0,
+            k_quant_scale_rel=0.03,
+            v_quant_scale_rel=0.1,
+            k_quant_mode=QuantMethod.PackKV.value[0],
+            v_quant_mode=QuantMethod.PackKV.value[1],
+            scale_method=ScaleMethod.PO2_NEAREST,
+            bucket_count=4,
+            bucket_score_method=BucketScoreMethod.K_SUM,
+        )
+
+        self.assertEqual(k_buffer.shape[2], 0)
+        self.assertEqual(v_buffer.shape[2], 0)
+        self.assertFalse(torch.equal(stored_k, prefill_k))
+        self.assertFalse(torch.equal(stored_v, prefill_v))
+
+        # Prefill 保持时间顺序；decode 单 query 对共同 K/V 置换不变。
+        query = torch.randn(1, 2, 1, 4)
+
+        def attention(query_, key_, value_):
+            scores = torch.matmul(query_, key_.transpose(-1, -2))
+            probs = torch.softmax(scores, dim=-1)
+            return torch.matmul(probs, value_)
+
+        torch.testing.assert_close(
+            attention(query, stored_k, stored_v),
+            attention(query, prefill_k, prefill_v),
+            rtol=1e-5,
+            atol=1e-6,
+        )
+
+    def test_online_bucket_repacking_rejects_chunked_prefill(self):
+        k = torch.randn(1, 1, 64, 2)
+        v = torch.randn(1, 1, 64, 2)
+        state = quant_error_kv_bucket_repacked(
+            None,
+            None,
+            None,
+            None,
+            k,
+            v,
+            block_size=64,
+            recent_size=0,
+            k_quant_scale_rel=0.03,
+            v_quant_scale_rel=0.1,
+            k_quant_mode=QuantMethod.PackKV.value[0],
+            v_quant_mode=QuantMethod.PackKV.value[1],
+            scale_method=ScaleMethod.PO2_NEAREST,
+        )
+        with self.assertRaisesRegex(ValueError, "chunked prefill"):
+            quant_error_kv_bucket_repacked(
+                state[0],
+                state[1],
+                state[2],
+                state[3],
+                torch.randn(1, 1, 2, 2),
+                torch.randn(1, 1, 2, 2),
+                block_size=64,
+                recent_size=0,
+                k_quant_scale_rel=0.03,
+                v_quant_scale_rel=0.1,
+                k_quant_mode=QuantMethod.PackKV.value[0],
+                v_quant_mode=QuantMethod.PackKV.value[1],
+                scale_method=ScaleMethod.PO2_NEAREST,
+            )
 
     def test_bucket_metadata_uses_three_counts_for_four_buckets(self):
         k_tensor = torch.arange(8, dtype=torch.int32).reshape(1, 1, 1, 8, 1)
