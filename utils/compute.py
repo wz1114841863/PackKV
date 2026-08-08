@@ -1860,16 +1860,41 @@ def packing_aware_quantize_kv(
                 use_ceil_flat[ranked_indices[:prefix_len]] = True
         use_ceil = use_ceil_flat.view_as(payload_beneficial)
 
-        # use_ceil 位于 Bucket 输出顺序；scatter 回原 token 顺序后再选择
-        # quant/zero/scale，随后统一的 fixed permutation 会恢复相同 pack。
-        permuted_token_mask = use_ceil.repeat_interleave(pack_size, dim=1)
-        original_token_mask = torch.zeros_like(permuted_token_mask)
-        original_token_mask.scatter_(1, permutation, permuted_token_mask)
-        mask = original_token_mask.view(1, 1, original_token_mask.shape[0], block_size, 1)
-        selected = tuple(
-            torch.where(mask, ceil_value, nearest_value)
-            for nearest_value, ceil_value in zip(nearest, ceil)
+        def materialize(selection_mask):
+            # selection_mask 位于 Bucket 输出顺序；scatter 回原 token 顺序后
+            # 选择 quant/zero/scale，fixed permutation 会恢复相同 pack。
+            permuted_token_mask = selection_mask.repeat_interleave(
+                pack_size, dim=1
+            )
+            original_token_mask = torch.zeros_like(permuted_token_mask)
+            original_token_mask.scatter_(1, permutation, permuted_token_mask)
+            token_mask = original_token_mask.view(
+                1, 1, original_token_mask.shape[0], block_size, 1
+            )
+            return tuple(
+                torch.where(token_mask, ceil_value, nearest_value)
+                for nearest_value, ceil_value in zip(nearest, ceil)
+            )
+
+        selected = materialize(use_ceil)
+        # payload 收益不一定跨过最终字节边界，也可能被 pack-min/encode-length
+        # 抵消。以真实 CR 存储模型复核整层总字节；没有严格减少就回退 nearest，
+        # 避免为零压缩收益支付任何额外量化误差。
+        selected_blocks = _apply_token_permutation(
+            _quant_tensor_to_blocks(selected[0]), permutation
         )
+        nearest_stream_stats = _single_cache_bit_pack_stats(
+            nearest_blocks.flatten(0, 1), pack_size, padded_token_count=0
+        )
+        selected_stream_stats = _single_cache_bit_pack_stats(
+            selected_blocks.flatten(0, 1), pack_size, padded_token_count=0
+        )
+        if use_ceil.any() and (
+            selected_stream_stats.total_bytes >= nearest_stream_stats.total_bytes
+        ):
+            use_ceil = torch.zeros_like(use_ceil)
+            selected = nearest
+
         selected_error = torch.where(use_ceil, ceil_error, nearest_error)
         nearest_nmse = nearest_error / signal.clamp_min(1e-12)
         ceil_nmse = ceil_error / signal.clamp_min(1e-12)
@@ -1901,7 +1926,9 @@ def packing_aware_quantize_kv(
             candidate_different_packs=int(scale_diff.sum().item()),
             payload_beneficial_packs=int(payload_beneficial.sum().item()),
             positive_delta_candidates=int(positive_candidates.sum().item()),
-            nonpositive_delta_selected_packs=int(nonpositive.sum().item()),
+            nonpositive_delta_selected_packs=int(
+                (nonpositive & use_ceil).sum().item()
+            ),
             budget_rejected_beneficial_packs=int(
                 (payload_beneficial & ~use_ceil).sum().item()
             ),

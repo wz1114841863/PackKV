@@ -35,7 +35,7 @@ max_ctx_len_map = {
 }
 
 STORAGE_MODEL = "stream-packed-v2-native-quant-metadata-bucket-counts"
-PA_SELECTION_POLICY = "layer-budget-efficiency-prefix"
+PA_SELECTION_POLICY = "layer-budget-efficiency-prefix-stream-guard-v2"
 
 
 def sum_metric(res_dict, key):

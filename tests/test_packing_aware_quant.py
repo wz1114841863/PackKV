@@ -58,10 +58,10 @@ class PackingAwareQuantTest(unittest.TestCase):
                 stats.ceil_selected_packs + stats.budget_rejected_beneficial_packs,
                 stats.payload_beneficial_packs,
             )
-            self.assertEqual(
-                stats.positive_delta_candidates
-                + stats.nonpositive_delta_selected_packs,
-                stats.payload_beneficial_packs,
+            self.assertLessEqual(
+                stats.nonpositive_delta_selected_packs,
+                stats.payload_beneficial_packs
+                - stats.positive_delta_candidates,
             )
             self.assertLessEqual(
                 stats.selected_sse,
@@ -100,6 +100,36 @@ class PackingAwareQuantTest(unittest.TestCase):
         torch.testing.assert_close(after, expected)
         self.assertEqual(encoded_stats[2].payload_bits, result[-2].selected_payload_bits)
         self.assertEqual(encoded_stats[3].payload_bits, result[-1].selected_payload_bits)
+
+        k_nearest, _, _ = quant_ints(
+            k,
+            64,
+            0.1,
+            QuantMode.TokenQuant,
+            False,
+            ScaleMethod.PO2_NEAREST,
+        )
+        v_nearest, _, _ = quant_ints(
+            v,
+            64,
+            0.1,
+            QuantMode.TokenQuant,
+            False,
+            ScaleMethod.PO2_NEAREST,
+        )
+        nearest_stats = repack_and_encode(
+            k_nearest,
+            v_nearest,
+            pack_size=16,
+            repack_method=RepackMethod.BUCKET,
+            bucket_count=4,
+            bucket_score_method=BucketScoreMethod.K_SUM,
+            fixed_bucket_permutation=permutation,
+            fixed_repack_metadata=metadata,
+            return_stats=True,
+        )
+        self.assertLessEqual(encoded_stats[2].total_bytes, nearest_stats[2].total_bytes)
+        self.assertLessEqual(encoded_stats[3].total_bytes, nearest_stats[3].total_bytes)
 
     def test_zero_and_constant_blocks_do_not_create_nan(self):
         k = torch.zeros(1, 1, 64, 4)
