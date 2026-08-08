@@ -15,6 +15,7 @@ from utils.compute import (
     encode_bucket_metadata,
     quant_error_kv_bucket_repacked,
     repack_and_encode,
+    verify_repack_bitstream_roundtrip,
 )
 from utils.config import PackKVCacheConfig
 
@@ -353,6 +354,37 @@ class BucketRepackingTest(unittest.TestCase):
                 tuple(row) for row in decoded_repacked[block_idx].tolist()
             )
             self.assertEqual(decoded_rows, original_rows)
+
+    def test_real_quant_tensor_roundtrip_audit_for_none_and_bucket(self):
+        torch.manual_seed(41)
+        # [B,H,block,token,D]，与 quant_ints 的真实返回形状一致。
+        k_tensor = torch.randint(-5, 19, (1, 2, 3, 64, 4), dtype=torch.int32)
+        v_tensor = torch.randint(-9, 12, (1, 2, 3, 64, 4), dtype=torch.int32)
+
+        none_stats = verify_repack_bitstream_roundtrip(
+            k_tensor,
+            v_tensor,
+            pack_size=16,
+            repack_method=RepackMethod.NONE,
+            max_blocks=2,
+        )
+        bucket_stats = verify_repack_bitstream_roundtrip(
+            k_tensor,
+            v_tensor,
+            pack_size=16,
+            repack_method=RepackMethod.BUCKET,
+            max_blocks=2,
+            bucket_count=4,
+            bucket_score_method=BucketScoreMethod.K_SUM,
+        )
+
+        self.assertEqual(none_stats.verified_blocks, 2)
+        self.assertEqual(none_stats.bucket_metadata_bytes, 0)
+        self.assertEqual(bucket_stats.verified_blocks, 2)
+        # block_size=64、4桶：每 block 3*7=21 bit，独立对齐为3 bytes。
+        self.assertEqual(bucket_stats.bucket_metadata_bytes, 6)
+        self.assertGreater(none_stats.total_bytes, 0)
+        self.assertGreater(bucket_stats.total_bytes, 0)
 
     def test_rejects_non_power_of_two_bucket_count(self):
         blocks = torch.zeros((1, 8, 2), dtype=torch.int32)

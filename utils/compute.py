@@ -1530,6 +1530,118 @@ def bit_pack_decode_kv(
     )
 
 
+@dataclass(frozen=True)
+class RepackRoundTripStats:
+    """真实重排/metadata/bitstream round-trip 的轻量审计结果."""
+
+    verified_blocks: int
+    tokens_per_block: int
+    k_stream_bytes: int
+    v_stream_bytes: int
+    bucket_metadata_bytes: int
+
+    @property
+    def total_bytes(self) -> int:
+        return (
+            self.k_stream_bytes
+            + self.v_stream_bytes
+            + self.bucket_metadata_bytes
+        )
+
+
+def verify_repack_bitstream_roundtrip(
+    k_tensor: torch.Tensor,
+    v_tensor: torch.Tensor,
+    pack_size: int,
+    repack_method: RepackMethod,
+    max_blocks: int = 1,
+    bucket_count: int = 4,
+    bucket_score_method: BucketScoreMethod = BucketScoreMethod.K_SUM,
+) -> RepackRoundTripStats:
+    """对真实量化整数抽样执行重排、字节编码和无损解码.
+
+    输入保持 ``quant_ints`` 的 [B,H,block,token,D] 形状。审计只抽取
+    前 ``max_blocks`` 个基础 block，不借用原始 tensor 参与解码；任何整数、
+    metadata 或统计字节不一致都会立即抛出异常。
+    """
+    if k_tensor.shape != v_tensor.shape or k_tensor.ndim != 5:
+        raise ValueError("quantized K/V must have matching 5-D shapes")
+    if max_blocks <= 0:
+        raise ValueError("max_blocks must be positive")
+    if isinstance(repack_method, str):
+        repack_method = RepackMethod[repack_method]
+    if isinstance(bucket_score_method, str):
+        bucket_score_method = BucketScoreMethod(bucket_score_method)
+
+    k_blocks = _quant_tensor_to_blocks(k_tensor)
+    v_blocks = _quant_tensor_to_blocks(v_tensor)
+    verified_blocks = min(max_blocks, k_blocks.shape[0])
+    if verified_blocks <= 0:
+        raise ValueError("quantized K/V contains no blocks")
+    blocks = torch.cat(
+        [k_blocks[:verified_blocks], v_blocks[:verified_blocks]], dim=2
+    )
+    metadata = RepackMetadataStats()
+    if repack_method == RepackMethod.BUCKET:
+        repacked, metadata = bucket_repacking(
+            blocks,
+            num_buckets=bucket_count,
+            score_method=bucket_score_method,
+            return_metadata=True,
+        )
+    elif repack_method == RepackMethod.NONE:
+        repacked = blocks
+    elif repack_method == RepackMethod.GREEDY:
+        repacked = greedy_repacking(blocks, pack_size)
+    elif repack_method == RepackMethod.MEDIAN:
+        repacked = median_repacking(blocks)
+    else:
+        raise ValueError(f"unsupported repack method: {repack_method}")
+
+    metadata_bytes = encode_bucket_metadata(metadata)
+    if repack_method == RepackMethod.BUCKET:
+        decoded_metadata = decode_bucket_metadata(
+            metadata_bytes,
+            block_count=verified_blocks,
+            tokens_per_block=repacked.shape[1],
+            bucket_count=bucket_count,
+            score_method=bucket_score_method,
+        )
+        if decoded_metadata != metadata:
+            raise AssertionError("bucket metadata round-trip mismatch")
+    elif metadata_bytes:
+        raise AssertionError("non-BUCKET repacking produced bucket metadata")
+
+    k_expected_stats, v_expected_stats = bit_pack_stats(repacked, pack_size)
+    k_stream, v_stream = bit_pack_encode(repacked, pack_size)
+    decoded = bit_pack_decode_kv(
+        k_stream,
+        v_stream,
+        block_count=verified_blocks,
+        tokens_per_block=repacked.shape[1],
+    )
+    expected = repacked.detach().to(device="cpu", dtype=torch.int64)
+    if not torch.equal(decoded, expected):
+        mismatch_count = int((decoded != expected).sum().item())
+        raise AssertionError(
+            f"bit-pack round-trip mismatch in {mismatch_count} integer values"
+        )
+    if k_stream.total_bytes != k_expected_stats.total_bytes:
+        raise AssertionError("K bitstream bytes disagree with CR statistics")
+    if v_stream.total_bytes != v_expected_stats.total_bytes:
+        raise AssertionError("V bitstream bytes disagree with CR statistics")
+    if len(metadata_bytes) != metadata.bucket_metadata_bytes:
+        raise AssertionError("bucket metadata bytes disagree with CR statistics")
+
+    return RepackRoundTripStats(
+        verified_blocks=verified_blocks,
+        tokens_per_block=repacked.shape[1],
+        k_stream_bytes=k_stream.total_bytes,
+        v_stream_bytes=v_stream.total_bytes,
+        bucket_metadata_bytes=len(metadata_bytes),
+    )
+
+
 def bit_pack(blocks: torch.Tensor, pack_len: int) -> Tuple[int, int]:
     """兼容旧调用方,返回按连续bitstream估算的K/V总字节数."""
     k_stats, v_stats = bit_pack_stats(blocks, pack_len)

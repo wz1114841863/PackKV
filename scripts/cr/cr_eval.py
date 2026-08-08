@@ -727,8 +727,35 @@ def main():
         default=None,
         help="输入缓存样本标识;未指定时使用从0开始的 round 索引",
     )
+    parser.add_argument(
+        "--verify_roundtrip",
+        action="store_true",
+        help=(
+            "从真实量化 KV 中抽样执行重排、bucket metadata 和 bitstream "
+            "编码/解码，并核对整数与统计字节"
+        ),
+    )
+    parser.add_argument(
+        "--roundtrip_only",
+        action="store_true",
+        help="启用 round-trip 审计但不导出或追加任何 CR CSV",
+    )
+    parser.add_argument(
+        "--roundtrip_layers",
+        type=int,
+        default=4,
+        help="round-trip 审计均匀抽取的层数（默认4）",
+    )
+    parser.add_argument(
+        "--roundtrip_blocks",
+        type=int,
+        default=1,
+        help="每个审计层抽取的基础 block 数（默认1）",
+    )
 
     args = parser.parse_args()
+    if args.roundtrip_only:
+        args.verify_roundtrip = True
 
     logger = get_logger(__name__)
     block_other_logger(logger)
@@ -744,6 +771,8 @@ def main():
         parser.error("--ctx_len must be a positive integer")
     if args.collect_round <= 0:
         parser.error("--collect_round must be a positive integer")
+    if args.roundtrip_layers <= 0 or args.roundtrip_blocks <= 0:
+        parser.error("--roundtrip_layers and --roundtrip_blocks must be positive")
     if args.k_error_budget < 0 or args.v_error_budget < 0:
         parser.error("--k_error_budget and --v_error_budget must be non-negative")
     args.suite_id = safe_filename_component(args.suite_id) or "manual"
@@ -783,6 +812,10 @@ def main():
             "po2_pack_aware currently requires --quant_method PackKV "
             "--repack_method BUCKET --bucket_score_method k_sum"
         )
+    if args.verify_roundtrip and quant_method_enum != QuantMethod.PackKV:
+        parser.error("--verify_roundtrip currently requires --quant_method PackKV")
+    if args.verify_roundtrip and args.scale_method == ScaleMethod.PO2_PACK_AWARE.value:
+        parser.error("--verify_roundtrip does not yet support po2_pack_aware")
 
     config = PackKVCacheConfig(
         enable_quant=False,
@@ -816,6 +849,12 @@ def main():
     logger.info(f"   Bucket Score Method: {args.bucket_score_method}")
     logger.info(f"   Suite ID: {args.suite_id}")
     logger.info(f"   Run ID: {args.run_id}")
+    logger.info(
+        "   Round-trip Audit: %s (layers=%d, blocks/layer=%d)",
+        args.verify_roundtrip,
+        args.roundtrip_layers,
+        args.roundtrip_blocks,
+    )
     logger.info("=" * 50)
 
     results = cr_evaluation(
@@ -824,7 +863,17 @@ def main():
         enable_save=args.enable_save,
         logger=logger,
         collect_round=args.collect_round,
+        verify_roundtrip=args.verify_roundtrip,
+        roundtrip_layers=args.roundtrip_layers,
+        roundtrip_blocks=args.roundtrip_blocks,
     )
+
+    if args.roundtrip_only:
+        print(
+            "\nRound-trip validation completed successfully; "
+            "CR CSV export was skipped (--roundtrip_only)."
+        )
+        return
 
     # 打印最终结果
     print("\n" + "=" * 20)

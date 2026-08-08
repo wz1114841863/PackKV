@@ -26,6 +26,7 @@ from utils.compute import (
     ScaleMethod,
     dequantize_ints,
     packing_aware_quantize_kv,
+    verify_repack_bitstream_roundtrip,
 )
 from utils.config import PackKVCacheConfig, ExtractCacheConfig
 from utils.lm_eval_warp import LMEvalWrapper
@@ -426,7 +427,14 @@ def get_compressible_prefix_length(seq_len, block_size, recent_size):
 
 
 def crs_evaluation_with_data(
-    config: PackKVCacheConfig, key_caches, value_caches, before_and_after_repacking=None
+    config: PackKVCacheConfig,
+    key_caches,
+    value_caches,
+    before_and_after_repacking=None,
+    verify_roundtrip: bool = False,
+    roundtrip_blocks: int = 1,
+    roundtrip_layers: int = 4,
+    logger=None,
 ):
     """按字节统计量化、编码元数据、Recent Buffer和bit-packing开销."""
     metric_names = [
@@ -503,6 +511,21 @@ def crs_evaluation_with_data(
     layer_num = len(key_caches)
     if layer_num != len(value_caches):
         raise ValueError("K/V cache layer count mismatch")
+    if verify_roundtrip:
+        if roundtrip_blocks <= 0 or roundtrip_layers <= 0:
+            raise ValueError("roundtrip_blocks and roundtrip_layers must be positive")
+        audit_layer_count = min(roundtrip_layers, layer_num)
+        if audit_layer_count == 1:
+            audit_layers = {0}
+        else:
+            audit_layers = {
+                round(index * (layer_num - 1) / (audit_layer_count - 1))
+                for index in range(audit_layer_count)
+            }
+    else:
+        audit_layers = set()
+    verified_layer_count = 0
+    verified_block_count = 0
 
     for layer_idx in range(layer_num):
         k = key_caches[layer_idx]
@@ -684,6 +707,33 @@ def crs_evaluation_with_data(
         res["k_quant_cr"].append(k_origin_size / k_quant_size)
         res["v_quant_cr"].append(v_origin_size / v_quant_size)
 
+        if layer_idx in audit_layers:
+            audit = verify_repack_bitstream_roundtrip(
+                k_quant_int,
+                v_quant_int,
+                config.pack_size,
+                config.repack_method,
+                max_blocks=roundtrip_blocks,
+                bucket_count=getattr(config, "bucket_count", 4),
+                bucket_score_method=getattr(
+                    config,
+                    "bucket_score_method",
+                    BucketScoreMethod.K_SUM,
+                ),
+            )
+            verified_layer_count += 1
+            verified_block_count += audit.verified_blocks
+            if logger is not None:
+                logger.info(
+                    "Round-trip PASS: layer=%d blocks=%d K=%dB V=%dB bucket=%dB total=%dB",
+                    layer_idx,
+                    audit.verified_blocks,
+                    audit.k_stream_bytes,
+                    audit.v_stream_bytes,
+                    audit.bucket_metadata_bytes,
+                    audit.total_bytes,
+                )
+
         if config.quant_method == QuantMethod.PackKV:
             (
                 k_stats_before,
@@ -828,6 +878,13 @@ def crs_evaluation_with_data(
                 res[f"{cache_kind}_encode_after_repack_cr"].append(
                     origin_size / encoded_after
                 )
+    if verify_roundtrip and logger is not None:
+        logger.info(
+            "Round-trip audit PASS: verified_layers=%d/%d verified_blocks=%d",
+            verified_layer_count,
+            layer_num,
+            verified_block_count,
+        )
     return res
 
 
@@ -1000,6 +1057,9 @@ def cr_evaluation(
     logger,
     collect_round: int = 1,
     before_and_after_repacking=None,
+    verify_roundtrip: bool = False,
+    roundtrip_blocks: int = 1,
+    roundtrip_layers: int = 4,
 ):
     logger.info(f"ctx_len: {ctx_len}")
     logger.info(config)
@@ -1088,7 +1148,14 @@ def cr_evaluation(
         )
         rts.append(
             crs_evaluation_with_data(
-                config, key_caches, value_caches, before_and_after_repacking
+                config,
+                key_caches,
+                value_caches,
+                before_and_after_repacking,
+                verify_roundtrip=verify_roundtrip,
+                roundtrip_blocks=roundtrip_blocks,
+                roundtrip_layers=roundtrip_layers,
+                logger=logger,
             )
         )
 
