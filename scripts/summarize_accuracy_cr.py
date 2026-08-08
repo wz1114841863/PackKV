@@ -18,6 +18,7 @@ OUTPUT_FIELDS = (
     "Flexible_Extract_Pct",
     "FP_Strict_Match_Pct",
     "FP_Flexible_Extract_Pct",
+    "FP_Baseline_Status",
     "Strict_Delta_vs_FP_pp",
     "Flexible_Delta_vs_FP_pp",
     "K_Global_CR",
@@ -127,6 +128,12 @@ def fp_accuracy_row(rows, model):
         and full_limit(row.get("Limit"))
         and false_value(row.get("Enable_Quant"))
     ]
+    if not matches:
+        print(
+            f"警告: {model} 缺少全量 FP accuracy；"
+            "FP 和相对 FP 列将留空"
+        )
+        return None
     return latest(matches, "Created_At", f"{model} FP accuracy")
 
 
@@ -170,8 +177,8 @@ def build_rows(accuracy_rows, cr_rows, models, ctx_len):
     output = []
     for model in models:
         fp = fp_accuracy_row(accuracy_rows, model)
-        fp_strict = as_float(fp.get("Strict_Match"))
-        fp_flexible = as_float(fp.get("Flexible_Extract"))
+        fp_strict = as_float(fp.get("Strict_Match")) if fp else None
+        fp_flexible = as_float(fp.get("Flexible_Extract")) if fp else None
         cr_by_repack = {
             repack: fixed_cr_row(cr_rows, model, repack, ctx_len)
             for repack in ("NONE", "BUCKET")
@@ -212,6 +219,7 @@ def build_rows(accuracy_rows, cr_rows, models, ctx_len):
                     "Flexible_Extract_Pct": percent(flexible),
                     "FP_Strict_Match_Pct": percent(fp_strict),
                     "FP_Flexible_Extract_Pct": percent(fp_flexible),
+                    "FP_Baseline_Status": "recorded" if fp else "missing",
                     "Strict_Delta_vs_FP_pp": number(
                         (strict - fp_strict) * 100
                         if strict is not None and fp_strict is not None
