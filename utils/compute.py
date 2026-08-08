@@ -1055,6 +1055,95 @@ def bucket_repacking(
     return repacked_blocks
 
 
+def encode_bucket_metadata(metadata: RepackMetadataStats) -> bytes:
+    """序列化每个基础 block 的前 ``bucket_count - 1`` 个桶计数.
+
+    每个 block 独立补齐到字节边界，与 ``bucket_metadata_bytes`` 的压缩率
+    统计口径一致；最后一个桶计数由 block token 总数减去其余计数得到。
+    """
+    if not metadata.bucket_counts:
+        return b""
+    output = bytearray()
+    for counts in metadata.bucket_counts:
+        if len(counts) != metadata.bucket_count:
+            raise ValueError("bucket count row length mismatch")
+        if any(int(count) < 0 for count in counts):
+            raise ValueError("bucket counts must be non-negative")
+        stored_counts = [int(count) for count in counts[:-1]]
+        output.extend(
+            _pack_unsigned_fields(
+                stored_counts,
+                [metadata.bucket_count_field_bits] * len(stored_counts),
+            )
+        )
+    encoded = bytes(output)
+    if len(encoded) != metadata.bucket_metadata_bytes:
+        raise AssertionError("bucket metadata byte accounting mismatch")
+    return encoded
+
+
+def decode_bucket_metadata(
+    data: bytes,
+    block_count: int,
+    tokens_per_block: int,
+    bucket_count: int,
+    score_method: BucketScoreMethod = BucketScoreMethod.K_SUM,
+) -> RepackMetadataStats:
+    """解码 bucket count header，并验证边界、总数与 padding bits."""
+    if block_count <= 0 or tokens_per_block <= 0:
+        raise ValueError("block_count and tokens_per_block must be positive")
+    _validate_bucket_count(bucket_count, tokens_per_block)
+    if isinstance(score_method, str):
+        score_method = BucketScoreMethod(score_method)
+    count_field_bits = max(1, math.ceil(math.log2(tokens_per_block + 1)))
+    stored_count_count = bucket_count - 1
+    bytes_per_block = (stored_count_count * count_field_bits + 7) // 8
+    expected_bytes = block_count * bytes_per_block
+    if len(data) != expected_bytes:
+        raise ValueError(
+            f"bucket metadata length mismatch: expected {expected_bytes}, got {len(data)}"
+        )
+
+    bucket_counts = []
+    occupancy_histogram: Dict[int, int] = defaultdict(int)
+    for block_idx in range(block_count):
+        begin = block_idx * bytes_per_block
+        stored_counts = _unpack_unsigned_fields(
+            data[begin : begin + bytes_per_block],
+            [count_field_bits] * stored_count_count,
+        )
+        last_count = tokens_per_block - sum(stored_counts)
+        if last_count < 0:
+            raise ValueError("decoded bucket counts exceed tokens_per_block")
+        row = tuple(stored_counts + [last_count])
+        if any(count > tokens_per_block for count in row):
+            raise ValueError("decoded bucket count exceeds tokens_per_block")
+        bucket_counts.append(row)
+        for count in row:
+            occupancy_histogram[count] += 1
+
+    total_bucket_bits = int(math.log2(bucket_count))
+    k_subbucket_count = 0
+    v_subbucket_count = 0
+    if score_method == BucketScoreMethod.KV_2D:
+        if bucket_count < 4:
+            raise ValueError("kv_2d requires at least 4 buckets")
+        k_subbucket_count = 1 << ((total_bucket_bits + 1) // 2)
+        v_subbucket_count = 1 << (total_bucket_bits // 2)
+    return RepackMetadataStats(
+        bucket_count=bucket_count,
+        bucket_count_field_bits=count_field_bits,
+        bucket_metadata_bits=(
+            block_count * stored_count_count * count_field_bits
+        ),
+        bucket_counts=tuple(bucket_counts),
+        bucket_occupancy_histogram=dict(sorted(occupancy_histogram.items())),
+        bucket_score_method=score_method.value,
+        k_subbucket_count=k_subbucket_count,
+        v_subbucket_count=v_subbucket_count,
+    )
+
+
 def hardware_bucket_repacking(
     blocks: torch.Tensor,
     num_main_buckets: int = 4,
@@ -1096,6 +1185,92 @@ class BitPackStats:
     @property
     def encode_length_bytes(self) -> int:
         return (self.encode_length_bits + 7) // 8
+
+
+@dataclass(frozen=True)
+class BitPackedCacheStream:
+    """可实际解码的单个 K 或 V bit-packed 参考流.
+
+    三个字节串分别对应 ``BitPackStats`` 已统计的 payload、pack minimum
+    和 encode length。shape、pack_len 以及字段位宽属于模型/编码器配置描述符，
+    不重复写入每层数据流；round-trip 解码不会借用原始 tensor。
+    """
+
+    payload: bytes
+    pack_mins: bytes
+    encode_lengths: bytes
+    token_count: int
+    feature_dim: int
+    pack_len: int
+    padded_token_count: int
+    code_value_bits: int
+    encode_length_field_bits: int
+    signed_values: bool
+
+    @property
+    def total_bytes(self) -> int:
+        return len(self.payload) + len(self.pack_mins) + len(self.encode_lengths)
+
+
+def _pack_unsigned_fields(values: List[int], widths: List[int]) -> bytes:
+    """按 LSB-first 连续 bitstream 编码非负整数."""
+    if len(values) != len(widths):
+        raise ValueError("values and widths must have the same length")
+    accumulator = 0
+    accumulator_bits = 0
+    output = bytearray()
+    for value, width in zip(values, widths):
+        value = int(value)
+        width = int(width)
+        if width < 0:
+            raise ValueError("field width must be non-negative")
+        if value < 0 or (width == 0 and value != 0) or value >= (1 << width):
+            raise ValueError(f"value {value} does not fit in {width} bits")
+        accumulator |= value << accumulator_bits
+        accumulator_bits += width
+        while accumulator_bits >= 8:
+            output.append(accumulator & 0xFF)
+            accumulator >>= 8
+            accumulator_bits -= 8
+    if accumulator_bits:
+        output.append(accumulator & 0xFF)
+    return bytes(output)
+
+
+def _unpack_unsigned_fields(data: bytes, widths: List[int]) -> List[int]:
+    """解码 ``_pack_unsigned_fields`` 产生的 LSB-first bitstream."""
+    expected_bits = sum(int(width) for width in widths)
+    expected_bytes = (expected_bits + 7) // 8
+    if len(data) != expected_bytes:
+        raise ValueError(
+            f"bitstream length mismatch: expected {expected_bytes}, got {len(data)}"
+        )
+    raw = int.from_bytes(data, byteorder="little", signed=False)
+    values = []
+    offset = 0
+    for width in widths:
+        width = int(width)
+        if width < 0:
+            raise ValueError("field width must be non-negative")
+        mask = (1 << width) - 1 if width else 0
+        values.append((raw >> offset) & mask)
+        offset += width
+    if raw >> expected_bits:
+        raise ValueError("non-zero byte-alignment padding bits")
+    return values
+
+
+def _signed_to_unsigned(value: int, width: int) -> int:
+    lower = -(1 << (width - 1))
+    upper = (1 << (width - 1)) - 1
+    if value < lower or value > upper:
+        raise ValueError(f"signed value {value} does not fit in {width} bits")
+    return value if value >= 0 else (1 << width) + value
+
+
+def _unsigned_to_signed(value: int, width: int) -> int:
+    sign_bit = 1 << (width - 1)
+    return value - (1 << width) if value & sign_bit else value
 
 
 def _integer_storage_bits(min_value: int, max_value: int) -> int:
@@ -1183,6 +1358,175 @@ def bit_pack_stats(
     return (
         _single_cache_bit_pack_stats(k_values, pack_len, padded_token_count),
         _single_cache_bit_pack_stats(v_values, pack_len, padded_token_count),
+    )
+
+
+def _encode_single_cache_bitstream(
+    values: torch.Tensor,
+    pack_len: int,
+    padded_token_count: int,
+) -> BitPackedCacheStream:
+    """真实编码一个 [token, feature] 整数量化 Cache."""
+    if values.ndim != 2 or values.shape[0] % pack_len != 0:
+        raise ValueError("values must be [token, feature] and divisible by pack_len")
+    if values.is_floating_point():
+        if not torch.isfinite(values).all():
+            raise ValueError("values contains NaN or Inf")
+        if not torch.equal(values, values.round()):
+            raise ValueError("bit packing requires integer-valued input")
+    integer_values = values.to(torch.int64).cpu()
+    packs = integer_values.view(-1, pack_len, integer_values.shape[1])
+    pack_mins = packs.min(dim=1).values
+    pack_maxs = packs.max(dim=1).values
+    widths = torch.ceil(torch.log2(pack_maxs - pack_mins + 1)).to(torch.int64)
+
+    global_min = int(integer_values.min().item())
+    global_max = int(integer_values.max().item())
+    code_value_bits = _integer_storage_bits(global_min, global_max)
+    encode_length_field_bits = max(
+        1, math.ceil(math.log2(code_value_bits + 1))
+    )
+
+    signed_values = global_min < 0
+    minimum_values = [
+        (
+            _signed_to_unsigned(int(value), code_value_bits)
+            if signed_values
+            else int(value)
+        )
+        for value in pack_mins.flatten().tolist()
+    ]
+    minimum_widths = [code_value_bits] * len(minimum_values)
+    width_values = [int(value) for value in widths.flatten().tolist()]
+    width_widths = [encode_length_field_bits] * len(width_values)
+
+    payload_values: List[int] = []
+    payload_widths: List[int] = []
+    for pack_idx in range(packs.shape[0]):
+        for feature_idx in range(packs.shape[2]):
+            width = int(widths[pack_idx, feature_idx].item())
+            minimum = int(pack_mins[pack_idx, feature_idx].item())
+            for token_idx in range(pack_len):
+                payload_values.append(
+                    int(packs[pack_idx, token_idx, feature_idx].item()) - minimum
+                )
+                payload_widths.append(width)
+
+    return BitPackedCacheStream(
+        payload=_pack_unsigned_fields(payload_values, payload_widths),
+        pack_mins=_pack_unsigned_fields(minimum_values, minimum_widths),
+        encode_lengths=_pack_unsigned_fields(width_values, width_widths),
+        token_count=values.shape[0] - padded_token_count,
+        feature_dim=values.shape[1],
+        pack_len=pack_len,
+        padded_token_count=padded_token_count,
+        code_value_bits=code_value_bits,
+        encode_length_field_bits=encode_length_field_bits,
+        signed_values=signed_values,
+    )
+
+
+def bit_pack_encode(
+    blocks: torch.Tensor, pack_len: int
+) -> Tuple[BitPackedCacheStream, BitPackedCacheStream]:
+    """把 [block, token, K+V feature] 真正编码为 K/V 字节流.
+
+    padding 与 ``bit_pack_stats`` 相同：连续展平基础 block 后，仅在流末尾
+    重复最后一个 token，使 token 数可被 pack_len 整除。
+    """
+    if pack_len <= 0:
+        raise ValueError("pack_len must be positive")
+    if blocks.ndim != 3 or blocks.shape[0] <= 0 or blocks.shape[1] <= 0:
+        raise ValueError("blocks must have non-empty [block, token, feature] shape")
+    if blocks.shape[2] <= 0 or blocks.shape[2] % 2 != 0:
+        raise ValueError("K/V concatenated feature dimension must be positive and even")
+
+    half_vec_len = blocks.shape[2] // 2
+    flattened = blocks.flatten(0, 1)
+    padded_token_count = (-flattened.shape[0]) % pack_len
+    if padded_token_count:
+        flattened = torch.cat(
+            [flattened, flattened[-1:].expand(padded_token_count, -1)], dim=0
+        )
+    return (
+        _encode_single_cache_bitstream(
+            flattened[:, :half_vec_len], pack_len, padded_token_count
+        ),
+        _encode_single_cache_bitstream(
+            flattened[:, half_vec_len:], pack_len, padded_token_count
+        ),
+    )
+
+
+def bit_pack_decode(stream: BitPackedCacheStream) -> torch.Tensor:
+    """从三个编码组件恢复 [token, feature] 整数，去除流末 padding."""
+    if stream.pack_len <= 0 or stream.feature_dim <= 0 or stream.token_count <= 0:
+        raise ValueError("invalid bit-packed stream descriptor")
+    padded_tokens = stream.token_count + stream.padded_token_count
+    if padded_tokens % stream.pack_len:
+        raise ValueError("padded token count must be divisible by pack_len")
+    pack_count = padded_tokens // stream.pack_len
+    field_count = pack_count * stream.feature_dim
+
+    encoded_widths = _unpack_unsigned_fields(
+        stream.encode_lengths,
+        [stream.encode_length_field_bits] * field_count,
+    )
+    if any(width > stream.code_value_bits for width in encoded_widths):
+        raise ValueError("encode length exceeds code value width")
+    encoded_mins = _unpack_unsigned_fields(
+        stream.pack_mins,
+        [stream.code_value_bits] * field_count,
+    )
+    pack_mins = [
+        (
+            _unsigned_to_signed(value, stream.code_value_bits)
+            if stream.signed_values
+            else value
+        )
+        for value in encoded_mins
+    ]
+
+    payload_widths: List[int] = []
+    for width in encoded_widths:
+        payload_widths.extend([width] * stream.pack_len)
+    payload_values = _unpack_unsigned_fields(stream.payload, payload_widths)
+
+    output = torch.empty(
+        (padded_tokens, stream.feature_dim), dtype=torch.int64
+    )
+    payload_idx = 0
+    field_idx = 0
+    for pack_idx in range(pack_count):
+        for feature_idx in range(stream.feature_dim):
+            minimum = pack_mins[field_idx]
+            for token_idx in range(stream.pack_len):
+                output[
+                    pack_idx * stream.pack_len + token_idx, feature_idx
+                ] = minimum + payload_values[payload_idx]
+                payload_idx += 1
+            field_idx += 1
+    return output[: stream.token_count]
+
+
+def bit_pack_decode_kv(
+    k_stream: BitPackedCacheStream,
+    v_stream: BitPackedCacheStream,
+    block_count: int,
+    tokens_per_block: int,
+) -> torch.Tensor:
+    """解码 K/V 并恢复 [block, token, K+V feature] 形状."""
+    if block_count <= 0 or tokens_per_block <= 0:
+        raise ValueError("block_count and tokens_per_block must be positive")
+    expected_tokens = block_count * tokens_per_block
+    if k_stream.token_count != expected_tokens or v_stream.token_count != expected_tokens:
+        raise ValueError("stream token count does not match requested block shape")
+    if k_stream.pack_len != v_stream.pack_len:
+        raise ValueError("K/V pack lengths must match")
+    k_values = bit_pack_decode(k_stream)
+    v_values = bit_pack_decode(v_stream)
+    return torch.cat([k_values, v_values], dim=1).reshape(
+        block_count, tokens_per_block, -1
     )
 
 

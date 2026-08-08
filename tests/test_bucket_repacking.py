@@ -7,7 +7,12 @@ from utils.compute import (
     QuantMethod,
     RepackMethod,
     ScaleMethod,
+    bit_pack_decode_kv,
+    bit_pack_encode,
+    bit_pack_stats,
     bucket_repacking,
+    decode_bucket_metadata,
+    encode_bucket_metadata,
     quant_error_kv_bucket_repacked,
     repack_and_encode,
 )
@@ -259,6 +264,95 @@ class BucketRepackingTest(unittest.TestCase):
         # 每个 block:3 个计数 * 7 bit = 21 bit,独立对齐为3 bytes.
         self.assertEqual(metadata.bucket_metadata_bits, 2 * 21)
         self.assertEqual(metadata.bucket_metadata_bytes, 2 * 3)
+
+    def test_bucket_metadata_byte_roundtrip_with_empty_buckets(self):
+        blocks = torch.tensor(
+            [
+                [[0, 3], [0, 2], [0, 1], [0, 0], [0, -1], [0, -2], [0, -3], [0, -4]],
+                [[5, 0], [5, 1], [5, 2], [5, 3], [5, 4], [5, 5], [5, 6], [5, 7]],
+            ],
+            dtype=torch.int32,
+        )
+        _, metadata = bucket_repacking(
+            blocks,
+            num_buckets=4,
+            score_method=BucketScoreMethod.K_SUM,
+            return_metadata=True,
+        )
+
+        encoded = encode_bucket_metadata(metadata)
+        decoded = decode_bucket_metadata(
+            encoded,
+            block_count=blocks.shape[0],
+            tokens_per_block=blocks.shape[1],
+            bucket_count=4,
+            score_method=BucketScoreMethod.K_SUM,
+        )
+
+        self.assertEqual(len(encoded), metadata.bucket_metadata_bytes)
+        self.assertEqual(decoded, metadata)
+        self.assertEqual(encode_bucket_metadata(decoded), encoded)
+
+    def test_real_bit_pack_roundtrip_matches_accounting(self):
+        # 包含负数、零位宽常量列以及流末 padding。
+        torch.manual_seed(31)
+        blocks = torch.randint(-7, 13, (3, 5, 8), dtype=torch.int32)
+        blocks[:, :, 1] = -3
+        blocks[:, :, 6] = 4
+        k_stats, v_stats = bit_pack_stats(blocks, pack_len=4)
+        k_stream, v_stream = bit_pack_encode(blocks, pack_len=4)
+        decoded = bit_pack_decode_kv(
+            k_stream,
+            v_stream,
+            block_count=blocks.shape[0],
+            tokens_per_block=blocks.shape[1],
+        )
+
+        torch.testing.assert_close(decoded, blocks.to(torch.int64))
+        self.assertEqual(k_stream.total_bytes, k_stats.total_bytes)
+        self.assertEqual(v_stream.total_bytes, v_stats.total_bytes)
+        self.assertEqual(len(k_stream.payload), k_stats.payload_bytes)
+        self.assertEqual(len(v_stream.payload), v_stats.payload_bytes)
+        self.assertEqual(len(k_stream.pack_mins), k_stats.pack_min_bytes)
+        self.assertEqual(len(v_stream.pack_mins), v_stats.pack_min_bytes)
+        self.assertEqual(
+            len(k_stream.encode_lengths), k_stats.encode_length_bytes
+        )
+        self.assertEqual(
+            len(v_stream.encode_lengths), v_stats.encode_length_bytes
+        )
+
+    def test_bucket_repack_and_bit_pack_end_to_end_roundtrip(self):
+        torch.manual_seed(37)
+        original = torch.randint(-16, 24, (2, 64, 12), dtype=torch.int32)
+        repacked, metadata = bucket_repacking(
+            original,
+            num_buckets=4,
+            score_method=BucketScoreMethod.K_SUM,
+            return_metadata=True,
+        )
+        metadata_bytes = encode_bucket_metadata(metadata)
+        decoded_metadata = decode_bucket_metadata(
+            metadata_bytes,
+            block_count=2,
+            tokens_per_block=64,
+            bucket_count=4,
+            score_method=BucketScoreMethod.K_SUM,
+        )
+        k_stream, v_stream = bit_pack_encode(repacked, pack_len=16)
+        decoded_repacked = bit_pack_decode_kv(
+            k_stream, v_stream, block_count=2, tokens_per_block=64
+        )
+
+        torch.testing.assert_close(decoded_repacked, repacked.to(torch.int64))
+        self.assertEqual(decoded_metadata.bucket_counts, metadata.bucket_counts)
+        # 每行仍是不可分割的 K/V token 对，编码/解码不改变共同置换。
+        for block_idx in range(original.shape[0]):
+            original_rows = sorted(tuple(row) for row in original[block_idx].tolist())
+            decoded_rows = sorted(
+                tuple(row) for row in decoded_repacked[block_idx].tolist()
+            )
+            self.assertEqual(decoded_rows, original_rows)
 
     def test_rejects_non_power_of_two_bucket_count(self):
         blocks = torch.zeros((1, 8, 2), dtype=torch.int32)
