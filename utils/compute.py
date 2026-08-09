@@ -1031,6 +1031,50 @@ def _apply_token_permutation(
     return torch.gather(blocks, 1, indices)
 
 
+def apply_quant_metadata_token_permutation(
+    metadata: torch.Tensor, permutation: torch.Tensor
+) -> torch.Tensor:
+    """Apply a block-local token permutation to quantization metadata.
+
+    ``quant_ints`` returns five-dimensional metadata tensors.  TokenQuant
+    metadata has shape ``[B, 1, block, token, 1]`` and must follow the same
+    token order as the encoded q values.  Metadata from a non-token quantizer
+    has a singleton token dimension and is invariant to token repacking.
+    """
+    if metadata.ndim != 5:
+        raise ValueError("quantization metadata must be a 5-D tensor")
+    if permutation.ndim != 2:
+        raise ValueError("permutation must have shape [block, token]")
+    if metadata.shape[2] != permutation.shape[0]:
+        raise ValueError("metadata block count does not match permutation")
+    if metadata.shape[3] == 1:
+        return metadata
+    if metadata.shape[3] != permutation.shape[1]:
+        raise ValueError("metadata token count does not match permutation")
+    indices = permutation.view(
+        1, 1, permutation.shape[0], permutation.shape[1], 1
+    ).expand_as(metadata)
+    return torch.gather(metadata, 3, indices)
+
+
+def build_kv_bucket_permutation(
+    k_tensor: torch.Tensor,
+    v_tensor: torch.Tensor,
+    bucket_count: int = 4,
+    bucket_score_method: BucketScoreMethod = BucketScoreMethod.K_SUM,
+) -> Tuple[torch.Tensor, RepackMetadataStats]:
+    """Build the single bucket permutation shared by K/V and their metadata."""
+    if k_tensor.shape != v_tensor.shape or k_tensor.ndim != 5:
+        raise ValueError("quantized K/V must have matching 5-D shapes")
+    blocks = torch.cat(
+        [_quant_tensor_to_blocks(k_tensor), _quant_tensor_to_blocks(v_tensor)],
+        dim=2,
+    )
+    return _build_bucket_permutation(
+        blocks, bucket_count, BucketScoreMethod(bucket_score_method)
+    )
+
+
 def bucket_repacking(
     blocks: torch.Tensor,
     num_buckets: int = 4,
@@ -1815,6 +1859,8 @@ class RepackRoundTripStats:
     k_stream_bytes: int
     v_stream_bytes: int
     bucket_metadata_bytes: int
+    quant_metadata_bytes: int = 0
+    joint_dequant_verified: bool = False
 
     @property
     def total_bytes(self) -> int:
@@ -1823,6 +1869,10 @@ class RepackRoundTripStats:
             + self.v_stream_bytes
             + self.bucket_metadata_bytes
         )
+
+    @property
+    def all_encoded_bytes(self) -> int:
+        return self.total_bytes + self.quant_metadata_bytes
 
 
 def verify_repack_bitstream_roundtrip(
@@ -1833,6 +1883,16 @@ def verify_repack_bitstream_roundtrip(
     max_blocks: int = 1,
     bucket_count: int = 4,
     bucket_score_method: BucketScoreMethod = BucketScoreMethod.K_SUM,
+    k_quant_zero: Optional[torch.Tensor] = None,
+    k_quant_scale: Optional[torch.Tensor] = None,
+    v_quant_zero: Optional[torch.Tensor] = None,
+    v_quant_scale: Optional[torch.Tensor] = None,
+    k_zero_point_bits: int = 7,
+    v_zero_point_bits: int = 5,
+    exponent_bits: int = 4,
+    high_precision_zero_point: bool = False,
+    fixed_bucket_permutation: Optional[torch.Tensor] = None,
+    fixed_repack_metadata: Optional[RepackMetadataStats] = None,
 ) -> RepackRoundTripStats:
     """对真实量化整数抽样执行重排、字节编码和无损解码.
 
@@ -1858,13 +1918,38 @@ def verify_repack_bitstream_roundtrip(
         [k_blocks[:verified_blocks], v_blocks[:verified_blocks]], dim=2
     )
     metadata = RepackMetadataStats()
+    permutation = None
     if repack_method == RepackMethod.BUCKET:
-        repacked, metadata = bucket_repacking(
-            blocks,
-            num_buckets=bucket_count,
-            score_method=bucket_score_method,
-            return_metadata=True,
-        )
+        if fixed_bucket_permutation is None:
+            permutation, metadata = _build_bucket_permutation(
+                blocks, bucket_count, bucket_score_method
+            )
+        else:
+            if fixed_repack_metadata is None:
+                raise ValueError(
+                    "fixed_repack_metadata is required with fixed permutation"
+                )
+            permutation = fixed_bucket_permutation[:verified_blocks]
+            counts = fixed_repack_metadata.bucket_counts[:verified_blocks]
+            occupancy_histogram: Dict[int, int] = defaultdict(int)
+            for row in counts:
+                for count in row:
+                    occupancy_histogram[count] += 1
+            metadata = RepackMetadataStats(
+                bucket_count=fixed_repack_metadata.bucket_count,
+                bucket_count_field_bits=fixed_repack_metadata.bucket_count_field_bits,
+                bucket_metadata_bits=(
+                    verified_blocks
+                    * (fixed_repack_metadata.bucket_count - 1)
+                    * fixed_repack_metadata.bucket_count_field_bits
+                ),
+                bucket_counts=counts,
+                bucket_occupancy_histogram=dict(sorted(occupancy_histogram.items())),
+                bucket_score_method=fixed_repack_metadata.bucket_score_method,
+                k_subbucket_count=fixed_repack_metadata.k_subbucket_count,
+                v_subbucket_count=fixed_repack_metadata.v_subbucket_count,
+            )
+        repacked = _apply_token_permutation(blocks, permutation)
     elif repack_method == RepackMethod.NONE:
         repacked = blocks
     elif repack_method == RepackMethod.GREEDY:
@@ -1909,12 +1994,135 @@ def verify_repack_bitstream_roundtrip(
     if len(metadata_bytes) != metadata.bucket_metadata_bytes:
         raise AssertionError("bucket metadata bytes disagree with CR statistics")
 
+    quant_metadata = (
+        k_quant_zero,
+        k_quant_scale,
+        v_quant_zero,
+        v_quant_scale,
+    )
+    supplied_metadata = [value is not None for value in quant_metadata]
+    if any(supplied_metadata) and not all(supplied_metadata):
+        raise ValueError("all K/V quantization metadata tensors must be supplied")
+
+    quant_metadata_bytes = 0
+    joint_dequant_verified = False
+    if all(supplied_metadata):
+        if repack_method not in (RepackMethod.NONE, RepackMethod.BUCKET):
+            raise ValueError(
+                "joint q/metadata audit supports only NONE and BUCKET repacking"
+            )
+
+        def selected_metadata(value: torch.Tensor) -> torch.Tensor:
+            if value.ndim != 5:
+                raise ValueError("quantization metadata must be 5-D")
+            return value[:, :, :verified_blocks]
+
+        selected_k_zero = selected_metadata(k_quant_zero)
+        selected_k_scale = selected_metadata(k_quant_scale)
+        selected_v_zero = selected_metadata(v_quant_zero)
+        selected_v_scale = selected_metadata(v_quant_scale)
+        if permutation is not None:
+            selected_k_zero = apply_quant_metadata_token_permutation(
+                selected_k_zero, permutation
+            )
+            selected_k_scale = apply_quant_metadata_token_permutation(
+                selected_k_scale, permutation
+            )
+            selected_v_zero = apply_quant_metadata_token_permutation(
+                selected_v_zero, permutation
+            )
+            selected_v_scale = apply_quant_metadata_token_permutation(
+                selected_v_scale, permutation
+            )
+
+        k_metadata_stream = verify_compact_quant_metadata_roundtrip(
+            selected_k_zero,
+            selected_k_scale,
+            k_zero_point_bits,
+            exponent_bits,
+        )
+        v_metadata_stream = verify_compact_quant_metadata_roundtrip(
+            selected_v_zero,
+            selected_v_scale,
+            v_zero_point_bits,
+            exponent_bits,
+        )
+        decoded_k_zero, decoded_k_scale = decode_compact_quant_metadata(
+            k_metadata_stream
+        )
+        decoded_v_zero, decoded_v_scale = decode_compact_quant_metadata(
+            v_metadata_stream
+        )
+
+        k_feature_dim = k_blocks.shape[2]
+        decoded_k_blocks = decoded[:, :, :k_feature_dim]
+        decoded_v_blocks = decoded[:, :, k_feature_dim:]
+
+        def blocks_to_tensor(
+            decoded_blocks: torch.Tensor, template: torch.Tensor
+        ) -> torch.Tensor:
+            batch, heads, _, tokens, feature = template.shape
+            return decoded_blocks.reshape(
+                verified_blocks, tokens, batch, heads, feature
+            ).permute(2, 3, 0, 1, 4)
+
+        decoded_k_q = blocks_to_tensor(
+            decoded_k_blocks, k_tensor[:, :, :verified_blocks]
+        )
+        decoded_v_q = blocks_to_tensor(
+            decoded_v_blocks, v_tensor[:, :, :verified_blocks]
+        )
+        decoded_k = dequantize_ints(
+            decoded_k_q,
+            decoded_k_zero,
+            decoded_k_scale,
+            high_precision_zero_point,
+        )
+        decoded_v = dequantize_ints(
+            decoded_v_q,
+            decoded_v_zero,
+            decoded_v_scale,
+            high_precision_zero_point,
+        )
+
+        expected_k = dequantize_ints(
+            k_tensor[:, :, :verified_blocks],
+            k_quant_zero[:, :, :verified_blocks],
+            k_quant_scale[:, :, :verified_blocks],
+            high_precision_zero_point,
+        )
+        expected_v = dequantize_ints(
+            v_tensor[:, :, :verified_blocks],
+            v_quant_zero[:, :, :verified_blocks],
+            v_quant_scale[:, :, :verified_blocks],
+            high_precision_zero_point,
+        )
+        if permutation is not None:
+            expected_k = apply_quant_metadata_token_permutation(
+                expected_k, permutation
+            )
+            expected_v = apply_quant_metadata_token_permutation(
+                expected_v, permutation
+            )
+        expected_k = expected_k.detach().to(device="cpu", dtype=torch.float32)
+        expected_v = expected_v.detach().to(device="cpu", dtype=torch.float32)
+        if not torch.equal(decoded_k.to(torch.float32), expected_k):
+            raise AssertionError("joint K q/metadata dequantization mismatch")
+        if not torch.equal(decoded_v.to(torch.float32), expected_v):
+            raise AssertionError("joint V q/metadata dequantization mismatch")
+        quant_metadata_bytes = (
+            k_metadata_stream.total_bytes + v_metadata_stream.total_bytes
+        )
+        joint_dequant_verified = True
+
     return RepackRoundTripStats(
         verified_blocks=verified_blocks,
         tokens_per_block=repacked.shape[1],
         k_stream_bytes=k_stream.total_bytes,
         v_stream_bytes=v_stream.total_bytes,
         bucket_metadata_bytes=len(metadata_bytes),
+        quant_metadata_bytes=quant_metadata_bytes,
+        joint_dequant_verified=joint_dequant_verified,
     )
 
 

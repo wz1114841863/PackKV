@@ -16,6 +16,7 @@ from models.qwen3 import Qwen3ForCausalLM
 from models.mistral import MistralForCausalLM
 from utils.compute import (
     BucketScoreMethod,
+    RepackMethod,
     QuantMode,
     QuantMethod,
     QuantMetadataFormat,
@@ -29,7 +30,8 @@ from utils.compute import (
     packing_aware_quantize_kv,
     profile_hardware_quantization,
     profile_integer_histogram,
-    encode_compact_quant_metadata,
+    apply_quant_metadata_token_permutation,
+    build_kv_bucket_permutation,
     verify_compact_quant_metadata_roundtrip,
     verify_repack_bitstream_roundtrip,
 )
@@ -699,6 +701,39 @@ def crs_evaluation_with_data(
                 config.high_precision_zero_point,
                 scale_method,
             )
+
+        # BRISK-KV stores q and per-token quantization metadata in the same
+        # bucket-repacked token order.  Build the K/V permutation once and
+        # reuse it for q, zero point, and scale/exponent streams.
+        if config.repack_method == RepackMethod.BUCKET:
+            if fixed_bucket_permutation is None:
+                fixed_bucket_permutation, fixed_repack_metadata = (
+                    build_kv_bucket_permutation(
+                        k_quant_int,
+                        v_quant_int,
+                        getattr(config, "bucket_count", 4),
+                        getattr(
+                            config,
+                            "bucket_score_method",
+                            BucketScoreMethod.K_SUM,
+                        ),
+                    )
+                )
+            k_storage_zero = apply_quant_metadata_token_permutation(
+                k_quant_zero, fixed_bucket_permutation
+            )
+            k_storage_scale = apply_quant_metadata_token_permutation(
+                k_quant_scale, fixed_bucket_permutation
+            )
+            v_storage_zero = apply_quant_metadata_token_permutation(
+                v_quant_zero, fixed_bucket_permutation
+            )
+            v_storage_scale = apply_quant_metadata_token_permutation(
+                v_quant_scale, fixed_bucket_permutation
+            )
+        else:
+            k_storage_zero, k_storage_scale = k_quant_zero, k_quant_scale
+            v_storage_zero, v_storage_scale = v_quant_zero, v_quant_scale
         for cache_kind, quant_int, quant_zero, quant_scale in (
             ("k", k_quant_int, k_quant_zero, k_quant_scale),
             ("v", v_quant_int, v_quant_zero, v_quant_scale),
@@ -773,18 +808,28 @@ def crs_evaluation_with_data(
         metadata_format = getattr(
             config, "quant_metadata_format", QuantMetadataFormat.NATIVE
         )
+        if (
+            metadata_format == QuantMetadataFormat.PO2_COMPACT
+            and config.repack_method
+            not in (RepackMethod.NONE, RepackMethod.BUCKET)
+        ):
+            raise ValueError(
+                "po2_compact physical metadata currently supports only "
+                "NONE and BUCKET repacking; GREEDY/MEDIAN do not expose "
+                "their token permutation for metadata alignment"
+            )
         compact_metadata_streams = None
         if metadata_format == QuantMetadataFormat.PO2_COMPACT:
             compact_metadata_streams = {
-                "k": encode_compact_quant_metadata(
-                    k_quant_zero,
-                    k_quant_scale,
+                "k": verify_compact_quant_metadata_roundtrip(
+                    k_storage_zero,
+                    k_storage_scale,
                     getattr(config, "k_zero_point_bits", 7),
                     getattr(config, "exponent_bits", 4),
                 ),
-                "v": encode_compact_quant_metadata(
-                    v_quant_zero,
-                    v_quant_scale,
+                "v": verify_compact_quant_metadata_roundtrip(
+                    v_storage_zero,
+                    v_storage_scale,
                     getattr(config, "v_zero_point_bits", 5),
                     getattr(config, "exponent_bits", 4),
                 ),
@@ -830,19 +875,10 @@ def crs_evaluation_with_data(
         if layer_idx in audit_layers:
             compact_metadata_bytes = 0
             if metadata_format == QuantMetadataFormat.PO2_COMPACT:
-                for cache_kind, quant_zero, quant_scale, zero_bits in (
-                    ("k", k_quant_zero, k_quant_scale, getattr(config, "k_zero_point_bits", 7)),
-                    ("v", v_quant_zero, v_quant_scale, getattr(config, "v_zero_point_bits", 5)),
-                ):
-                    metadata_stream = verify_compact_quant_metadata_roundtrip(
-                        quant_zero,
-                        quant_scale,
-                        zero_bits,
-                        getattr(config, "exponent_bits", 4),
-                    )
-                    if metadata_stream != compact_metadata_streams[cache_kind]:
-                        raise AssertionError("compact metadata encoder is not deterministic")
-                    compact_metadata_bytes += metadata_stream.total_bytes
+                compact_metadata_bytes = sum(
+                    stream.total_bytes
+                    for stream in compact_metadata_streams.values()
+                )
             audit = verify_repack_bitstream_roundtrip(
                 k_quant_int,
                 v_quant_int,
@@ -855,19 +891,47 @@ def crs_evaluation_with_data(
                     "bucket_score_method",
                     BucketScoreMethod.K_SUM,
                 ),
+                k_quant_zero=(
+                    k_quant_zero
+                    if metadata_format == QuantMetadataFormat.PO2_COMPACT
+                    else None
+                ),
+                k_quant_scale=(
+                    k_quant_scale
+                    if metadata_format == QuantMetadataFormat.PO2_COMPACT
+                    else None
+                ),
+                v_quant_zero=(
+                    v_quant_zero
+                    if metadata_format == QuantMetadataFormat.PO2_COMPACT
+                    else None
+                ),
+                v_quant_scale=(
+                    v_quant_scale
+                    if metadata_format == QuantMetadataFormat.PO2_COMPACT
+                    else None
+                ),
+                k_zero_point_bits=getattr(config, "k_zero_point_bits", 7),
+                v_zero_point_bits=getattr(config, "v_zero_point_bits", 5),
+                exponent_bits=getattr(config, "exponent_bits", 4),
+                high_precision_zero_point=config.high_precision_zero_point,
+                fixed_bucket_permutation=fixed_bucket_permutation,
+                fixed_repack_metadata=fixed_repack_metadata,
             )
             verified_layer_count += 1
             verified_block_count += audit.verified_blocks
             if logger is not None:
                 logger.info(
-                    "Round-trip PASS: layer=%d blocks=%d K=%dB V=%dB bucket=%dB stream-total=%dB quant-meta(full-layer)=%dB",
+                    "Round-trip PASS: layer=%d blocks=%d K=%dB V=%dB bucket=%dB stream-total=%dB quant-meta(audit)=%dB quant-meta(full-layer)=%dB joint-q-meta=%s",
                     layer_idx,
                     audit.verified_blocks,
                     audit.k_stream_bytes,
                     audit.v_stream_bytes,
                     audit.bucket_metadata_bytes,
                     audit.total_bytes,
+                    audit.quant_metadata_bytes,
                     compact_metadata_bytes,
+                    audit.joint_dequant_verified,
                 )
 
         if config.quant_method == QuantMethod.PackKV:

@@ -11,6 +11,8 @@ from utils.compute import (
     bit_pack_decode_kv,
     bit_pack_encode,
     bit_pack_stats,
+    apply_quant_metadata_token_permutation,
+    build_kv_bucket_permutation,
     bucket_repacking,
     decode_bucket_metadata,
     encode_bucket_metadata,
@@ -386,6 +388,71 @@ class BucketRepackingTest(unittest.TestCase):
         self.assertEqual(bucket_stats.bucket_metadata_bytes, 6)
         self.assertGreater(none_stats.total_bytes, 0)
         self.assertGreater(bucket_stats.total_bytes, 0)
+
+    def test_bucket_roundtrip_keeps_token_quant_metadata_aligned(self):
+        # Deliberately use per-token zero/exponent values and descending K
+        # scores.  A q-only bucket permutation would fail joint dequantization.
+        k_tensor = torch.tensor(
+            [8, 7, 6, 5, 4, 3, 2, 1], dtype=torch.int32
+        ).reshape(1, 1, 1, 8, 1)
+        v_tensor = torch.tensor(
+            [1, 3, 5, 7, 2, 4, 6, 8], dtype=torch.int32
+        ).reshape(1, 1, 1, 8, 1)
+        k_zero = -torch.arange(1, 9, dtype=torch.float32).reshape(
+            1, 1, 1, 8, 1
+        )
+        v_zero = -torch.arange(2, 10, dtype=torch.float32).reshape(
+            1, 1, 1, 8, 1
+        )
+        exponents = torch.arange(-4, 4, dtype=torch.float32).reshape(
+            1, 1, 1, 8, 1
+        )
+        k_scale = torch.exp2(exponents)
+        v_scale = torch.exp2(torch.flip(exponents, dims=(3,)))
+
+        permutation, metadata = build_kv_bucket_permutation(
+            k_tensor,
+            v_tensor,
+            bucket_count=4,
+            bucket_score_method=BucketScoreMethod.K_SUM,
+        )
+        self.assertFalse(
+            torch.equal(permutation, torch.arange(8).reshape(1, 8))
+        )
+        permuted_zero = apply_quant_metadata_token_permutation(
+            k_zero, permutation
+        )
+        expected_zero = torch.gather(
+            k_zero,
+            3,
+            permutation.view(1, 1, 1, 8, 1),
+        )
+        torch.testing.assert_close(permuted_zero, expected_zero)
+
+        audit = verify_repack_bitstream_roundtrip(
+            k_tensor,
+            v_tensor,
+            pack_size=4,
+            repack_method=RepackMethod.BUCKET,
+            max_blocks=1,
+            bucket_count=4,
+            bucket_score_method=BucketScoreMethod.K_SUM,
+            k_quant_zero=k_zero,
+            k_quant_scale=k_scale,
+            v_quant_zero=v_zero,
+            v_quant_scale=v_scale,
+            k_zero_point_bits=7,
+            v_zero_point_bits=5,
+            exponent_bits=4,
+            fixed_bucket_permutation=permutation,
+            fixed_repack_metadata=metadata,
+        )
+        self.assertTrue(audit.joint_dequant_verified)
+        self.assertGreater(audit.quant_metadata_bytes, 0)
+        self.assertEqual(
+            audit.all_encoded_bytes,
+            audit.total_bytes + audit.quant_metadata_bytes,
+        )
 
     def test_rejects_non_power_of_two_bucket_count(self):
         blocks = torch.zeros((1, 8, 2), dtype=torch.int32)

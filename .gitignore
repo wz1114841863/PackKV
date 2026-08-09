@@ -12,4 +12,6 @@ dumped_cache/*
 csv_results/*
 
 docs/
+!hardware/docs/
+!hardware/docs/**
 AGENTS.md
