@@ -1286,6 +1286,156 @@ def _integer_storage_bits(min_value: int, max_value: int) -> int:
     return bits
 
 
+@dataclass(frozen=True)
+class IntegerFieldProfile:
+    """硬件字段的整数范围、尾部分位数和精确直方图."""
+
+    count: int
+    min_value: Optional[int]
+    p0001: Optional[int]
+    p001: Optional[int]
+    p999: Optional[int]
+    p9999: Optional[int]
+    max_value: Optional[int]
+    required_bits: int
+    histogram: Dict[int, int]
+
+
+@dataclass(frozen=True)
+class HardwareQuantizationProfile:
+    """单个 K/V Cache 的硬件量化字段画像."""
+
+    quantized: IntegerFieldProfile
+    zero_point: IntegerFieldProfile
+    exponent: IntegerFieldProfile
+    non_integer_zero_point_count: int
+    non_po2_scale_count: int
+
+
+def _histogram_percentile(histogram: Dict[int, int], quantile: float) -> Optional[int]:
+    """返回离散直方图的 nearest-rank 分位数."""
+    if not 0.0 <= quantile <= 1.0:
+        raise ValueError("quantile must be in [0, 1]")
+    total = sum(int(count) for count in histogram.values())
+    if total <= 0:
+        return None
+    rank = max(1, math.ceil(quantile * total))
+    cumulative = 0
+    for value, count in sorted(histogram.items()):
+        cumulative += int(count)
+        if cumulative >= rank:
+            return int(value)
+    raise AssertionError("histogram percentile rank was not reached")
+
+
+def profile_integer_histogram(histogram: Dict[int, int]) -> IntegerFieldProfile:
+    """把整数直方图转换为可直接用于字段位宽决策的画像."""
+    normalized = {
+        int(value): int(count)
+        for value, count in histogram.items()
+        if int(count) > 0
+    }
+    count = sum(normalized.values())
+    if count == 0:
+        return IntegerFieldProfile(
+            count=0,
+            min_value=None,
+            p0001=None,
+            p001=None,
+            p999=None,
+            p9999=None,
+            max_value=None,
+            required_bits=0,
+            histogram={},
+        )
+    min_value = min(normalized)
+    max_value = max(normalized)
+    return IntegerFieldProfile(
+        count=count,
+        min_value=min_value,
+        p0001=_histogram_percentile(normalized, 0.0001),
+        p001=_histogram_percentile(normalized, 0.001),
+        p999=_histogram_percentile(normalized, 0.999),
+        p9999=_histogram_percentile(normalized, 0.9999),
+        max_value=max_value,
+        required_bits=_integer_storage_bits(min_value, max_value),
+        histogram=dict(sorted(normalized.items())),
+    )
+
+
+def _integer_tensor_histogram(tensor: torch.Tensor, field_name: str) -> Dict[int, int]:
+    if tensor.numel() == 0:
+        return {}
+    if tensor.is_floating_point():
+        if not torch.isfinite(tensor).all():
+            raise ValueError(f"{field_name} contains NaN or Inf")
+        if not torch.equal(tensor, tensor.round()):
+            raise ValueError(f"{field_name} must contain integer-valued data")
+    values = tensor.detach().to(torch.int64)
+    unique_values, counts = torch.unique(values, return_counts=True)
+    return {
+        int(value): int(count)
+        for value, count in zip(unique_values.cpu().tolist(), counts.cpu().tolist())
+    }
+
+
+def profile_hardware_quantization(
+    quant_int: torch.Tensor,
+    quant_zero: torch.Tensor,
+    quant_scale: torch.Tensor,
+) -> HardwareQuantizationProfile:
+    """统计 q、整数 zero point 和可精确表示的 2^k exponent.
+
+    continuous scale 不会被强行解释成 exponent；所有非严格 2^k 的 scale
+    单独计入 ``non_po2_scale_count``，避免为硬件字段位宽制造假数据。
+    """
+    if quant_scale.numel() == 0:
+        exponent_histogram = {}
+        non_po2_scale_count = 0
+    else:
+        if not quant_scale.is_floating_point():
+            raise TypeError("quant_scale must be floating point")
+        if not torch.isfinite(quant_scale).all() or (quant_scale <= 0).any():
+            raise ValueError("quant_scale must contain finite positive values")
+        scale_fp32 = quant_scale.detach().to(torch.float32)
+        rounded_exponents = torch.round(torch.log2(scale_fp32))
+        exact_po2 = scale_fp32 == torch.exp2(rounded_exponents)
+        non_po2_scale_count = int((~exact_po2).sum().item())
+        exponent_histogram = _integer_tensor_histogram(
+            rounded_exponents[exact_po2], "power-of-two exponent"
+        )
+
+    if quant_zero.numel() == 0:
+        integer_zero_histogram = {}
+        non_integer_zero_point_count = 0
+    else:
+        if quant_zero.is_floating_point():
+            if not torch.isfinite(quant_zero).all():
+                raise ValueError("zero point contains NaN or Inf")
+            integer_zero_mask = quant_zero == quant_zero.round()
+            non_integer_zero_point_count = int(
+                (~integer_zero_mask).sum().item()
+            )
+            integer_zero_histogram = _integer_tensor_histogram(
+                quant_zero[integer_zero_mask], "integer zero point"
+            )
+        else:
+            non_integer_zero_point_count = 0
+            integer_zero_histogram = _integer_tensor_histogram(
+                quant_zero, "integer zero point"
+            )
+
+    return HardwareQuantizationProfile(
+        quantized=profile_integer_histogram(
+            _integer_tensor_histogram(quant_int, "quantized value")
+        ),
+        zero_point=profile_integer_histogram(integer_zero_histogram),
+        exponent=profile_integer_histogram(exponent_histogram),
+        non_integer_zero_point_count=non_integer_zero_point_count,
+        non_po2_scale_count=non_po2_scale_count,
+    )
+
+
 def _single_cache_bit_pack_stats(
     values: torch.Tensor,
     pack_len: int,

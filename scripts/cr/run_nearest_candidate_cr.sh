@@ -80,8 +80,8 @@ done
 echo "=================================================="
 echo "CR 对照完成，失败任务数: $failed"
 echo "日志目录: $LOG_ROOT"
-echo "宏观汇总: csv_results/Global_Macro_Summary_v9.csv"
-echo "逐层汇总: csv_results/Layer_Detail_v4.csv"
+echo "宏观汇总: csv_results/Global_Macro_Summary_v10.csv"
+echo "逐层汇总: csv_results/Layer_Detail_v5.csv"
 echo "=================================================="
 
 exit "$failed"

@@ -26,6 +26,8 @@ from utils.compute import (
     ScaleMethod,
     dequantize_ints,
     packing_aware_quantize_kv,
+    profile_hardware_quantization,
+    profile_integer_histogram,
     verify_repack_bitstream_roundtrip,
 )
 from utils.config import PackKVCacheConfig, ExtractCacheConfig
@@ -472,11 +474,36 @@ def crs_evaluation_with_data(
         "encode_before_repack_cr",
         "encode_after_repack_cr",
     ]
+    hardware_field_metrics = (
+        "count", "min", "p0001", "p001", "p999", "p9999", "max",
+        "required_bits", "hist",
+    )
+    hardware_pack_metrics = (
+        "count", "min", "p999", "p9999", "max", "required_bits",
+    )
     res = {
         f"{cache_kind}_{metric}": []
         for cache_kind in ("k", "v")
         for metric in metric_names
     }
+    res.update(
+        {
+            f"{cache_kind}_hw_{field}_{metric}": []
+            for cache_kind in ("k", "v")
+            for field in ("q", "zero", "exponent")
+            for metric in hardware_field_metrics
+        }
+    )
+    res.update(
+        {
+            f"{cache_kind}_hw_pack_width_{metric}": []
+            for cache_kind in ("k", "v")
+            for metric in hardware_pack_metrics
+        }
+    )
+    for cache_kind in ("k", "v"):
+        res[f"{cache_kind}_hw_non_integer_zero_count"] = []
+        res[f"{cache_kind}_hw_non_po2_scale_count"] = []
     res.update(
         {
             "repack_bucket_count": [],
@@ -589,6 +616,16 @@ def crs_evaluation_with_data(
                 res[f"{cache_kind}_quant_cr"].append(1.0)
                 res[f"{cache_kind}_encode_before_repack_cr"].append(1.0)
                 res[f"{cache_kind}_encode_after_repack_cr"].append(1.0)
+                for field in ("q", "zero", "exponent"):
+                    for metric in hardware_field_metrics:
+                        empty_value = "{}" if metric == "hist" else 0
+                        res[f"{cache_kind}_hw_{field}_{metric}"].append(
+                            empty_value
+                        )
+                for metric in hardware_pack_metrics:
+                    res[f"{cache_kind}_hw_pack_width_{metric}"].append(0)
+                res[f"{cache_kind}_hw_non_integer_zero_count"].append(0)
+                res[f"{cache_kind}_hw_non_po2_scale_count"].append(0)
             res["repack_bucket_count"].append(0)
             res["repack_bucket_count_field_bits"].append(0)
             res["repack_bucket_metadata_size"].append(0)
@@ -643,6 +680,41 @@ def crs_evaluation_with_data(
                 config.quant_method.value[1],
                 config.high_precision_zero_point,
                 scale_method,
+            )
+        for cache_kind, quant_int, quant_zero, quant_scale in (
+            ("k", k_quant_int, k_quant_zero, k_quant_scale),
+            ("v", v_quant_int, v_quant_zero, v_quant_scale),
+        ):
+            hardware_profile = profile_hardware_quantization(
+                quant_int, quant_zero, quant_scale
+            )
+            for field_name, field_profile in (
+                ("q", hardware_profile.quantized),
+                ("zero", hardware_profile.zero_point),
+                ("exponent", hardware_profile.exponent),
+            ):
+                values = {
+                    "count": field_profile.count,
+                    "min": field_profile.min_value,
+                    "p0001": field_profile.p0001,
+                    "p001": field_profile.p001,
+                    "p999": field_profile.p999,
+                    "p9999": field_profile.p9999,
+                    "max": field_profile.max_value,
+                    "required_bits": field_profile.required_bits,
+                    "hist": json.dumps(
+                        field_profile.histogram, sort_keys=True
+                    ),
+                }
+                for metric, value in values.items():
+                    res[f"{cache_kind}_hw_{field_name}_{metric}"].append(
+                        "" if value is None else value
+                    )
+            res[f"{cache_kind}_hw_non_integer_zero_count"].append(
+                hardware_profile.non_integer_zero_point_count
+            )
+            res[f"{cache_kind}_hw_non_po2_scale_count"].append(
+                hardware_profile.non_po2_scale_count
             )
         for cache_kind in ("k", "v"):
             stats = pa_stats[cache_kind] if pa_stats else None
@@ -832,6 +904,22 @@ def crs_evaluation_with_data(
                     )
                     res[f"{cache_kind}_bit_width_hist_{phase}"].append(
                         json.dumps(stats.bit_width_histogram, sort_keys=True)
+                    )
+
+                pack_width_profile = profile_integer_histogram(
+                    stats_after.bit_width_histogram
+                )
+                pack_width_values = {
+                    "count": pack_width_profile.count,
+                    "min": pack_width_profile.min_value,
+                    "p999": pack_width_profile.p999,
+                    "p9999": pack_width_profile.p9999,
+                    "max": pack_width_profile.max_value,
+                    "required_bits": pack_width_profile.required_bits,
+                }
+                for metric, value in pack_width_values.items():
+                    res[f"{cache_kind}_hw_pack_width_{metric}"].append(
+                        "" if value is None else value
                     )
 
                 # K/V 使用同一物理重排;共享的 bucket count 元数据在两者之间

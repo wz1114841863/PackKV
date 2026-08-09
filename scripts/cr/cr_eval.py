@@ -21,6 +21,7 @@ from utils.compute import (
     QuantMethod,
     RepackMethod,
     ScaleMethod,
+    profile_integer_histogram,
 )
 from evaluation.evaluation import cr_evaluation
 from utils.util import get_logger, block_other_logger
@@ -78,6 +79,79 @@ def layer_statistics(res_dict, key):
 
 def format_float_or_blank(value, digits=8):
     return "" if value == "" else f"{value:.{digits}f}"
+
+
+def hardware_profile_summary(res_dict):
+    """从逐层精确直方图生成全局硬件字段范围和分位数."""
+    headers = []
+    values = []
+    for cache_kind in ("k", "v"):
+        prefix = cache_kind.upper()
+        for field_name, label in (
+            ("q", "Q"),
+            ("zero", "Zero"),
+            ("exponent", "Exponent"),
+        ):
+            histogram = aggregate_json_histogram(
+                res_dict, f"{cache_kind}_hw_{field_name}_hist"
+            )
+            profile = profile_integer_histogram(histogram)
+            headers.extend(
+                [
+                    f"{prefix}_HW_{label}_Count",
+                    f"{prefix}_HW_{label}_Min",
+                    f"{prefix}_HW_{label}_P0.01",
+                    f"{prefix}_HW_{label}_P0.1",
+                    f"{prefix}_HW_{label}_P99.9",
+                    f"{prefix}_HW_{label}_P99.99",
+                    f"{prefix}_HW_{label}_Max",
+                    f"{prefix}_HW_{label}_Required_Bits",
+                    f"{prefix}_HW_{label}_Histogram",
+                ]
+            )
+            values.extend(
+                [
+                    profile.count,
+                    "" if profile.min_value is None else profile.min_value,
+                    "" if profile.p0001 is None else profile.p0001,
+                    "" if profile.p001 is None else profile.p001,
+                    "" if profile.p999 is None else profile.p999,
+                    "" if profile.p9999 is None else profile.p9999,
+                    "" if profile.max_value is None else profile.max_value,
+                    profile.required_bits,
+                    json.dumps(profile.histogram, sort_keys=True),
+                ]
+            )
+
+        pack_width_histogram = aggregate_json_histogram(
+            res_dict, f"{cache_kind}_bit_width_hist_after_repack"
+        )
+        pack_profile = profile_integer_histogram(pack_width_histogram)
+        headers.extend(
+            [
+                f"{prefix}_HW_Pack_Width_Count",
+                f"{prefix}_HW_Pack_Width_Min",
+                f"{prefix}_HW_Pack_Width_P99.9",
+                f"{prefix}_HW_Pack_Width_P99.99",
+                f"{prefix}_HW_Pack_Width_Max",
+                f"{prefix}_HW_Width_Field_Required_Bits",
+                f"{prefix}_HW_Non_Integer_Zero_Count",
+                f"{prefix}_HW_Non_PO2_Scale_Count",
+            ]
+        )
+        values.extend(
+            [
+                pack_profile.count,
+                "" if pack_profile.min_value is None else pack_profile.min_value,
+                "" if pack_profile.p999 is None else pack_profile.p999,
+                "" if pack_profile.p9999 is None else pack_profile.p9999,
+                "" if pack_profile.max_value is None else pack_profile.max_value,
+                pack_profile.required_bits,
+                sum_metric(res_dict, f"{cache_kind}_hw_non_integer_zero_count"),
+                sum_metric(res_dict, f"{cache_kind}_hw_non_po2_scale_count"),
+            ]
+        )
+    return headers, values
 
 
 def result_metadata(args, round_idx, generated_at):
@@ -180,12 +254,12 @@ def append_to_macro_summary_csv(
     csv_path,
     layer_detail_path,
 ):
-    """将全局结果和逐层全局误差预算诊断追加到 v9 汇总表."""
+    """将全局结果、硬件字段画像和误差预算诊断追加到 v10 汇总表."""
     save_dir = "./csv_results"
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    summary_file = os.path.join(save_dir, "Global_Macro_Summary_v9.csv")
+    summary_file = os.path.join(save_dir, "Global_Macro_Summary_v10.csv")
     file_exists = os.path.isfile(summary_file)
 
     generated_at = datetime.datetime.now()
@@ -257,6 +331,7 @@ def append_to_macro_summary_csv(
         if bucket_slot_count
         else ""
     )
+    hardware_headers, hardware_values = hardware_profile_summary(res_dict)
     pa_values = []
     for cache_kind in ("k", "v"):
         total_blocks = sum_metric(res_dict, f"{cache_kind}_pa_total_blocks")
@@ -376,6 +451,7 @@ def append_to_macro_summary_csv(
         "V_Bit_Width_Hist_Before",
         "Bucket_Occupancy_Hist",
         "Bucket_Empty_Rate",
+        *hardware_headers,
         "K_PA_Total_Blocks", "K_PA_Total_Packs", "K_PA_Candidate_Different_Packs",
         "K_PA_Payload_Beneficial_Packs", "K_PA_Payload_Beneficial_Rate",
         "K_PA_Positive_Delta_Candidates", "K_PA_Nonpositive_Delta_Selected_Packs",
@@ -477,6 +553,7 @@ def append_to_macro_summary_csv(
         json.dumps(v_width_hist_before, sort_keys=True),
         json.dumps(bucket_occupancy_hist, sort_keys=True),
         f"{bucket_empty_rate:.8f}" if bucket_empty_rate != "" else "",
+        *hardware_values,
         *pa_values,
         *[format_float_or_blank(value) for value in k_layer_stats],
         *[format_float_or_blank(value) for value in v_layer_stats],
@@ -490,7 +567,7 @@ def append_to_macro_summary_csv(
                 existing_headers = next(csv.reader(f), None)
             if existing_headers != headers:
                 raise ValueError(
-                    "Global_Macro_Summary_v9.csv 表头与当前 schema 不一致"
+                    "Global_Macro_Summary_v10.csv 表头与当前 schema 不一致"
                 )
 
         # 使用 'a' 模式追加写入
@@ -559,7 +636,7 @@ def append_to_layer_detail_csv(args, res_dict, round_idx):
     """将所有实验的逐层结果追加到统一明细表,便于一次性上传分析."""
     save_dir = "./csv_results"
     os.makedirs(save_dir, exist_ok=True)
-    detail_path = os.path.join(save_dir, "Layer_Detail_v4.csv")
+    detail_path = os.path.join(save_dir, "Layer_Detail_v5.csv")
     file_exists = os.path.isfile(detail_path)
 
     num_layers = len(res_dict.get("k_original_size", []))
@@ -583,7 +660,7 @@ def append_to_layer_detail_csv(args, res_dict, round_idx):
                 existing_headers = next(csv.reader(f), None)
             if existing_headers != headers:
                 raise ValueError(
-                    "Layer_Detail_v4.csv 表头与当前 schema 不一致"
+                    "Layer_Detail_v5.csv 表头与当前 schema 不一致"
                 )
 
         with open(detail_path, mode="a", newline="", encoding="utf-8") as f:

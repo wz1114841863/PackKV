@@ -78,8 +78,8 @@ done
 
 echo "=================================================="
 echo "固定候选 Qwen CR 完成，失败任务数: $failed"
-echo "宏观汇总: csv_results/Global_Macro_Summary_v9.csv"
-echo "逐层汇总: csv_results/Layer_Detail_v4.csv"
+echo "宏观汇总: csv_results/Global_Macro_Summary_v10.csv"
+echo "逐层汇总: csv_results/Layer_Detail_v5.csv"
 echo "筛选 Suite_ID=$SUITE_ID"
 echo "=================================================="
 exit "$failed"
