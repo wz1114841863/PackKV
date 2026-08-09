@@ -59,6 +59,13 @@ class ScaleMethod(Enum):
     PO2_PACK_AWARE = "po2_pack_aware"
 
 
+class QuantMetadataFormat(Enum):
+    """量化参数的物理存储格式."""
+
+    NATIVE = "native"
+    PO2_COMPACT = "po2_compact"
+
+
 class BucketScoreMethod(Enum):
     """硬件 Bucket 的整数特征提取方式."""
 
@@ -1212,6 +1219,33 @@ class BitPackedCacheStream:
         return len(self.payload) + len(self.pack_mins) + len(self.encode_lengths)
 
 
+@dataclass(frozen=True)
+class CompactQuantMetadataStream:
+    """整数 zero point 与 2^k exponent 的两个连续窄字段流.
+
+    shape 和字段位宽属于模型/编码器描述符，不重复写入每层数据流。
+    """
+
+    zero_points: bytes
+    exponents: bytes
+    shape: Tuple[int, ...]
+    zero_point_bits: int
+    exponent_bits: int
+
+    @property
+    def count(self) -> int:
+        return math.prod(self.shape)
+
+    @property
+    def total_bytes(self) -> int:
+        return len(self.zero_points) + len(self.exponents)
+
+    @property
+    def alignment_bits(self) -> int:
+        raw_bits = self.count * (self.zero_point_bits + self.exponent_bits)
+        return self.total_bytes * 8 - raw_bits
+
+
 def _pack_unsigned_fields(values: List[int], widths: List[int]) -> bytes:
     """按 LSB-first 连续 bitstream 编码非负整数."""
     if len(values) != len(widths):
@@ -1284,6 +1318,98 @@ def _integer_storage_bits(min_value: int, max_value: int) -> int:
     while min_value < -(1 << (bits - 1)) or max_value > (1 << (bits - 1)) - 1:
         bits += 1
     return bits
+
+
+def encode_compact_quant_metadata(
+    quant_zero: torch.Tensor,
+    quant_scale: torch.Tensor,
+    zero_point_bits: int,
+    exponent_bits: int,
+) -> CompactQuantMetadataStream:
+    """把整数 zero point 和严格 2^k scale 编码为真实字节流."""
+    if quant_zero.shape != quant_scale.shape:
+        raise ValueError("quant_zero and quant_scale must have matching shapes")
+    if zero_point_bits <= 0 or exponent_bits <= 0:
+        raise ValueError("metadata field widths must be positive")
+    if quant_zero.numel() == 0:
+        raise ValueError("quantization metadata must not be empty")
+    if quant_zero.is_floating_point():
+        if not torch.isfinite(quant_zero).all() or not torch.equal(
+            quant_zero, quant_zero.round()
+        ):
+            raise ValueError("compact metadata requires integer zero points")
+    if not quant_scale.is_floating_point():
+        raise TypeError("quant_scale must be floating point")
+    if not torch.isfinite(quant_scale).all() or (quant_scale <= 0).any():
+        raise ValueError("quant_scale must contain finite positive values")
+
+    scale_fp32 = quant_scale.detach().to(torch.float32)
+    exponents = torch.round(torch.log2(scale_fp32))
+    if not torch.equal(scale_fp32, torch.exp2(exponents)):
+        raise ValueError("compact metadata requires exact power-of-two scales")
+
+    zero_values = [
+        _signed_to_unsigned(int(value), zero_point_bits)
+        for value in quant_zero.detach().to(torch.int64).cpu().flatten().tolist()
+    ]
+    exponent_values = [
+        _signed_to_unsigned(int(value), exponent_bits)
+        for value in exponents.to(torch.int64).cpu().flatten().tolist()
+    ]
+    return CompactQuantMetadataStream(
+        zero_points=_pack_unsigned_fields(
+            zero_values, [zero_point_bits] * len(zero_values)
+        ),
+        exponents=_pack_unsigned_fields(
+            exponent_values, [exponent_bits] * len(exponent_values)
+        ),
+        shape=tuple(quant_zero.shape),
+        zero_point_bits=zero_point_bits,
+        exponent_bits=exponent_bits,
+    )
+
+
+def decode_compact_quant_metadata(
+    stream: CompactQuantMetadataStream,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """无原始 tensor 参与地恢复整数 zero point 与 2^k scale."""
+    if stream.count <= 0:
+        raise ValueError("invalid compact metadata shape")
+    zero_unsigned = _unpack_unsigned_fields(
+        stream.zero_points, [stream.zero_point_bits] * stream.count
+    )
+    exponent_unsigned = _unpack_unsigned_fields(
+        stream.exponents, [stream.exponent_bits] * stream.count
+    )
+    zero = torch.tensor(
+        [_unsigned_to_signed(value, stream.zero_point_bits) for value in zero_unsigned],
+        dtype=torch.int64,
+    ).reshape(stream.shape)
+    exponent = torch.tensor(
+        [_unsigned_to_signed(value, stream.exponent_bits) for value in exponent_unsigned],
+        dtype=torch.int64,
+    ).reshape(stream.shape)
+    return zero, torch.exp2(exponent.to(torch.float32))
+
+
+def verify_compact_quant_metadata_roundtrip(
+    quant_zero: torch.Tensor,
+    quant_scale: torch.Tensor,
+    zero_point_bits: int,
+    exponent_bits: int,
+) -> CompactQuantMetadataStream:
+    """编码并逐值核对窄字段 metadata，返回真实字节流用于计费."""
+    stream = encode_compact_quant_metadata(
+        quant_zero, quant_scale, zero_point_bits, exponent_bits
+    )
+    decoded_zero, decoded_scale = decode_compact_quant_metadata(stream)
+    expected_zero = quant_zero.detach().to(device="cpu", dtype=torch.int64)
+    expected_scale = quant_scale.detach().to(device="cpu", dtype=torch.float32)
+    if not torch.equal(decoded_zero, expected_zero):
+        raise AssertionError("zero-point metadata round-trip mismatch")
+    if not torch.equal(decoded_scale, expected_scale):
+        raise AssertionError("scale exponent metadata round-trip mismatch")
+    return stream
 
 
 @dataclass(frozen=True)

@@ -98,7 +98,7 @@ done
 echo "=================================================="
 echo "packing-aware 筛选完成: mode=$MODE, 失败任务数=$failed"
 echo "固定配置: po2 0.03/0.10 + BUCKET(k_sum,4), ctx=$CTX_LEN"
-echo "宏观汇总: csv_results/Global_Macro_Summary_v10.csv"
+echo "宏观汇总: csv_results/Global_Macro_Summary_v11.csv"
 echo "筛选 Suite_ID=$SUITE_ID"
 echo "=================================================="
 exit "$failed"

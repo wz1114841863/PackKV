@@ -18,6 +18,7 @@ from utils.compute import (
     BucketScoreMethod,
     QuantMode,
     QuantMethod,
+    QuantMetadataFormat,
     quant_ints,
     repack_and_encode,
     repack_and_encode_detail_rebuttal,
@@ -28,6 +29,8 @@ from utils.compute import (
     packing_aware_quantize_kv,
     profile_hardware_quantization,
     profile_integer_histogram,
+    encode_compact_quant_metadata,
+    verify_compact_quant_metadata_roundtrip,
     verify_repack_bitstream_roundtrip,
 )
 from utils.config import PackKVCacheConfig, ExtractCacheConfig
@@ -283,17 +286,30 @@ def get_collected_data(logger, model_name="meta-llama/Llama-2-13b-hf"):
     return rt
 
 
-def get_ctx_len_text_from_wikitext_103_v1(ctx_len: int, tokenizer):
-    """从真实的维基百科数据集, 提取出精确匹配指定长度的文本, 用于后续的评测"""
+def get_ctx_len_text_from_wikitext_103_v1(
+    ctx_len: int, tokenizer, sample_index: int = 0
+):
+    """提取互不重叠、精确匹配指定 token 长度的 WikiText 样本."""
+    if ctx_len <= 0 or sample_index < 0:
+        raise ValueError("ctx_len must be positive and sample_index non-negative")
     dataset = load_dataset("wikitext", "wikitext-103-v1")
     rt_text = ""
+    required_tokens = (sample_index + 1) * ctx_len
     for i in range(len(dataset["train"])):
         text = dataset["train"][i]["text"]
         rt_text += text
         tokens = tokenizer(rt_text, return_tensors="pt")["input_ids"]
-        if tokens.shape[1] > ctx_len:
+        if tokens.shape[1] >= required_tokens:
             break
-    return tokenizer(rt_text, return_tensors="pt", truncation=True, max_length=ctx_len)
+    encoded = tokenizer(rt_text, return_tensors="pt")
+    start = sample_index * ctx_len
+    end = start + ctx_len
+    if encoded["input_ids"].shape[1] < end:
+        raise ValueError("WikiText does not contain enough tokens for requested sample")
+    for name, value in list(encoded.items()):
+        if isinstance(value, torch.Tensor) and value.ndim == 2:
+            encoded[name] = value[:, start:end]
+    return encoded
 
 
 def save_extract_cache(
@@ -446,6 +462,7 @@ def crs_evaluation_with_data(
         "quant_payload_alignment_bits",
         "quant_zero_point_size",
         "quant_scale_size",
+        "quant_metadata_alignment_bits",
         "quant_size",
         "bitpack_payload_size_before_repack",
         "bitpack_min_size_before_repack",
@@ -587,6 +604,7 @@ def crs_evaluation_with_data(
                     "quant_payload_alignment_bits",
                     "quant_zero_point_size",
                     "quant_scale_size",
+                    "quant_metadata_alignment_bits",
                     "bitpack_payload_size_before_repack",
                     "bitpack_min_size_before_repack",
                     "bitpack_encode_len_size_before_repack",
@@ -752,10 +770,38 @@ def crs_evaluation_with_data(
         v_quant_payload_bits = v_quant_int.numel() * v_quant_bit_num
         k_quant_payload_size = (k_quant_payload_bits + 7) // 8
         v_quant_payload_size = (v_quant_payload_bits + 7) // 8
-        k_zero_size = k_quant_zero.numel() * k_quant_zero.element_size()
-        v_zero_size = v_quant_zero.numel() * v_quant_zero.element_size()
-        k_scale_size = k_quant_scale.numel() * k_quant_scale.element_size()
-        v_scale_size = v_quant_scale.numel() * v_quant_scale.element_size()
+        metadata_format = getattr(
+            config, "quant_metadata_format", QuantMetadataFormat.NATIVE
+        )
+        compact_metadata_streams = None
+        if metadata_format == QuantMetadataFormat.PO2_COMPACT:
+            compact_metadata_streams = {
+                "k": encode_compact_quant_metadata(
+                    k_quant_zero,
+                    k_quant_scale,
+                    getattr(config, "k_zero_point_bits", 7),
+                    getattr(config, "exponent_bits", 4),
+                ),
+                "v": encode_compact_quant_metadata(
+                    v_quant_zero,
+                    v_quant_scale,
+                    getattr(config, "v_zero_point_bits", 5),
+                    getattr(config, "exponent_bits", 4),
+                ),
+            }
+            k_zero_size = len(compact_metadata_streams["k"].zero_points)
+            v_zero_size = len(compact_metadata_streams["v"].zero_points)
+            k_scale_size = len(compact_metadata_streams["k"].exponents)
+            v_scale_size = len(compact_metadata_streams["v"].exponents)
+            k_metadata_alignment_bits = compact_metadata_streams["k"].alignment_bits
+            v_metadata_alignment_bits = compact_metadata_streams["v"].alignment_bits
+        else:
+            k_zero_size = k_quant_zero.numel() * k_quant_zero.element_size()
+            v_zero_size = v_quant_zero.numel() * v_quant_zero.element_size()
+            k_scale_size = k_quant_scale.numel() * k_quant_scale.element_size()
+            v_scale_size = v_quant_scale.numel() * v_quant_scale.element_size()
+            k_metadata_alignment_bits = 0
+            v_metadata_alignment_bits = 0
         k_quant_size = (
             k_quant_payload_size + k_zero_size + k_scale_size + k_recent_size
         )
@@ -774,12 +820,29 @@ def crs_evaluation_with_data(
         res["v_quant_zero_point_size"].append(v_zero_size)
         res["k_quant_scale_size"].append(k_scale_size)
         res["v_quant_scale_size"].append(v_scale_size)
+        res["k_quant_metadata_alignment_bits"].append(k_metadata_alignment_bits)
+        res["v_quant_metadata_alignment_bits"].append(v_metadata_alignment_bits)
         res["k_quant_size"].append(k_quant_size)
         res["v_quant_size"].append(v_quant_size)
         res["k_quant_cr"].append(k_origin_size / k_quant_size)
         res["v_quant_cr"].append(v_origin_size / v_quant_size)
 
         if layer_idx in audit_layers:
+            compact_metadata_bytes = 0
+            if metadata_format == QuantMetadataFormat.PO2_COMPACT:
+                for cache_kind, quant_zero, quant_scale, zero_bits in (
+                    ("k", k_quant_zero, k_quant_scale, getattr(config, "k_zero_point_bits", 7)),
+                    ("v", v_quant_zero, v_quant_scale, getattr(config, "v_zero_point_bits", 5)),
+                ):
+                    metadata_stream = verify_compact_quant_metadata_roundtrip(
+                        quant_zero,
+                        quant_scale,
+                        zero_bits,
+                        getattr(config, "exponent_bits", 4),
+                    )
+                    if metadata_stream != compact_metadata_streams[cache_kind]:
+                        raise AssertionError("compact metadata encoder is not deterministic")
+                    compact_metadata_bytes += metadata_stream.total_bytes
             audit = verify_repack_bitstream_roundtrip(
                 k_quant_int,
                 v_quant_int,
@@ -797,13 +860,14 @@ def crs_evaluation_with_data(
             verified_block_count += audit.verified_blocks
             if logger is not None:
                 logger.info(
-                    "Round-trip PASS: layer=%d blocks=%d K=%dB V=%dB bucket=%dB total=%dB",
+                    "Round-trip PASS: layer=%d blocks=%d K=%dB V=%dB bucket=%dB stream-total=%dB quant-meta(full-layer)=%dB",
                     layer_idx,
                     audit.verified_blocks,
                     audit.k_stream_bytes,
                     audit.v_stream_bytes,
                     audit.bucket_metadata_bytes,
                     audit.total_bytes,
+                    compact_metadata_bytes,
                 )
 
         if config.quant_method == QuantMethod.PackKV:
@@ -1198,16 +1262,18 @@ def cr_evaluation(
         model.eval()
         # batch_size = 1
         # lm_eval_warp = LMEvalWrapper(model, tokenizer, batch_size)
-        inputs = get_ctx_len_text_from_wikitext_103_v1(ctx_len, tokenizer).to(
-            model.device
-        )
-
+        PackKVCachePytorchQuant.round_ = 0
         with torch.no_grad():
-            _ = model(
-                **inputs,
-                use_cache=True,
-                logits_to_keep=1,
-            )
+            for sample_index in range(collect_round):
+                inputs = get_ctx_len_text_from_wikitext_103_v1(
+                    ctx_len, tokenizer, sample_index=sample_index
+                ).to(model.device)
+                output = model(
+                    **inputs,
+                    use_cache=True,
+                    logits_to_keep=1,
+                )
+                del output
         PackKVCachePytorchQuant.round_ = 0
 
         if enable_save:

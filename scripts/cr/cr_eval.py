@@ -19,6 +19,7 @@ from utils.config import PackKVCacheConfig
 from utils.compute import (
     BucketScoreMethod,
     QuantMethod,
+    QuantMetadataFormat,
     RepackMethod,
     ScaleMethod,
     profile_integer_histogram,
@@ -35,7 +36,8 @@ max_ctx_len_map = {
     "JackFram/llama-160m": 1024 * 2,  # 2K 上下文
 }
 
-STORAGE_MODEL = "stream-packed-v2-native-quant-metadata-bucket-counts"
+NATIVE_STORAGE_MODEL = "stream-packed-v2-native-quant-metadata-bucket-counts"
+COMPACT_STORAGE_MODEL = "stream-packed-v3-po2-compact-metadata-bucket-counts"
 PA_SELECTION_POLICY = "layer-budget-efficiency-prefix-stream-guard-v2"
 
 
@@ -180,6 +182,10 @@ def result_metadata(args, round_idx, generated_at):
         "PA_Selection_Policy",
         "Round",
         "Storage_Model",
+        "Quant_Metadata_Format",
+        "K_Zero_Point_Bits",
+        "V_Zero_Point_Bits",
+        "Exponent_Bits",
     ]
     values = [
         generated_at.strftime("%Y-%m-%d %H:%M:%S.%f"),
@@ -207,7 +213,15 @@ def result_metadata(args, round_idx, generated_at):
             else ""
         ),
         round_idx,
-        STORAGE_MODEL,
+        (
+            COMPACT_STORAGE_MODEL
+            if args.quant_metadata_format == QuantMetadataFormat.PO2_COMPACT.value
+            else NATIVE_STORAGE_MODEL
+        ),
+        args.quant_metadata_format,
+        args.k_zero_point_bits,
+        args.v_zero_point_bits,
+        args.exponent_bits,
     ]
     return headers, values
 
@@ -230,6 +244,7 @@ def build_report_filename(args, round_idx, timestamp=None):
         f"quant-{args.quant_method}",
         f"scale-{args.scale_method}",
         f"zp-{zero_point_mode}",
+        f"qmeta-{args.quant_metadata_format}",
         f"repack-{args.repack_method}",
         f"k-{safe_filename_component(args.k_scale)}",
         f"v-{safe_filename_component(args.v_scale)}",
@@ -254,12 +269,12 @@ def append_to_macro_summary_csv(
     csv_path,
     layer_detail_path,
 ):
-    """将全局结果、硬件字段画像和误差预算诊断追加到 v10 汇总表."""
+    """将全局结果、硬件字段画像和误差预算诊断追加到 v11 汇总表."""
     save_dir = "./csv_results"
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    summary_file = os.path.join(save_dir, "Global_Macro_Summary_v10.csv")
+    summary_file = os.path.join(save_dir, "Global_Macro_Summary_v11.csv")
     file_exists = os.path.isfile(summary_file)
 
     generated_at = datetime.datetime.now()
@@ -425,6 +440,8 @@ def append_to_macro_summary_csv(
         "V_Zero_Point_Bytes",
         "K_Scale_Bytes",
         "V_Scale_Bytes",
+        "K_Quant_Metadata_Alignment_Bits",
+        "V_Quant_Metadata_Alignment_Bits",
         "K_Bitpack_Payload_Bytes",
         "V_Bitpack_Payload_Bytes",
         "K_Pack_Min_Bytes",
@@ -527,6 +544,8 @@ def append_to_macro_summary_csv(
         components["v"]["quant_zero_point_size"],
         components["k"]["quant_scale_size"],
         components["v"]["quant_scale_size"],
+        sum_metric(res_dict, "k_quant_metadata_alignment_bits"),
+        sum_metric(res_dict, "v_quant_metadata_alignment_bits"),
         components["k"]["bitpack_payload_size_after_repack"],
         components["v"]["bitpack_payload_size_after_repack"],
         components["k"]["bitpack_min_size_after_repack"],
@@ -567,7 +586,7 @@ def append_to_macro_summary_csv(
                 existing_headers = next(csv.reader(f), None)
             if existing_headers != headers:
                 raise ValueError(
-                    "Global_Macro_Summary_v10.csv 表头与当前 schema 不一致"
+                    "Global_Macro_Summary_v11.csv 表头与当前 schema 不一致"
                 )
 
         # 使用 'a' 模式追加写入
@@ -636,7 +655,7 @@ def append_to_layer_detail_csv(args, res_dict, round_idx):
     """将所有实验的逐层结果追加到统一明细表,便于一次性上传分析."""
     save_dir = "./csv_results"
     os.makedirs(save_dir, exist_ok=True)
-    detail_path = os.path.join(save_dir, "Layer_Detail_v5.csv")
+    detail_path = os.path.join(save_dir, "Layer_Detail_v6.csv")
     file_exists = os.path.isfile(detail_path)
 
     num_layers = len(res_dict.get("k_original_size", []))
@@ -660,7 +679,7 @@ def append_to_layer_detail_csv(args, res_dict, round_idx):
                 existing_headers = next(csv.reader(f), None)
             if existing_headers != headers:
                 raise ValueError(
-                    "Layer_Detail_v5.csv 表头与当前 schema 不一致"
+                    "Layer_Detail_v6.csv 表头与当前 schema 不一致"
                 )
 
         with open(detail_path, mode="a", newline="", encoding="utf-8") as f:
@@ -762,6 +781,15 @@ def main():
         default=True,
         help="保存浮点 minimum;使用 --no-high_precision_zero_point 改为整数 zero point",
     )
+    parser.add_argument(
+        "--quant_metadata_format",
+        choices=[item.value for item in QuantMetadataFormat],
+        default=QuantMetadataFormat.NATIVE.value,
+        help="量化参数存储格式：native 或整数 zero+2^k exponent 窄字段",
+    )
+    parser.add_argument("--k_zero_point_bits", type=int, default=7)
+    parser.add_argument("--v_zero_point_bits", type=int, default=5)
+    parser.add_argument("--exponent_bits", type=int, default=4)
 
     # 方法选项
     parser.add_argument(
@@ -852,6 +880,8 @@ def main():
         parser.error("--roundtrip_layers and --roundtrip_blocks must be positive")
     if args.k_error_budget < 0 or args.v_error_budget < 0:
         parser.error("--k_error_budget and --v_error_budget must be non-negative")
+    if min(args.k_zero_point_bits, args.v_zero_point_bits, args.exponent_bits) <= 0:
+        parser.error("compact metadata field widths must be positive")
     args.suite_id = safe_filename_component(args.suite_id) or "manual"
     if args.run_id is None:
         timestamp = datetime.datetime.now().strftime("%Y%m%dT%H%M%S%f")
@@ -893,6 +923,14 @@ def main():
         parser.error("--verify_roundtrip currently requires --quant_method PackKV")
     if args.verify_roundtrip and args.scale_method == ScaleMethod.PO2_PACK_AWARE.value:
         parser.error("--verify_roundtrip does not yet support po2_pack_aware")
+    if args.quant_metadata_format == QuantMetadataFormat.PO2_COMPACT.value and (
+        args.high_precision_zero_point
+        or args.scale_method == ScaleMethod.CONTINUOUS.value
+    ):
+        parser.error(
+            "--quant_metadata_format po2_compact requires integer zero point "
+            "and a power-of-two scale method"
+        )
 
     config = PackKVCacheConfig(
         enable_quant=False,
@@ -910,6 +948,10 @@ def main():
         bucket_score_method=BucketScoreMethod(args.bucket_score_method),
         k_error_budget=args.k_error_budget,
         v_error_budget=args.v_error_budget,
+        quant_metadata_format=QuantMetadataFormat(args.quant_metadata_format),
+        k_zero_point_bits=args.k_zero_point_bits,
+        v_zero_point_bits=args.v_zero_point_bits,
+        exponent_bits=args.exponent_bits,
     )
     args.enable_save = True
     logger.info("=" * 50)
@@ -921,6 +963,13 @@ def main():
         f"   Packing-aware Layer SSE Budget: K={args.k_error_budget}, V={args.v_error_budget}"
     )
     logger.info(f"   High Precision Zero Point: {args.high_precision_zero_point}")
+    logger.info(
+        "   Quant Metadata: %s (K-zero=%db, V-zero=%db, exponent=%db)",
+        args.quant_metadata_format,
+        args.k_zero_point_bits,
+        args.v_zero_point_bits,
+        args.exponent_bits,
+    )
     logger.info(f"   Block Size: {args.block_size}, Pack Size: {args.pack_size}")
     logger.info(f"   Bucket Count: {args.bucket_count}")
     logger.info(f"   Bucket Score Method: {args.bucket_score_method}")
@@ -994,7 +1043,13 @@ def main():
                         "   统计口径: 总原始字节 / 总编码字节 "
                         "(包含Recent Buffer及量化元数据)"
                     )
-                    print(f"   存储模型: {STORAGE_MODEL}")
+                    storage_model = (
+                        COMPACT_STORAGE_MODEL
+                        if args.quant_metadata_format
+                        == QuantMetadataFormat.PO2_COMPACT.value
+                        else NATIVE_STORAGE_MODEL
+                    )
+                    print(f"   存储模型: {storage_model}")
 
                     # 导出详细数据到 CSV
                     csv_path = export_to_csv(args, res, i + 1)

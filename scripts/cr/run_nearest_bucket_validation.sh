@@ -94,8 +94,8 @@ done
 echo "=================================================="
 echo "BUCKET CR 对照完成，失败任务数: $failed"
 echo "日志目录: $LOG_ROOT"
-echo "宏观汇总: csv_results/Global_Macro_Summary_v10.csv"
-echo "逐层汇总: csv_results/Layer_Detail_v5.csv"
+echo "宏观汇总: csv_results/Global_Macro_Summary_v11.csv"
+echo "逐层汇总: csv_results/Layer_Detail_v6.csv"
 echo "请按 Suite_ID=$SUITE_ID 筛选本轮四条记录"
 echo "=================================================="
 

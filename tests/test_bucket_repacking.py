@@ -5,6 +5,7 @@ import torch
 from utils.compute import (
     BucketScoreMethod,
     QuantMethod,
+    QuantMetadataFormat,
     RepackMethod,
     ScaleMethod,
     bit_pack_decode_kv,
@@ -416,6 +417,10 @@ class BucketRepackingTest(unittest.TestCase):
             bucket_score_method=BucketScoreMethod.KV_2D,
             k_error_budget=0.2,
             v_error_budget=0.3,
+            quant_metadata_format=QuantMetadataFormat.PO2_COMPACT,
+            k_zero_point_bits=7,
+            v_zero_point_bits=5,
+            exponent_bits=4,
         )
 
         restored = PackKVCacheConfig.from_str(str(config))
@@ -423,6 +428,9 @@ class BucketRepackingTest(unittest.TestCase):
         self.assertEqual(restored.bucket_count, 8)
         self.assertEqual(restored.k_error_budget, 0.2)
         self.assertEqual(restored.v_error_budget, 0.3)
+        self.assertEqual(
+            restored.quant_metadata_format, QuantMetadataFormat.PO2_COMPACT
+        )
         self.assertEqual(
             restored.bucket_score_method,
             BucketScoreMethod.KV_2D,

@@ -5,6 +5,7 @@ from utils.compute import (
     BucketScoreMethod,
     QuantMode,
     QuantMethod,
+    QuantMetadataFormat,
     RepackMethod,
     ScaleMethod,
 )
@@ -51,11 +52,17 @@ class PackKVCacheConfig:
         bucket_score_method: BucketScoreMethod = BucketScoreMethod.COMBINED_SUM,
         k_error_budget: float = 0.1,
         v_error_budget: float = 0.1,
+        quant_metadata_format: QuantMetadataFormat = QuantMetadataFormat.NATIVE,
+        k_zero_point_bits: int = 7,
+        v_zero_point_bits: int = 5,
+        exponent_bits: int = 4,
     ):
         if not math.isfinite(k_error_budget) or k_error_budget < 0:
             raise ValueError("k_error_budget must be finite and non-negative")
         if not math.isfinite(v_error_budget) or v_error_budget < 0:
             raise ValueError("v_error_budget must be finite and non-negative")
+        if min(k_zero_point_bits, v_zero_point_bits, exponent_bits) <= 0:
+            raise ValueError("quant metadata field widths must be positive")
         self.enable_quant: bool = enable_quant
         self.model_name: str = model_name
         self.quant_method: QuantMethod = quant_method
@@ -72,6 +79,10 @@ class PackKVCacheConfig:
         self.bucket_score_method: BucketScoreMethod = bucket_score_method
         self.k_error_budget: float = k_error_budget
         self.v_error_budget: float = v_error_budget
+        self.quant_metadata_format = quant_metadata_format
+        self.k_zero_point_bits = k_zero_point_bits
+        self.v_zero_point_bits = v_zero_point_bits
+        self.exponent_bits = exponent_bits
 
     # to string print
     def __str__(self):
@@ -101,6 +112,12 @@ class PackKVCacheConfig:
             ).value
             json_["k_error_budget"] = getattr(self, "k_error_budget", 0.1)
             json_["v_error_budget"] = getattr(self, "v_error_budget", 0.1)
+            json_["quant_metadata_format"] = getattr(
+                self, "quant_metadata_format", QuantMetadataFormat.NATIVE
+            ).value
+            json_["k_zero_point_bits"] = getattr(self, "k_zero_point_bits", 7)
+            json_["v_zero_point_bits"] = getattr(self, "v_zero_point_bits", 5)
+            json_["exponent_bits"] = getattr(self, "exponent_bits", 4)
 
         return str(json_)
 
@@ -132,6 +149,12 @@ class PackKVCacheConfig:
             )
             k_error_budget = json_.get("k_error_budget", 0.1)
             v_error_budget = json_.get("v_error_budget", 0.1)
+            quant_metadata_format = QuantMetadataFormat(
+                json_.get("quant_metadata_format", QuantMetadataFormat.NATIVE.value)
+            )
+            k_zero_point_bits = json_.get("k_zero_point_bits", 7)
+            v_zero_point_bits = json_.get("v_zero_point_bits", 5)
+            exponent_bits = json_.get("exponent_bits", 4)
         else:
             quant_method = None
             repack_method = None
@@ -146,6 +169,10 @@ class PackKVCacheConfig:
             bucket_score_method = BucketScoreMethod.COMBINED_SUM
             k_error_budget = 0.1
             v_error_budget = 0.1
+            quant_metadata_format = QuantMetadataFormat.NATIVE
+            k_zero_point_bits = 7
+            v_zero_point_bits = 5
+            exponent_bits = 4
 
         return PackKVCacheConfig(
             model_name=json_["model_name"],
@@ -164,6 +191,10 @@ class PackKVCacheConfig:
             bucket_score_method=bucket_score_method,
             k_error_budget=k_error_budget,
             v_error_budget=v_error_budget,
+            quant_metadata_format=quant_metadata_format,
+            k_zero_point_bits=k_zero_point_bits,
+            v_zero_point_bits=v_zero_point_bits,
+            exponent_bits=exponent_bits,
         )
 
     def __eq__(self, other):
@@ -215,6 +246,14 @@ class PackKVCacheConfig:
             other, "v_error_budget", 0.1
         ):
             return False
+        for name, default in (
+            ("quant_metadata_format", QuantMetadataFormat.NATIVE),
+            ("k_zero_point_bits", 7),
+            ("v_zero_point_bits", 5),
+            ("exponent_bits", 4),
+        ):
+            if getattr(self, name, default) != getattr(other, name, default):
+                return False
         return True
 
     def __hash__(self):
@@ -240,6 +279,10 @@ class PackKVCacheConfig:
                 ),
                 getattr(self, "k_error_budget", 0.1),
                 getattr(self, "v_error_budget", 0.1),
+                getattr(self, "quant_metadata_format", QuantMetadataFormat.NATIVE),
+                getattr(self, "k_zero_point_bits", 7),
+                getattr(self, "v_zero_point_bits", 5),
+                getattr(self, "exponent_bits", 4),
             )
         )
 
