@@ -74,8 +74,11 @@ v_zero_points
 v_exponents
 ```
 
-Zero point and scale tensors have identical shapes. Each tensor is flattened in
-PyTorch row-major order. For each flattened index `i`:
+Zero point and scale tensors have identical shapes. For token-wise PackKV
+quantization, the zero point and exponent belonging to a token are moved by
+the **same block-local bucket permutation** as that token's K/V q values.
+The resulting storage-order tensors are then flattened in PyTorch row-major
+order. For each storage-order index `i`:
 
 ```text
 K scale[i] = 2 ^ k_exponents[i]
@@ -84,6 +87,11 @@ V scale[i] = 2 ^ v_exponents[i]
 K reconstructed = (K q + K zero) * 2 ^ K exponent
 V reconstructed = (V q + V zero) * 2 ^ V exponent
 ```
+
+In other words, `(K_q, K_zero, K_exponent, V_q, V_zero, V_exponent)` is one
+logical token record during bucket routing. Encoding q in bucket order while
+leaving token-wise metadata in original time order is invalid. No additional
+permutation stream is required because all six fields share the same order.
 
 Field widths are fixed at 7/4 bits for K zero/exponent and 5/4 bits for V
 zero/exponent. Each of the four components is independently byte-aligned:
@@ -94,6 +102,9 @@ exponent_bytes = ceil(parameter_count * 4 / 8)
 ```
 
 Continuous scales and floating-point minima are invalid in Format v0.
+GREEDY and MEDIAN repacking are also outside Format v0 because their current
+software paths do not expose a token permutation that can be applied to the
+per-token quantization metadata.
 
 ## 5. Stable four-bucket repacking
 
@@ -240,12 +251,15 @@ Completed in the Python reference model:
 - compact metadata byte encode/decode;
 - bucket-count metadata encode/decode;
 - K/V bit-pack encode/decode;
+- synthetic joint bucket-repacked q/zero/exponent dequantization round-trip;
 - byte accounting including component alignment;
-- sampled round-trip on three models and three 8192-token traces per model.
+- prior component-level sampled round-trip on three models and three 8192-token
+  traces per model.
 
 Not yet completed:
 
 - Python export of standalone Chisel golden-vector files;
+- rerun of the joint q/metadata audit on real model traces;
 - Chisel metadata decoder;
 - Chisel bucket decoder;
 - Chisel bit unpacker and shift-based dequantizer;
