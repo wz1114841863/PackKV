@@ -183,6 +183,38 @@ Iteration order is pack-major, feature-major, then token-major. Each `delta`
 uses the corresponding dynamic `width`. A zero-width field must have value
 zero and appends no bits.
 
+### 6.4 Exact fixed-point dequantization
+
+The Chisel reference decoder represents every reconstructed value as a signed
+18-bit integer with six implied fractional bits:
+
+```text
+fixed_raw = (q + zero_point) << (exponent + 6)
+real_value = fixed_raw / 64
+```
+
+The qualified Format v0 exponent range is `[-6, 4]`, so the shift amount is
+always `[0, 10]`. No right shift, rounding, floating-point multiplier, or
+general integer multiplier is required. Encoded exponents outside `[-6, 4]`
+are rejected even though a four-bit two's-complement field could represent a
+wider range. Eighteen signed bits cover the full K 6-bit q / 7-bit zero-point
+field range at exponent 4; V requires fewer bits.
+
+Quantization metadata is token-major, but q payload decoding is
+pack-major/feature-major/token-major. The reference hardware therefore buffers
+the zero point and exponent for one 16-token pack and reuses those 16 records
+for every feature descriptor in that pack. Repeated q values used to pad a
+partial final pack are consumed but are not emitted by the dequantizer.
+
+The optimized reference uses two such metadata banks. While one bank supplies
+the current q pack, the other accepts the next pack's compact metadata. Four
+64-bit counters report active cycles, emitted values, cycles waiting for the
+current metadata bank, and cycles blocked by downstream backpressure. For the
+committed deterministic 64-token/four-feature test with no external stalls,
+ping-pong buffering reduces active cycles from 320 to 272 and metadata-wait
+cycles from 64 to 16. These are module-level simulation results, not synthesized
+frequency, latency, or end-to-end model throughput.
+
 ## 7. Out-of-band descriptor
 
 Until a DMA/container header is designed, the testbench supplies these values:
@@ -203,6 +235,93 @@ byte length of every named component stream
 ```
 
 The first Chisel implementation must not infer component boundaries from data.
+
+### 7.1 Command-driven controller contract
+
+`DecompressionPipelineController` accepts one tagged command containing:
+
+```text
+tag
+token_count
+feature_dim
+descriptor_count
+payload_byte_count
+```
+
+For pack size 16 it checks, before launching the byte-stream decoders:
+
+```text
+pack_count       = ceil(token_count / 16)
+descriptor_count = pack_count * feature_dim
+block_count      = ceil(token_count / 64)
+```
+
+An invalid command produces an error result without accepting component bytes.
+A valid command moves through `idle -> launch -> running -> response`. Only one
+command is active at a time. The tagged response is held under backpressure and
+contains the derived counts plus a snapshot of the dequantizer performance
+counters. Live progress reports completed values, feature descriptors, packs,
+and 64-token blocks. K/V field widths remain elaboration-time parameters; a
+future dual-stream controller will coordinate two instances rather than change
+those widths at runtime.
+
+### 7.2 Unified K/V command and completion barrier
+
+`DualKvDecompressionController` fixes the two child configurations to the
+Format v0 K and V widths. Its shared command contains:
+
+```text
+tag
+token_count
+feature_dim
+descriptor_count
+k_payload_byte_count
+v_payload_byte_count
+```
+
+After shared geometry validation, the top launches K, V, and bucket-count
+decoding on the same command lifecycle. Their input and output channels remain
+independent Decoupled streams: backpressure on K does not force V or bucket
+records to stop. The outer result is nevertheless synchronized by a three-way
+completion barrier and is not issued until both child command results and the
+last bucket record have completed. It checks both child errors and tags, shared
+token counts, and the emitted bucket-record count. The response contains
+separate K/V performance-counter snapshots.
+
+This shared lifecycle and block index establish K/V/bucket correspondence; the
+top does not reconstruct an original token permutation. Correctness still
+requires the encoder to have applied the same block-local permutation to K, V,
+and their token-wise metadata.
+
+### 7.3 Compute-facing feature packet contract
+
+The dequantizer naturally emits one scalar at a time in
+pack-major/feature-major/token-major order. `AttentionFeaturePacketizer`
+collects one descriptor into the following compute record:
+
+```text
+values[16]          signed 18-bit, six implied fractional bits
+valid_tokens        1..16
+descriptor_index
+pack_index
+feature_index
+block_index
+pack_within_block   0..3
+last
+```
+
+For K, a consumer can broadcast the query scalar for `feature_index` and update
+16 token-local QK accumulators with `values[0..15]`. For V, a consumer can pair
+the 16 attention weights for the pack with the V feature-lane packet. A partial
+last pack reports its true `valid_tokens`; all remaining lanes are zero and
+must not contribute to computation.
+
+K and V packet channels retain independent backpressure. The compute wrapper
+holds the decompression result until both final feature packets have been
+accepted, so command completion cannot race ahead of unconsumed compute data.
+The current module defines the transport and indexing contract only: query
+storage, QK MACs, softmax, attention-weight storage, and AV MACs are not yet
+implemented.
 
 ## 8. Named components in one layer
 
@@ -263,10 +382,31 @@ Completed in the Python reference model:
   backpressure and non-zero-padding rejection tests.
 - Chisel four-bucket count decoder, including multi-block backpressure,
   per-block padding, and count-sum validation tests.
+- Chisel pack-descriptor decoder and runtime-width payload unpacker;
+- integrated Chisel dynamic bit unpacker verified value-for-value against all
+  committed directed/random K and V vectors, including zero-width packs and
+  independent stream backpressure;
+- dynamic payload byte-count validation, including truncated and extra-byte
+  rejection tests.
+- multiplier-free fixed-point power-of-two dequantizer with exponent-range
+  validation;
+- 16-token metadata alignment/reuse buffer and partial-pack padding removal;
+- ping-pong metadata prefetch with cycle/output/stall counters and a retained
+  single-buffer baseline for ablation;
+- end-to-end K/V compact-metadata decode, dynamic unpack, and dequantization
+  checked against committed Python float32 golden vectors.
+- tagged single-stream decompression controller with command geometry checks,
+  held completion response, live value/descriptor/pack/block progress, and
+  performance-counter snapshot.
+- unified K/V/bucket decompression top with independent stream backpressure,
+  shared command geometry, three-way completion barrier, and separate K/V
+  performance statistics.
+- 16-token compute-side K/V feature packetization with partial-pack lane masks,
+  explicit pack/block/feature indexing, independent channel backpressure, and
+  completion-after-drain semantics.
 
 Not yet completed:
 
 - export of selected real-model Cache blocks as committed/archived vectors;
-- Chisel bit unpacker and shift-based dequantizer;
 - serialized DMA or memory-container header;
 - synthesis, timing, area, power, and throughput evaluation.

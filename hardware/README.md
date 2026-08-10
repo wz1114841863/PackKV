@@ -15,7 +15,20 @@ artifacts or simulator dependencies.
   decoder are implemented and verified against Python golden vectors.
 - The four-bucket count-header decoder is implemented with per-block padding
   and count-sum validation.
-- Dynamic bit-unpack and dequantization modules are not yet implemented.
+- The three-stream dynamic bit-unpack path is implemented and verified for K/V,
+  zero-width packs, independent backpressure, and malformed payload lengths.
+- Exact shift-based power-of-two dequantization is implemented with a signed
+  18-bit, six-fractional-bit output, 16-token metadata reuse, and end-to-end
+  Python golden-vector verification.
+- A tagged command-driven pipeline controller validates stream geometry,
+  launches one K or V decoder, tracks value/descriptor/pack/block progress,
+  and returns a held completion record with performance counters.
+- A shared K/V top-level launches the fixed Format v0 K and V controllers with
+  one geometry/tag command, decodes bucket-count headers in parallel, permits
+  independent K/V/bucket backpressure, and joins all three completion paths.
+- A compute-facing adapter aggregates scalar feature-major K/V results into
+  16-token lane packets with pack/block/feature indices, valid-lane counts,
+  padding suppression, and completion delayed until both packet streams drain.
 
 ## Layout
 

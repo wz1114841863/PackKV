@@ -51,6 +51,33 @@ downstream-stall counters. The deterministic 64-token/four-feature comparison
 uses 320 cycles and 64 metadata-stall cycles for the single buffer versus 272
 cycles and 16 metadata-stall cycles for the ping-pong buffer.
 
+`DecompressionPipelineController` wraps one compile-time-configured K or V
+pipeline with a tagged Decoupled command/result protocol. It validates
+`descriptorCount = ceil(tokenCount / 16) * featureDim` before accepting any
+component bytes, generates the one-cycle engine start, tracks completed values,
+descriptors, packs, and 64-token blocks, and holds the result until the consumer
+accepts it. The result includes the command tag and a snapshot of all four
+dequantizer performance counters.
+
+`DualKvDecompressionController` is the unified Format v0 decompression top. A
+single command supplies shared token/feature/descriptor geometry and separate
+K/V payload byte lengths. It launches fixed K(6-bit q, 7-bit zero) and V(4-bit
+q, 5-bit zero) child controllers together with `BucketCountDecoder`. K, V, and
+bucket outputs retain independent Decoupled backpressure. A three-way completion
+barrier produces one held result only after both child results and the final
+bucket record complete; it reports separate K/V statistics and the bucket
+record count.
+
+`AttentionFeaturePacketizer` converts the scalar
+pack/feature/token dequantization order into one 16-lane packet per feature.
+Each packet carries `validTokens`, descriptor/pack/feature/block indices, and a
+final marker; invalid lanes in a partial last pack are zero. This makes a K
+packet suitable for broadcasting one query feature across 16 token lanes and a
+V packet suitable for combining 16 attention weights with one V feature.
+`BriskKvComputeInterface` wraps the dual decompressor with independent K/V
+packetizers and does not release the shared completion result until both final
+packets have actually been accepted by the compute-side consumers.
+
 ## Source layout
 
 ```text
