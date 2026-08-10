@@ -9,16 +9,21 @@ artifacts or simulator dependencies.
 
 - BRISK-KV Format v0 field limits are frozen as an initial hardware contract.
 - The Python encoder/decoder is the golden reference.
+- Deterministic directed/random Format v0 golden-vector export is available.
 - The Chisel project and Format v0 parameter tests are present.
-- Synthesizable metadata, bucket, bit-unpack, and dequantization modules are not
-  implemented yet.
+- The synthesizable LSB-first fixed-width unpacker and compact signed-metadata
+  decoder are implemented and verified against Python golden vectors.
+- The four-bucket count-header decoder is implemented with per-block padding
+  and count-sum validation.
+- Dynamic bit-unpack and dequantization modules are not yet implemented.
 
 ## Layout
 
 ```text
 hardware/
-├── docs/       Hardware format and interface specifications
-└── chisel/     SBT-based Chisel implementation and tests
+├── docs/             Hardware format and interface specifications
+├── golden_vectors/   Python-to-Chisel reference-vector transport
+└── chisel/           SBT-based Chisel implementation and tests
 ```
 
 ## Verification rule

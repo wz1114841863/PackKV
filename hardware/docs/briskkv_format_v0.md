@@ -255,13 +255,18 @@ Completed in the Python reference model:
 - byte accounting including component alignment;
 - prior component-level sampled round-trip on three models and three 8192-token
   traces per model.
+- standalone deterministic directed/random Chisel golden-vector export;
+- external three-model joint q/metadata audit reported passing (the server
+  logs are not versioned in this repository).
+- Chisel LSB-first fixed-width field unpacker;
+- Chisel signed compact-metadata decoder, including randomized input/output
+  backpressure and non-zero-padding rejection tests.
+- Chisel four-bucket count decoder, including multi-block backpressure,
+  per-block padding, and count-sum validation tests.
 
 Not yet completed:
 
-- Python export of standalone Chisel golden-vector files;
-- rerun of the joint q/metadata audit on real model traces;
-- Chisel metadata decoder;
-- Chisel bucket decoder;
+- export of selected real-model Cache blocks as committed/archived vectors;
 - Chisel bit unpacker and shift-based dequantizer;
 - serialized DMA or memory-container header;
 - synthesis, timing, area, power, and throughput evaluation.

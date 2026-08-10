@@ -1,0 +1,24 @@
+{
+  "case_count": 3,
+  "cases": [
+    {
+      "case": "directed_nonidentity",
+      "descriptor_sha256": "9cbeb0ce3678673bd59a81f1da66b7fc52419e21649e778a686fc3a7c68dd5af",
+      "directory": "directed_nonidentity",
+      "file_count": 28
+    },
+    {
+      "case": "directed_width0",
+      "descriptor_sha256": "dc2a2603a63dce511e461024482ad80cdcc1463d5444b3ac42247f09f9f415fd",
+      "directory": "directed_width0",
+      "file_count": 28
+    },
+    {
+      "case": "random_seed_20260809",
+      "descriptor_sha256": "292c1eaf632cdeb95af6a814acca67ebeae4807e77a1c6f71d2e944fe573d7ff",
+      "directory": "random_seed_20260809",
+      "file_count": 28
+    }
+  ],
+  "format": "briskkv-format-v0"
+}

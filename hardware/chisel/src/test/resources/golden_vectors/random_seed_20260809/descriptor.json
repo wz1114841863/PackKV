@@ -1,0 +1,252 @@
+{
+  "bitpack": {
+    "k": {
+      "code_value_bits": 6,
+      "encode_length_field_bits": 3,
+      "feature_dim": 4,
+      "pack_len": 16,
+      "padded_token_count": 0,
+      "signed_values": false,
+      "token_count": 128
+    },
+    "v": {
+      "code_value_bits": 4,
+      "encode_length_field_bits": 3,
+      "feature_dim": 4,
+      "pack_len": 16,
+      "padded_token_count": 0,
+      "signed_values": false,
+      "token_count": 128
+    }
+  },
+  "bucket": {
+    "count_field_bits": 7,
+    "counts": [
+      [
+        3,
+        23,
+        21,
+        17
+      ],
+      [
+        11,
+        32,
+        16,
+        5
+      ]
+    ]
+  },
+  "case": "random_seed_20260809",
+  "description": "Two deterministic random blocks covering ordinary stream behavior.",
+  "files": {
+    "bucket_counts.bin": {
+      "bytes": 6,
+      "file": "bucket_counts.bin",
+      "role": "decoder_input",
+      "sha256": "e9df7731e0c33c3d916c225675ac02c018313f54932786465204fb95915ebbfc"
+    },
+    "expected_bucket_counts.bin": {
+      "bytes": 8,
+      "file": "expected_bucket_counts.bin",
+      "role": "expected_output",
+      "sha256": "baca9f69779a47a75957db219065072748f9f3db40bc8ca5628511bcb962d149"
+    },
+    "expected_k_dequant_f32.bin": {
+      "bytes": 2048,
+      "file": "expected_k_dequant_f32.bin",
+      "role": "expected_output",
+      "sha256": "d564c2c0c9cdc34ecfe8736129f5c72b27712dd2508b928def72b217f3d146ee"
+    },
+    "expected_k_exponent.bin": {
+      "bytes": 128,
+      "file": "expected_k_exponent.bin",
+      "role": "expected_output",
+      "sha256": "9e2fb1b4e7bab6c814821aea55cff7a4ed2859eeae0187d4fefeba3067678158"
+    },
+    "expected_k_q.bin": {
+      "bytes": 512,
+      "file": "expected_k_q.bin",
+      "role": "expected_output",
+      "sha256": "00f915e0667506143573722b59be4df5c501bb03e5fef66b3c7cb8a9f5c81647"
+    },
+    "expected_k_zero.bin": {
+      "bytes": 128,
+      "file": "expected_k_zero.bin",
+      "role": "expected_output",
+      "sha256": "87b0dc02d5823c52b0b346423b6b72ed8bf4957c159a6ed618cc80482dbe69cc"
+    },
+    "expected_permutation.bin": {
+      "bytes": 128,
+      "file": "expected_permutation.bin",
+      "role": "expected_output",
+      "sha256": "1724beb6585adab2d6324dbc349b00677644c204eb267ec4e12d272bc0b61f3d"
+    },
+    "expected_v_dequant_f32.bin": {
+      "bytes": 2048,
+      "file": "expected_v_dequant_f32.bin",
+      "role": "expected_output",
+      "sha256": "6fa7819188a9028602fad148b2be6b2eb84236e5599c618ef6561cb73e311b3e"
+    },
+    "expected_v_exponent.bin": {
+      "bytes": 128,
+      "file": "expected_v_exponent.bin",
+      "role": "expected_output",
+      "sha256": "a82cfb426225da66d0461c694e3b6eca9181e35da32081b5672ad0343f84f0fb"
+    },
+    "expected_v_q.bin": {
+      "bytes": 512,
+      "file": "expected_v_q.bin",
+      "role": "expected_output",
+      "sha256": "3c5716dcf84bd0600fdcd2b45cf0bfe0091248fd61f2cd2cec3f00c9844abba4"
+    },
+    "expected_v_zero.bin": {
+      "bytes": 128,
+      "file": "expected_v_zero.bin",
+      "role": "expected_output",
+      "sha256": "fdd8d12628ee5e4d55283d15b46f0ea18f078767025b7af7d67b3fcfb5ea29b0"
+    },
+    "input_k_exponent.bin": {
+      "bytes": 128,
+      "file": "input_k_exponent.bin",
+      "role": "encoder_input",
+      "sha256": "600dcfffaca7e81b16acd8f08d0ba2a87afc32d04ec61d741e32a8130e41b808"
+    },
+    "input_k_q.bin": {
+      "bytes": 512,
+      "file": "input_k_q.bin",
+      "role": "encoder_input",
+      "sha256": "a5f84113766765adcdd7647441981c60d68cd45d8793e432edddbf3dfec9499b"
+    },
+    "input_k_zero.bin": {
+      "bytes": 128,
+      "file": "input_k_zero.bin",
+      "role": "encoder_input",
+      "sha256": "0b8390dadf483ebb431592cb6716593239efca586d9e9593cfebe6ac3f3a0b7e"
+    },
+    "input_v_exponent.bin": {
+      "bytes": 128,
+      "file": "input_v_exponent.bin",
+      "role": "encoder_input",
+      "sha256": "0ce3ce47b52160891e7271b5aae429b97a08349cfbb84d3f611c5bf71280231f"
+    },
+    "input_v_q.bin": {
+      "bytes": 512,
+      "file": "input_v_q.bin",
+      "role": "encoder_input",
+      "sha256": "9f7355f96125abd672b0b734d8723a1293475b503decaa8203d8dab9a9ce0336"
+    },
+    "input_v_zero.bin": {
+      "bytes": 128,
+      "file": "input_v_zero.bin",
+      "role": "encoder_input",
+      "sha256": "defcc0ae6ca06b7808db8135281945b42e75eeb1568a6510c5401999b19fad4d"
+    },
+    "k_encode_lengths.bin": {
+      "bytes": 12,
+      "file": "k_encode_lengths.bin",
+      "role": "decoder_input",
+      "sha256": "c1c2ed23d4b8470f6022db818524ac0a19eedfdde7b5834493d48ed84beadf41"
+    },
+    "k_exponents.bin": {
+      "bytes": 64,
+      "file": "k_exponents.bin",
+      "role": "decoder_input",
+      "sha256": "98fdc32c4fe73dfbb918747a436057d7101576896e8c54fcac9e5179f960acc2"
+    },
+    "k_pack_mins.bin": {
+      "bytes": 24,
+      "file": "k_pack_mins.bin",
+      "role": "decoder_input",
+      "sha256": "3753519701753d83de2f465bde9b0236fa213d038d75323ee0afe2d13aa58091"
+    },
+    "k_payload.bin": {
+      "bytes": 384,
+      "file": "k_payload.bin",
+      "role": "decoder_input",
+      "sha256": "edd621c8c5dfe18b54ea44fc77ccd9c4a1155ddb0b99db3b9db6b9661a49ec35"
+    },
+    "k_zero_points.bin": {
+      "bytes": 112,
+      "file": "k_zero_points.bin",
+      "role": "decoder_input",
+      "sha256": "6413f58fdc0ec673389d595baa64da5388974a0593aca2fa9cccca6c00be4c67"
+    },
+    "v_encode_lengths.bin": {
+      "bytes": 12,
+      "file": "v_encode_lengths.bin",
+      "role": "decoder_input",
+      "sha256": "28400c75bb7ff2f3a998d7a1bbea72ad8d95e6c2c7262896fd304b3ac266b4c0"
+    },
+    "v_exponents.bin": {
+      "bytes": 64,
+      "file": "v_exponents.bin",
+      "role": "decoder_input",
+      "sha256": "6b84bc0e8591b61f29d334ca00ed12c1d1231eb1c65159c5104519cfb377b6a3"
+    },
+    "v_pack_mins.bin": {
+      "bytes": 16,
+      "file": "v_pack_mins.bin",
+      "role": "decoder_input",
+      "sha256": "576ba6e53982dbb23d8640701e658b7e53faf4a77e98d7612de9a4df77970ebb"
+    },
+    "v_payload.bin": {
+      "bytes": 256,
+      "file": "v_payload.bin",
+      "role": "decoder_input",
+      "sha256": "f550778815871dd62f9ddb4c3aec1a3e402cdd3a004ddf86e5d3ea443c65aa3e"
+    },
+    "v_zero_points.bin": {
+      "bytes": 80,
+      "file": "v_zero_points.bin",
+      "role": "decoder_input",
+      "sha256": "b1e119f8d118dfc5ce8dd5ce898b734056c82db8449e1cb33c05972527432d88"
+    }
+  },
+  "format": "briskkv-format-v0",
+  "parameters": {
+    "block_size": 64,
+    "bucket_count": 4,
+    "bucket_score_method": "k_sum",
+    "byte_order": "little",
+    "exponent_bits": 4,
+    "field_bit_order": "lsb_first",
+    "high_precision_zero_point": false,
+    "k_zero_point_bits": 7,
+    "pack_size": 16,
+    "v_zero_point_bits": 5
+  },
+  "source": "deterministic_synthetic",
+  "tensors": {
+    "expected_dequant_dtype": "float32_le",
+    "k_metadata_shape": [
+      1,
+      1,
+      2,
+      64,
+      1
+    ],
+    "q_shape": [
+      1,
+      1,
+      2,
+      64,
+      4
+    ],
+    "raw_input_exponent_dtype": "int8",
+    "raw_input_q_dtype": "uint8",
+    "raw_input_zero_dtype": "int8",
+    "v_metadata_shape": [
+      1,
+      1,
+      2,
+      64,
+      1
+    ]
+  },
+  "validation": {
+    "bitpack_roundtrip": true,
+    "bucket_metadata_roundtrip": true,
+    "compact_metadata_roundtrip": true,
+    "joint_q_metadata_dequant_roundtrip": true
+  }
+}

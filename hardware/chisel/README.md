@@ -21,15 +21,20 @@ Run from this directory:
 sbt test
 ```
 
-The initial test suite checks the frozen Format v0 parameters. Subsequent
-modules must add golden-vector tests against the Python encoder before they are
-treated as implemented.
+The test suite checks the frozen Format v0 parameters and the first decoder
+stage. `FixedWidthFieldUnpacker` and `CompactMetadataDecoder` are compared with
+Python-generated vectors under both continuous traffic and randomized
+Decoupled backpressure. `BucketCountDecoder` additionally checks independently
+aligned three-byte block headers, reconstructs the fourth occupancy, and
+rejects invalid padding or occupancy sums. Subsequent modules must add the same
+kind of golden-vector test before they are treated as implemented.
 
 ## Source layout
 
 ```text
 src/main/scala/briskkv/   Chisel modules and shared parameters
 src/test/scala/briskkv/   ScalaTest/ChiselSim verification
+src/test/resources/       Versioned deterministic Python golden vectors
 ```
 
 SBT is the only supported build entry point for the first implementation. This
