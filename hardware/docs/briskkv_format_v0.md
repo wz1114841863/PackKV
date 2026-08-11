@@ -462,6 +462,47 @@ full instantiated buffer at that bound is large; synthesis evaluation must
 compare it with tiled on-chip storage or a second compressed-V read/decode pass
 after Softmax. This storage-policy choice does not change Format v0 encoding.
 
+### 7.7 Compute-side output conversion and unified Attention top
+
+`AvOutputQuantizer` converts the exact signed Q21 AV result back to the signed
+18-bit Q6 convention used by the current compute-side interface:
+
+```text
+magnitude_q6 = round(abs(feature_q21) / 2^15)
+signed_q6    = restore_sign(magnitude_q6)
+output_q6    = saturate(signed_q6, -131072, 131071)
+```
+
+Rounding is symmetric round-to-nearest with half values moving away from zero.
+Positive and negative saturation events are counted separately. Feature index
+and final markers are validated, and the converted value is held under
+backpressure. Saturation is an expected numerical event and is reported in
+statistics rather than as a protocol error.
+
+`BriskKvAttentionTop` connects the complete decode-time reference path:
+
+```text
+Format v0 K/V bytes
+  -> dynamic unpack + compact metadata + Q6 dequantization
+  -> 16-lane QK accumulation (Q12)
+  -> Q18 reciprocal-square-root scale
+  -> sequence-wide stable Softmax (Q0.15)
+  -> buffered 16-lane AV accumulation (Q21)
+  -> symmetric round and signed saturation (Q6)
+```
+
+One accepted command supplies the shared token count, feature dimension,
+descriptor geometry, payload lengths, and tag. The QK, Softmax, V buffer, AV,
+and output stages start only when the decompression geometry and configured
+capacity are valid. Invalid commands return a tagged error without consuming
+query or compressed payload streams.
+
+K logits and V feature packets are internal to the unified top. Bucket records
+remain independently visible for format auditing/control. The final tagged
+result is held until decompression is complete, the bucket output has drained,
+and the final Q6 attention feature has been accepted. Progress exposes the
+existing decompression/QK, scale/Softmax, V/AV, and output-conversion counters.
+
 ## 8. Named components in one layer
 
 Format v0 exposes the following independent byte arrays:
@@ -550,6 +591,14 @@ Completed in the Python reference model:
 - synchronous tagged V packet buffering plus 16-lane Q0.15-by-Q6 AV
   accumulation, exact Q21 feature outputs, feature/pack replay, partial-pack
   masking, completion-after-drain semantics, and wait/stall/MAC counters.
+- symmetric Q21-to-Q6 rounding and signed saturation with separate clipping
+  counters;
+- unified compressed-byte-to-Q6 Attention top with shared command validation,
+  internal QK/Softmax/AV streams, bucket audit output, and a final tagged
+  completion/error barrier.
+- parameterized split-SystemVerilog generation for the unified top, including
+  a 1024-token/128-feature baseline, explicit architectural-SRAM black-box list,
+  and CACTI-oriented depth/width/bit inventory.
 
 Not yet completed:
 

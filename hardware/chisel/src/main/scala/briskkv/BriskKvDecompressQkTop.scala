@@ -39,6 +39,8 @@ class BriskKvDecompressQkTopIO(
   )
   val bucketOut = Decoupled(new BucketCountRecord(bucketCountBits, countBits))
   val result = Decoupled(new DualKvDecompressionResult(countBits, tagBits))
+  val commandAccepted = Output(Bool())
+  val acceptedGeometryValid = Output(Bool())
   val busy = Output(Bool())
   val queryLoaded = Output(Bool())
   val progress = Output(new BriskKvDecompressQkProgress(countBits))
@@ -55,8 +57,10 @@ class BriskKvDecompressQkTop(
   countBits: Int = 32,
   tagBits: Int = 16,
   maximumFeatureDim: Int = 256,
+  maximumTokens: Int = 16384,
   useBufferedMetadata: Boolean = true
 ) extends Module {
+  require(maximumTokens >= BriskKvFormatV0.params.packTokens)
   private val params = BriskKvFormatV0.params
   private val bucketCountBits = log2Ceil(params.blockTokens + 1)
 
@@ -98,18 +102,23 @@ class BriskKvDecompressQkTop(
   )
 
   val topIdle = !commandActive && !invalidResultValid
-  val featureDimSupported = io.command.bits.featureDim <= maximumFeatureDim.U
+  val commandCapacitySupported =
+    io.command.bits.featureDim <= maximumFeatureDim.U &&
+      io.command.bits.tokenCount <= maximumTokens.U
   compute.io.command.valid :=
-    io.command.valid && topIdle && featureDimSupported
+    io.command.valid && topIdle && commandCapacitySupported
   compute.io.command.bits := io.command.bits
   io.command.ready := topIdle && Mux(
-    featureDimSupported,
+    commandCapacitySupported,
     compute.io.command.ready,
     true.B
   )
   val commandFire = io.command.valid && io.command.ready
-  val forwardedCommandFire = commandFire && featureDimSupported
-  val rejectedCommandFire = commandFire && !featureDimSupported
+  val forwardedCommandFire = commandFire && commandCapacitySupported
+  val rejectedCommandFire = commandFire && !commandCapacitySupported
+  io.commandAccepted := commandFire
+  io.acceptedGeometryValid :=
+    forwardedCommandFire && compute.io.acceptedGeometryValid
 
   qk.io.start := compute.io.acceptedGeometryValid
   qk.io.featureDim := io.command.bits.featureDim

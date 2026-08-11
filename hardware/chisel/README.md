@@ -128,6 +128,19 @@ The default 16K-token/256-feature V-buffer parameters are a functional address
 limit, not an area claim. Synthesis studies must compare full-head SRAM against
 tiled buffering or a second compressed-V decode pass after Softmax.
 
+`AvOutputQuantizer` converts the exact signed Q21 AV feature to the signed Q6
+compute-side format using symmetric round-to-nearest and signed saturation.
+It validates feature ordering, holds output under backpressure, and counts
+positive and negative saturation separately.
+
+`BriskKvAttentionTop` is the unified compressed-byte-to-attention-output top.
+One accepted command launches decompression/QK, scale/Softmax, V buffering/AV,
+and output conversion. K logits and V features remain internal; bucket records
+remain an independently backpressured audit/control output. The tagged command
+result cannot complete until the final Q6 attention feature and bucket record
+have drained. Commands beyond the shared feature/token capacity are rejected
+without consuming query or compressed streams.
+
 ## Source layout
 
 ```text
@@ -138,3 +151,20 @@ src/test/resources/       Versioned deterministic Python golden vectors
 
 SBT is the only supported build entry point for the first implementation. This
 avoids dependency and plugin drift between multiple build systems.
+
+## SystemVerilog generation
+
+`GenerateBriskKvAttentionTop` emits split SystemVerilog for a parameterized
+unified Attention top. The repository wrapper generates a functional variant
+and a DC logic-only variant:
+
+```bash
+bash ../scripts/generate_attention_rtl.sh
+```
+
+The default point is `maximumTokens=1024`, `maximumFeatureDim=128`. Override it
+with `MAXIMUM_TOKENS` and `MAXIMUM_FEATURE_DIM`. In `dc_logic`, the five
+architectural synchronous memories remain separate modules and
+`memory_modules.tcl` marks them as black boxes for DC. `memories.csv` records
+their depth, width, instance count, and total bits for CACTI. The 2-entry Query
+response queue is deliberately retained as synthesized control logic.

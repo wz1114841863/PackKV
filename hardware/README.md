@@ -46,6 +46,10 @@ artifacts or simulator dependencies.
   into tagged feature/pack replay. A 16-lane Q0.15-by-Q6 AV engine reuses each
   weight pack across V features and emits exact Q21 feature results with
   partial-pack masking and full progress/stall statistics.
+- A symmetric round-and-saturate stage converts exact Q21 AV results back to
+  signed Q6 while counting positive/negative clipping. The unified Attention
+  top connects every compressed K/V byte stream through QK, stable Softmax,
+  buffered AV, and Q6 output with one tagged completion/error barrier.
 
 ## Layout
 
@@ -66,3 +70,18 @@ A hardware module is considered implemented only after it passes both:
 
 See [`docs/briskkv_format_v0.md`](docs/briskkv_format_v0.md) for the normative
 Format v0 component-stream contract.
+
+## RTL and synthesis baseline
+
+Generate the initial 1024-token, 128-feature SystemVerilog point with:
+
+```bash
+bash hardware/scripts/generate_attention_rtl.sh
+```
+
+`full` retains behavioral memory modules for RTL lint/simulation.
+`dc_logic` includes an auto-generated SRAM black-box list and a CACTI-oriented
+memory inventory. Design Compiler must not be assumed to ignore inferred
+storage automatically: the supplied DC script explicitly black-boxes the five
+architectural SRAM modules before elaborating the top. Logic PPA and CACTI
+memory PPA must be reported separately and then combined with a stated method.
