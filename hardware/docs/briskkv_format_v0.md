@@ -363,6 +363,32 @@ packets. Completion is issued only after the final replayed query/K feature has
 produced and drained its logit packet. The `1/sqrt(feature_dim)` scale, softmax,
 attention-weight storage, and AV MAC remain separate later stages.
 
+### 7.4 Full decompression-to-QK top
+
+`BriskKvDecompressQkTop` connects the complete Format v0 byte-stream decoder to
+the query-replay QK pipeline. One accepted command starts K/V dynamic unpack,
+compact metadata decode, power-of-two dequantization, K/V feature packetization,
+bucket-count decode, query loading, and QK accumulation. The external streams
+are:
+
+```text
+inputs:  query Q6 values, K/V minima, widths, payloads, zero points, exponents,
+         bucket-count bytes
+outputs: 16-lane Q12 QK logits, V feature packets, bucket records, tagged result
+```
+
+K feature packets are consumed internally by QK. V feature packets and bucket
+records remain independently backpressured because the later softmax/AV stage
+has not yet been implemented. QK logits and V packets retain the same repacked
+token order, so a later softmax can feed its weights directly to the V path
+without restoring the original permutation.
+
+The top-level completion barrier requires all compressed input streams to be
+decoded, all V/bucket outputs to be consumed, and the final QK logit packet to
+be consumed. Invalid descriptor geometry is handled by the existing compute
+controller without starting Query replay; a feature dimension exceeding Query
+memory capacity is rejected locally without consuming compressed inputs.
+
 ## 8. Named components in one layer
 
 Format v0 exposes the following independent byte arrays:

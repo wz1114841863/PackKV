@@ -38,6 +38,9 @@ class BriskKvComputeInterfaceIO(
   )
   val bucketOut = Decoupled(new BucketCountRecord(bucketCountBits, countBits))
   val result = Decoupled(new DualKvDecompressionResult(countBits, tagBits))
+  val commandAccepted = Output(Bool())
+  val acceptedGeometryValid = Output(Bool())
+  val acceptedPackCount = Output(UInt(countBits.W))
   val busy = Output(Bool())
   val progress = Output(new BriskKvComputeProgress(countBits))
 }
@@ -104,6 +107,9 @@ class BriskKvComputeInterface(
     io.command.bits.descriptorCount ===
       requestedPackCount * io.command.bits.featureDim
   val packetizerStart = commandFire && geometryValid
+  io.commandAccepted := commandFire
+  io.acceptedGeometryValid := commandFire && geometryValid
+  io.acceptedPackCount := requestedPackCount
   kPacketizer.io.start := packetizerStart
   kPacketizer.io.tokenCount := io.command.bits.tokenCount
   kPacketizer.io.featureDim := io.command.bits.featureDim

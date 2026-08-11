@@ -94,6 +94,14 @@ to `QkDotProductAccumulator`, so software loads the query only once per command.
 The joined pipeline checks query/K pack, feature, and final markers and exports
 separate replay and MAC performance counters.
 
+`BriskKvDecompressQkTop` is the integrated byte-stream-to-logit top. It connects
+the dual K/V decompressor and packetizers to `QkComputePipeline`, consumes K
+internally, and exposes QK logits plus independently backpressured V feature and
+bucket streams. Its tagged result is held until decompression completes and the
+final QK, V, and bucket outputs have all drained. Directed golden-vector tests
+cover the complete compressed-byte-to-Q12-logit path and invalid command
+geometry.
+
 ## Source layout
 
 ```text

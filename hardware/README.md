@@ -35,6 +35,9 @@ artifacts or simulator dependencies.
 - A synchronous Query replay buffer stores one Q6 query vector, replays it once
   per K pack at one feature per cycle after priming, and forms a complete
   query-replay plus QK compute pipeline without software-side query repetition.
+- The integrated decompression-to-QK top accepts complete compressed K/V and
+  metadata byte streams, consumes K through the QK datapath, exposes aligned V
+  and bucket outputs, and delays its tagged result until every output drains.
 
 ## Layout
 
