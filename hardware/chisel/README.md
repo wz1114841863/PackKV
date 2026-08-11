@@ -115,6 +115,19 @@ and normalizes through one shared Q32 reciprocal followed by 16 parallel
 multipliers. The output is an independently backpressured Q0.15 weight packet.
 `QkScaleSoftmaxPipeline` composes the scaler and softmax stages.
 
+`VPacketBuffer` validates and stores the incoming pack-major/feature-major Q6
+V stream in synchronous memory, then serves tagged `(pack, feature)` reads.
+`SoftmaxVAccumulator` stores each Q0.15 weight pack once and replays it for
+every V feature. Each compute step uses 16 signed V multipliers and an adder
+tree; pack partial sums are accumulated into an exact signed Q21 result.
+`SoftmaxVComputePipeline` joins the buffer and accumulator and retains full
+Decoupled backpressure, partial-pack masking, completion, error, MAC, cycle,
+wait, and stall accounting.
+
+The default 16K-token/256-feature V-buffer parameters are a functional address
+limit, not an area claim. Synthesis studies must compare full-head SRAM against
+tiled buffering or a second compressed-V decode pass after Softmax.
+
 ## Source layout
 
 ```text

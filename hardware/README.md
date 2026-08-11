@@ -42,6 +42,10 @@ artifacts or simulator dependencies.
   reciprocal-square-root ROM, followed by a sequence-wide stable softmax with
   SRAM buffering, a clamped Q16 exponential LUT, one shared reciprocal, Q0.15
   output weights, Decoupled backpressure, and cycle/stall counters.
+- A synchronous V packet store changes the decompressor's pack-major stream
+  into tagged feature/pack replay. A 16-lane Q0.15-by-Q6 AV engine reuses each
+  weight pack across V features and emits exact Q21 feature results with
+  partial-pack masking and full progress/stall statistics.
 
 ## Layout
 

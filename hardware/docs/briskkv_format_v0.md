@@ -426,6 +426,42 @@ These choices define the current Chisel reference arithmetic, not a Format v0
 on-wire field. A later synthesis iteration may replace the combinational shared
 reciprocal with an iterative reciprocal unit without changing packet formats.
 
+### 7.6 Buffered V replay and 16-lane AV accumulation
+
+The decompressor produces V in pack-major/feature-major order, while AV needs
+to reuse one Softmax weight pack for every V feature. `VPacketBuffer` stores the
+validated Q6 V packet stream in synchronous memory at:
+
+```text
+v_address = pack_index * feature_dim + feature_index
+```
+
+After all V descriptors are loaded, the buffer accepts tagged `(pack_index,
+feature_index)` read requests. It permits one outstanding synchronous read and
+holds the response under backpressure. Descriptor, pack, feature, block,
+valid-lane, and final markers are checked while loading.
+
+`SoftmaxVAccumulator` stores the Q0.15 Softmax packets once, then traverses V in
+feature-major/pack-major compute order. For each pack it performs 16 parallel
+products and one adder-tree reduction:
+
+```text
+lane_product_q21 = weight_q15 * value_q6
+feature_q21      = sum_over_all_valid_tokens(lane_product_q21)
+```
+
+The exact signed accumulator is 50 bits by default and no Q21-to-Q6 rounding
+is performed in this stage. Invalid lanes in a partial final pack do not
+contribute, even if their stored data is non-zero. Completion occurs only after
+the final feature result has been accepted by the downstream consumer.
+
+`SoftmaxVComputePipeline` joins V storage and AV accumulation and exports load,
+read, response, output, MAC, wait, and backpressure counters. Its default
+16,384-token by 256-feature address capacity is a functional upper bound. A
+full instantiated buffer at that bound is large; synthesis evaluation must
+compare it with tiled on-chip storage or a second compressed-V read/decode pass
+after Softmax. This storage-policy choice does not change Format v0 encoding.
+
 ## 8. Named components in one layer
 
 Format v0 exposes the following independent byte arrays:
@@ -511,6 +547,9 @@ Completed in the Python reference model:
 - sequence-wide stable softmax with synchronous logit/exponent memories,
   clamped Q16 exponential LUT, shared Q32 reciprocal, Q0.15 weights, partial
   pack handling, independent output backpressure, and performance counters.
+- synchronous tagged V packet buffering plus 16-lane Q0.15-by-Q6 AV
+  accumulation, exact Q21 feature outputs, feature/pack replay, partial-pack
+  masking, completion-after-drain semantics, and wait/stall/MAC counters.
 
 Not yet completed:
 
