@@ -75,6 +75,12 @@
       "role": "expected_output",
       "sha256": "47fa0b6046094c9d362c924fdaa97615d0ada62768ee9fcb7f8d7be2b9e73008"
     },
+    "expected_qk_logits_q12_i64.bin": {
+      "bytes": 512,
+      "file": "expected_qk_logits_q12_i64.bin",
+      "role": "expected_output",
+      "sha256": "bef04d953781bba9ce367e092f21bd080445d1fcf6e3b86efc18dfbc36065a0a"
+    },
     "expected_v_dequant_f32.bin": {
       "bytes": 1024,
       "file": "expected_v_dequant_f32.bin",
@@ -165,6 +171,12 @@
       "role": "decoder_input",
       "sha256": "c87ae9139e830c5a91babbde9ff06e6c2a32737916dc1f388586031cd8cb6b62"
     },
+    "qk_query_q6_i32.bin": {
+      "bytes": 16,
+      "file": "qk_query_q6_i32.bin",
+      "role": "compute_input",
+      "sha256": "92936bbc1e5393c0a09bd3d700831d8440acbe9f483a8ee0422794ac42178e6c"
+    },
     "v_encode_lengths.bin": {
       "bytes": 6,
       "file": "v_encode_lengths.bin",
@@ -209,9 +221,17 @@
     "pack_size": 16,
     "v_zero_point_bits": 5
   },
+  "qk": {
+    "accumulator_bits": 44,
+    "accumulator_fractional_bits": 12,
+    "input_bits": 18,
+    "input_fractional_bits": 6,
+    "query_replayed_per_pack": true
+  },
   "source": "deterministic_synthetic",
   "tensors": {
     "expected_dequant_dtype": "float32_le",
+    "expected_qk_logits_dtype": "int64_le_q12",
     "k_metadata_shape": [
       1,
       1,
@@ -226,6 +246,7 @@
       64,
       4
     ],
+    "qk_query_dtype": "int32_le_q6",
     "raw_input_exponent_dtype": "int8",
     "raw_input_q_dtype": "uint8",
     "raw_input_zero_dtype": "int8",
@@ -241,6 +262,7 @@
     "bitpack_roundtrip": true,
     "bucket_metadata_roundtrip": true,
     "compact_metadata_roundtrip": true,
-    "joint_q_metadata_dequant_roundtrip": true
+    "joint_q_metadata_dequant_roundtrip": true,
+    "qk_fixed_point_reference": true
   }
 }

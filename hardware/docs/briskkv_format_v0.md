@@ -319,9 +319,49 @@ must not contribute to computation.
 K and V packet channels retain independent backpressure. The compute wrapper
 holds the decompression result until both final feature packets have been
 accepted, so command completion cannot race ahead of unconsumed compute data.
-The current module defines the transport and indexing contract only: query
-storage, QK MACs, softmax, attention-weight storage, and AV MACs are not yet
-implemented.
+`QkDotProductAccumulator` consumes one query record and one K feature packet
+atomically. The query record carries `value`, `feature_index`, `pack_index`, and
+`last`, allowing the accumulator to validate both streams before consuming
+them. For every accepted feature it performs 16 signed products in
+parallel and updates one accumulator per token lane. The Format v0 compute
+profile uses signed Q6 query/K inputs and signed 44-bit Q12 accumulators. The
+module emits one `QkLogitPacket` after the final feature of each pack:
+
+```text
+logits[16]          signed 44-bit, 12 implied fractional bits
+valid_tokens        copied from the K pack
+pack_index
+block_index
+pack_within_block
+last
+```
+
+Invalid lanes are forced to zero. The module validates query/K feature indices,
+descriptor/pack/block indices, pack-local `valid_tokens`, and that `last` only
+occurs on a final feature. Query and K channels cannot be consumed separately.
+It holds the completed logit packet under backpressure and counts active cycles,
+accepted packets, valid-lane MAC operations, query/key wait cycles, and
+downstream stalls.
+
+The default accumulator is sized for `feature_dim <= 256`; the module rejects a
+larger runtime dimension. Both the maximum feature dimension and accumulator
+width are elaboration parameters, with an elaboration-time width check against
+the worst-case signed sum.
+
+`QueryReplayBuffer` supplies that query stream. It loads the signed Q6 query
+vector once into a synchronous memory and replays features `0..feature_dim-1`
+for every K pack. A two-entry response queue hides the one-cycle memory latency,
+holds records under backpressure, and sustains one query feature per cycle after
+priming. Every replayed record includes its pack/feature indices and the final
+marker. Runtime validation rejects zero pack counts, zero feature dimensions,
+and dimensions above the elaboration-time memory capacity.
+
+`QkComputePipeline` composes the replay buffer with the 16-lane accumulator. Its
+command supplies `feature_dim` and `pack_count`; its input query vector contains
+only `feature_dim` values, while its K input contains `pack_count * feature_dim`
+packets. Completion is issued only after the final replayed query/K feature has
+produced and drained its logit packet. The `1/sqrt(feature_dim)` scale, softmax,
+attention-weight storage, and AV MAC remain separate later stages.
 
 ## 8. Named components in one layer
 

@@ -26,6 +26,14 @@ class GoldenVectorExportTest(unittest.TestCase):
                 "joint_q_metadata_dequant_roundtrip"
             ]
         )
+        self.assertTrue(
+            width0_descriptor["validation"]["qk_fixed_point_reference"]
+        )
+        self.assertEqual(len(width0_files["qk_query_q6_i32.bin"]), 4 * 4)
+        self.assertEqual(
+            len(width0_files["expected_qk_logits_q12_i64.bin"]),
+            64 * 8,
+        )
 
     def test_export_writes_manifest_descriptors_and_refuses_accidental_overwrite(self):
         with tempfile.TemporaryDirectory() as temp_dir:

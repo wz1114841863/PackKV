@@ -78,6 +78,22 @@ V packet suitable for combining 16 attention weights with one V feature.
 packetizers and does not release the shared completion result until both final
 packets have actually been accepted by the compute-side consumers.
 
+`QkDotProductAccumulator` is the first compute datapath stage. It atomically
+accepts one signed Q6 query feature and one 16-lane signed Q6 K feature packet,
+performs 16 parallel multiply-accumulates, and emits one signed 44-bit Q12 logit
+packet after the final feature. It preserves pack/block indices and partial-pack
+lane validity, checks stream ordering, holds results under backpressure, and
+exports cycle, MAC, source-wait, and sink-stall counters. Query replay/storage,
+attention scaling, and softmax remain outside this module.
+
+`QueryReplayBuffer` stores one query vector in synchronous memory and replays it
+for every K pack in pack-major/feature-major order. Its two-entry response queue
+hides SRAM read latency and sustains one feature per cycle after priming while
+preserving Decoupled backpressure. `QkComputePipeline` connects this replay path
+to `QkDotProductAccumulator`, so software loads the query only once per command.
+The joined pipeline checks query/K pack, feature, and final markers and exports
+separate replay and MAC performance counters.
+
 ## Source layout
 
 ```text

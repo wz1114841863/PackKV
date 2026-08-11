@@ -104,6 +104,26 @@ object GoldenVectorLoader {
     IndexedSeq.fill(data.length / 4)(buffer.getFloat())
   }
 
+  def int32LittleEndian(
+    caseName: String,
+    fileName: String
+  ): IndexedSeq[Int] = {
+    val data = bytes(caseName, fileName)
+    require(data.length % 4 == 0)
+    val buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
+    IndexedSeq.fill(data.length / 4)(buffer.getInt())
+  }
+
+  def int64LittleEndian(
+    caseName: String,
+    fileName: String
+  ): IndexedSeq[Long] = {
+    val data = bytes(caseName, fileName)
+    require(data.length % 8 == 0)
+    val buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
+    IndexedSeq.fill(data.length / 8)(buffer.getLong())
+  }
+
   def unpackFixed(
     data: IndexedSeq[Int],
     fieldBits: Int,

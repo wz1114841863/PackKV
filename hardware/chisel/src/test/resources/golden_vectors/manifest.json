@@ -3,21 +3,21 @@
   "cases": [
     {
       "case": "directed_nonidentity",
-      "descriptor_sha256": "9cbeb0ce3678673bd59a81f1da66b7fc52419e21649e778a686fc3a7c68dd5af",
+      "descriptor_sha256": "226b781c7ee8eeb0fc05bcfff8ffafa916f704d8d49bae0a736fa9840539820d",
       "directory": "directed_nonidentity",
-      "file_count": 28
+      "file_count": 30
     },
     {
       "case": "directed_width0",
-      "descriptor_sha256": "dc2a2603a63dce511e461024482ad80cdcc1463d5444b3ac42247f09f9f415fd",
+      "descriptor_sha256": "a283e337a4277f2e2d90fcd7297b901a62f65fd79bf6f6a4e532149d4415bd03",
       "directory": "directed_width0",
-      "file_count": 28
+      "file_count": 30
     },
     {
       "case": "random_seed_20260809",
-      "descriptor_sha256": "292c1eaf632cdeb95af6a814acca67ebeae4807e77a1c6f71d2e944fe573d7ff",
+      "descriptor_sha256": "af3c1454fccca9d2d97a9228e43f56ad57558a70fd0c179b9901a980897e054c",
       "directory": "random_seed_20260809",
-      "file_count": 28
+      "file_count": 30
     }
   ],
   "format": "briskkv-format-v0"

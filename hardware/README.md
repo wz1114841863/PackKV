@@ -29,6 +29,12 @@ artifacts or simulator dependencies.
 - A compute-facing adapter aggregates scalar feature-major K/V results into
   16-token lane packets with pack/block/feature indices, valid-lane counts,
   padding suppression, and completion delayed until both packet streams drain.
+- A 16-lane QK datapath atomically joins one query feature with one K feature
+  packet, accumulates exact Q12 logits across the feature dimension, preserves
+  partial-pack validity, and reports source/sink stall and MAC counters.
+- A synchronous Query replay buffer stores one Q6 query vector, replays it once
+  per K pack at one feature per cycle after priming, and forms a complete
+  query-replay plus QK compute pipeline without software-side query repetition.
 
 ## Layout
 

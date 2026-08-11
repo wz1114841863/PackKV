@@ -256,6 +256,27 @@ def build_case_artifacts(case: GoldenVectorCase) -> Tuple[dict, Dict[str, bytes]
     if not torch.equal(decoded_v.to(torch.float32), expected_v.to(torch.float32)):
         raise AssertionError("golden V joint q/metadata decode mismatch")
 
+    feature_dim = case.k_q.shape[-1]
+    query_fixed_q6 = (
+        (torch.arange(feature_dim, dtype=torch.int64) * 37 + 11) % 193
+    ) - 96
+    expected_k_fixed_q6 = torch.round(expected_k.to(torch.float64) * 64).to(
+        torch.int64
+    )
+    expected_qk_logits_q12 = torch.sum(
+        expected_k_fixed_q6 * query_fixed_q6,
+        dim=-1,
+    )
+    expected_qk_float = torch.sum(
+        expected_k.to(torch.float64) * (query_fixed_q6.to(torch.float64) / 64),
+        dim=-1,
+    )
+    if not torch.equal(
+        expected_qk_logits_q12,
+        torch.round(expected_qk_float * 4096).to(torch.int64),
+    ):
+        raise AssertionError("golden QK fixed-point reference mismatch")
+
     audit = verify_repack_bitstream_roundtrip(
         case.k_q,
         case.v_q,
@@ -307,10 +328,15 @@ def build_case_artifacts(case: GoldenVectorCase) -> Tuple[dict, Dict[str, bytes]
         "expected_v_exponent.bin": _raw_tensor_bytes(v_exponent_storage, "i1"),
         "expected_k_dequant_f32.bin": _raw_tensor_bytes(expected_k, "<f4"),
         "expected_v_dequant_f32.bin": _raw_tensor_bytes(expected_v, "<f4"),
+        "qk_query_q6_i32.bin": _raw_tensor_bytes(query_fixed_q6, "<i4"),
+        "expected_qk_logits_q12_i64.bin": _raw_tensor_bytes(
+            expected_qk_logits_q12, "<i8"
+        ),
     }
 
     roles = {
         name: (
+            "compute_input" if name == "qk_query_q6_i32.bin" else
             "encoder_input" if name.startswith("input_") else
             "decoder_input" if name in {
                 "bucket_counts.bin", "k_zero_points.bin", "k_exponents.bin",
@@ -346,6 +372,15 @@ def build_case_artifacts(case: GoldenVectorCase) -> Tuple[dict, Dict[str, bytes]
             "raw_input_zero_dtype": "int8",
             "raw_input_exponent_dtype": "int8",
             "expected_dequant_dtype": "float32_le",
+            "qk_query_dtype": "int32_le_q6",
+            "expected_qk_logits_dtype": "int64_le_q12",
+        },
+        "qk": {
+            "input_bits": 18,
+            "input_fractional_bits": 6,
+            "accumulator_bits": 44,
+            "accumulator_fractional_bits": 12,
+            "query_replayed_per_pack": True,
         },
         "bucket": {
             "count_field_bits": bucket_metadata.bucket_count_field_bits,
@@ -380,6 +415,7 @@ def build_case_artifacts(case: GoldenVectorCase) -> Tuple[dict, Dict[str, bytes]
             "bitpack_roundtrip": True,
             "compact_metadata_roundtrip": True,
             "joint_q_metadata_dequant_roundtrip": True,
+            "qk_fixed_point_reference": True,
         },
     }
     return descriptor, files
