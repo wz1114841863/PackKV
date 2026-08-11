@@ -84,7 +84,7 @@ performs 16 parallel multiply-accumulates, and emits one signed 44-bit Q12 logit
 packet after the final feature. It preserves pack/block indices and partial-pack
 lane validity, checks stream ordering, holds results under backpressure, and
 exports cycle, MAC, source-wait, and sink-stall counters. Query replay/storage,
-attention scaling, and softmax remain outside this module.
+attention scaling, and softmax are implemented as following pipeline stages.
 
 `QueryReplayBuffer` stores one query vector in synchronous memory and replays it
 for every K pack in pack-major/feature-major order. Its two-entry response queue
@@ -101,6 +101,19 @@ bucket streams. Its tagged result is held until decompression completes and the
 final QK, V, and bucket outputs have all drained. Directed golden-vector tests
 cover the complete compressed-byte-to-Q12-logit path and invalid command
 geometry.
+
+`AttentionScaleUnit` uses a 256-entry Q18 reciprocal-square-root ROM to apply
+the runtime `1/sqrt(featureDim)` scale to Q12 logits. It uses symmetric
+round-to-nearest arithmetic, preserves packet metadata, rejects unsupported
+geometry, and reports packet/cycle/stall counters.
+
+`StreamingSoftmax` performs sequence-wide, numerically stable fixed-point
+softmax rather than normalizing each 16-token pack independently. It buffers
+scaled logits in synchronous memory, finds the global maximum, evaluates a
+Q16 `exp(x-max)` LUT at 1/16 steps over `[-8, 0]`, accumulates one denominator,
+and normalizes through one shared Q32 reciprocal followed by 16 parallel
+multipliers. The output is an independently backpressured Q0.15 weight packet.
+`QkScaleSoftmaxPipeline` composes the scaler and softmax stages.
 
 ## Source layout
 

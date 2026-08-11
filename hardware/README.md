@@ -38,6 +38,10 @@ artifacts or simulator dependencies.
 - The integrated decompression-to-QK top accepts complete compressed K/V and
   metadata byte streams, consumes K through the QK datapath, exposes aligned V
   and bucket outputs, and delays its tagged result until every output drains.
+- A hardware-oriented Q12-to-Q12 attention scaler uses a runtime feature-dimension
+  reciprocal-square-root ROM, followed by a sequence-wide stable softmax with
+  SRAM buffering, a clamped Q16 exponential LUT, one shared reciprocal, Q0.15
+  output weights, Decoupled backpressure, and cycle/stall counters.
 
 ## Layout
 

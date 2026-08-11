@@ -389,6 +389,43 @@ be consumed. Invalid descriptor geometry is handled by the existing compute
 controller without starting Query replay; a feature dimension exceeding Query
 memory capacity is rejected locally without consuming compressed inputs.
 
+### 7.5 Fixed-point attention scale and streaming softmax
+
+`AttentionScaleUnit` consumes the signed Q12 `QkLogitPacket` stream. For a
+runtime feature dimension `d`, it selects the following unsigned Q18 constant
+from an elaboration-time ROM:
+
+```text
+scale_q18[d] = round((1 / sqrt(d)) * 2^18)
+scaled_q12   = symmetric_round(logit_q12 * scale_q18[d] / 2^18)
+```
+
+The current qualified runtime range is `1 <= d <= 256`. This replaces a
+runtime square-root/divider with a small constant ROM. Scaling cannot increase
+the absolute logit magnitude because `d >= 1`, so the signed 44-bit Q12 width
+is preserved.
+
+`StreamingSoftmax` normalizes across the complete token sequence, not within
+each 16-token pack. Its hardware reference state machine has three memory
+passes:
+
+1. accept Q12 packets into logit SRAM and find the global maximum;
+2. replay logits, evaluate `exp(x - maximum)`, accumulate the denominator, and
+   store exponent packets;
+3. calculate one shared reciprocal and stream normalized Q0.15 packets.
+
+The exponential input is rounded to 1/16 steps and clamped to `[-8, 0]`. LUT
+entries use unsigned Q16, including `exp(0) = 65536`. The denominator has
+enough width for 16,384 tokens. One Q32 reciprocal is calculated per sequence;
+the 16 lanes then use parallel multiply-and-shift normalization rather than 16
+parallel dividers. Invalid lanes in the final pack have zero exponent and zero
+weight. The module stores and checks pack/block/final markers and holds every
+output packet under backpressure.
+
+These choices define the current Chisel reference arithmetic, not a Format v0
+on-wire field. A later synthesis iteration may replace the combinational shared
+reciprocal with an iterative reciprocal unit without changing packet formats.
+
 ## 8. Named components in one layer
 
 Format v0 exposes the following independent byte arrays:
@@ -470,6 +507,10 @@ Completed in the Python reference model:
 - 16-token compute-side K/V feature packetization with partial-pack lane masks,
   explicit pack/block/feature indexing, independent channel backpressure, and
   completion-after-drain semantics.
+- Q18 reciprocal-square-root attention scaling with symmetric Q12 rounding;
+- sequence-wide stable softmax with synchronous logit/exponent memories,
+  clamped Q16 exponential LUT, shared Q32 reciprocal, Q0.15 weights, partial
+  pack handling, independent output backpressure, and performance counters.
 
 Not yet completed:
 
