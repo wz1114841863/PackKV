@@ -158,6 +158,21 @@ bucket_id    = count(score >= threshold[j])
 written into four FIFO queues and read back in ascending bucket-ID order.
 Relative token order inside each bucket is preserved.
 
+The synthesizable `KvTokenJoinBucketRouter` implements the same behavior with
+one 64-token block buffer. K and V metadata are accepted as an atomic pair, and
+each K/V q feature is accepted as another atomic pair. Both sides must carry
+the same token tag, feature index, and final marker. After classification, the
+router scans original token indices for bucket 0 through bucket 3; this is
+equivalent to four stable FIFOs but does not require a comparison sorting
+network or a stored 64-entry permutation. The four occupancies are emitted as
+one `BucketCountRecord`; the later byte encoder stores only the first three.
+
+Router output is token-major: one joined metadata record precedes all joined
+K/V q features for that routed token. Dynamic bit-packing requires
+pack-major/feature-major/token-major order, so a subsequent pack transpose and
+bit-packer stage is still required. The router alone is not a complete Format
+v0 encoder.
+
 The decoder does not need the thresholds. For each block it receives the first
 three bucket occupancies as three 7-bit unsigned fields. The fourth is derived:
 
@@ -623,6 +638,9 @@ Completed in the Python reference model:
   backpressure and non-zero-padding rejection tests.
 - Chisel four-bucket count decoder, including multi-block backpressure,
   per-block padding, and count-sum validation tests.
+- Chisel write-side K/V token join and stable `k_sum` four-bucket router,
+  including independent backpressure, exact metadata association, bucket-count
+  validation, and whole-block rejection on a K/V tag mismatch.
 - Chisel pack-descriptor decoder and runtime-width payload unpacker;
 - integrated Chisel dynamic bit unpacker verified value-for-value against all
   committed directed/random K and V vectors, including zero-width packs and

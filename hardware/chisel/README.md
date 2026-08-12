@@ -53,6 +53,15 @@ point, or q values exceed Format v0 are rejected before either output stream is
 made valid. The module is intentionally standalone: bucket routing and dynamic
 bit-packing remain separate write-side stages.
 
+`KvTokenJoinBucketRouter` is the next write-side stage. It atomically joins K
+and V metadata and q features by token tag, buffers one 64-token block, and
+computes `k_sum` from the K q vector. Three integer equal-width thresholds
+classify tokens into four buckets. The output walks original token indices once
+per bucket, implementing stable FIFO order without a comparison sorter or a
+stored permutation. Routed K q, V q, K/V metadata, and the token tag remain one
+record. A mismatched tag, feature order, marker, or metadata field rejects the
+whole block before any bucket header or routed value becomes valid.
+
 `BufferedPackMetadataDequantizer` is the default metadata joiner in
 `KvStreamDequantizer`. It uses two 16-entry zero/exponent banks so one pack can
 be consumed while the next is prefetched. Both the single- and double-buffered
