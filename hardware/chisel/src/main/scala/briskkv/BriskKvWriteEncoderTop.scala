@@ -82,15 +82,23 @@ class BriskKvWriteEncoderTop(
   inputBits: Int = 24,
   inputFractionalBits: Int = 12,
   maximumFeatureDim: Int = 256,
+  maximumTokens: Int = 16384,
   metadataBits: Int = 8,
   countBits: Int = 32,
   tagBits: Int = 32,
-  enableStats: Boolean = true
+  enableStats: Boolean = true,
+  quantParameterArchitecture: QuantParameterArchitecture =
+    QuantParameterArchitecture.V1SingleStage
 ) extends Module {
   private val format = BriskKvFormatV0.params
   private val tokenIndexBits = log2Ceil(format.blockTokens)
+  private val maximumBlocks = maximumTokens / format.blockTokens
+  private val featureCountBits = math.max(1, log2Ceil(maximumFeatureDim + 1))
+  private val blockCountBits = math.max(1, log2Ceil(maximumBlocks + 1))
 
   require(maximumFeatureDim >= 2 && isPow2(maximumFeatureDim))
+  require(maximumTokens >= format.blockTokens)
+  require(maximumTokens % format.blockTokens == 0)
   require(inputFractionalBits == 12)
 
   val io = IO(
@@ -111,7 +119,8 @@ class BriskKvWriteEncoderTop(
       metadataBits = metadataBits,
       countBits = countBits,
       tagBits = tagBits,
-      enableStats = enableStats
+      enableStats = enableStats,
+      parameterArchitecture = quantParameterArchitecture
     )
   )
   val vQuantizer = Module(
@@ -123,7 +132,8 @@ class BriskKvWriteEncoderTop(
       metadataBits = metadataBits,
       countBits = countBits,
       tagBits = tagBits,
-      enableStats = enableStats
+      enableStats = enableStats,
+      parameterArchitecture = quantParameterArchitecture
     )
   )
   val router = Module(
@@ -148,11 +158,12 @@ class BriskKvWriteEncoderTop(
       metadataBits,
       countBits,
       tagBits,
-      enableStats
+      enableStats,
+      Some(maximumTokens)
     )
   )
   val bucketEncoder = Module(
-    new BucketCountEncoder(countBits, enableStats)
+    new BucketCountEncoder(countBits, enableStats, Some(maximumBlocks))
   )
 
   private val Seq(
@@ -165,8 +176,8 @@ class BriskKvWriteEncoderTop(
     sFault
   ) = Enum(7)
   val state = RegInit(sIdle)
-  val featureDimReg = RegInit(0.U(countBits.W))
-  val blocksRemaining = RegInit(0.U(countBits.W))
+  val featureDimReg = RegInit(0.U(featureCountBits.W))
+  val blocksRemaining = RegInit(0.U(blockCountBits.W))
   val blockIndexReg = RegInit(0.U(countBits.W))
   val tokenIndexReg = RegInit(0.U(tokenIndexBits.W))
   val tokenTagReg = RegInit(0.U(tagBits.W))
@@ -187,13 +198,12 @@ class BriskKvWriteEncoderTop(
   val rejectedTransactions = RegInit(0.U(64.W))
 
   private val maximumCount = (BigInt(1) << countBits) - 1
-  private val maximumBlockCount = maximumCount >> tokenIndexBits
   val finalBlockIndexWide = io.firstBlockIndex +& io.blockCount - 1.U
   val commandValid = io.featureDim =/= 0.U &&
     io.featureDim <= maximumFeatureDim.U &&
     !io.featureDim(0) &&
     io.blockCount =/= 0.U &&
-    io.blockCount <= maximumBlockCount.U &&
+    io.blockCount <= maximumBlocks.U &&
     finalBlockIndexWide <= maximumCount.U
   val finalBlock = blocksRemaining === 1.U
   val finalToken = tokenIndexReg === (format.blockTokens - 1).U
@@ -271,8 +281,8 @@ class BriskKvWriteEncoderTop(
 
   doneReg := false.B
   when(io.start && state === sIdle) {
-    featureDimReg := io.featureDim
-    blocksRemaining := io.blockCount
+    featureDimReg := io.featureDim(featureCountBits - 1, 0)
+    blocksRemaining := io.blockCount(blockCountBits - 1, 0)
     blockIndexReg := io.firstBlockIndex
     tokenIndexReg := 0.U
     errorReg := !commandValid

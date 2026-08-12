@@ -669,6 +669,11 @@ Completed in the Python reference model:
   Format v0 byte streams, checked across two consecutive 64-token blocks under
   independent output backpressure. The current block-scoped q encoder profile
   rejects odd feature dimensions so block concatenation cannot add padding.
+- Real Chisel encode-to-decode round trip across two consecutive blocks: all
+  eleven byte streams emitted by `BriskKvWriteEncoderTop` are replayed without
+  transformation into `DualKvDecompressionController`; non-zero K/V payloads,
+  stable bucket routing, compact metadata, reconstructed Q6 values, and both
+  bucket records are checked under independent randomized backpressure.
 - Chisel pack-descriptor decoder and runtime-width payload unpacker;
 - integrated Chisel dynamic bit unpacker verified value-for-value against all
   committed directed/random K and V vectors, including zero-width packs and

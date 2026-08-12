@@ -53,16 +53,26 @@ class DynamicBitPackEncoder(
   codeValueBits: Int,
   packTokens: Int = BriskKvFormatV0.params.packTokens,
   countBits: Int = 32,
-  enableStats: Boolean = true
+  enableStats: Boolean = true,
+  maximumDescriptorCount: Option[Int] = None
 ) extends Module {
   private val widthBits = log2Ceil(codeValueBits + 1)
   private val laneBits = log2Ceil(packTokens)
   private val reservoirBits = 16
   private val reservoirCountBits = log2Ceil(reservoirBits + 1)
+  private val descriptorIndexBits = maximumDescriptorCount match {
+    case Some(maximum) => math.max(1, log2Ceil(maximum))
+    case None => countBits
+  }
+  private val descriptorRemainingBits = maximumDescriptorCount match {
+    case Some(maximum) => math.max(1, log2Ceil(maximum + 1))
+    case None => countBits
+  }
 
   require(codeValueBits >= 1 && codeValueBits <= 8)
   require(packTokens == 16)
   require(widthBits <= 8)
+  maximumDescriptorCount.foreach(maximum => require(maximum > 0))
 
   val io = IO(
     new DynamicBitPackEncoderIO(codeValueBits, packTokens, countBits)
@@ -86,8 +96,8 @@ class DynamicBitPackEncoder(
   val minimumReg = RegInit(0.U(codeValueBits.W))
   val widthReg = RegInit(0.U(widthBits.W))
   val descriptorLastReg = RegInit(false.B)
-  val expectedDescriptorIndex = RegInit(0.U(countBits.W))
-  val descriptorsRemaining = RegInit(0.U(countBits.W))
+  val expectedDescriptorIndex = RegInit(0.U(descriptorIndexBits.W))
+  val descriptorsRemaining = RegInit(0.U(descriptorRemainingBits.W))
   val payloadLane = RegInit(0.U(laneBits.W))
 
   val minimumReservoir = RegInit(0.U(reservoirBits.W))
@@ -185,8 +195,12 @@ class DynamicBitPackEncoder(
   }
 
   when(io.start && state === sIdle) {
-    val commandValid = io.descriptorCount =/= 0.U
-    descriptorsRemaining := io.descriptorCount
+    val withinConfiguredMaximum = maximumDescriptorCount match {
+      case Some(maximum) => io.descriptorCount <= maximum.U
+      case None => true.B
+    }
+    val commandValid = io.descriptorCount =/= 0.U && withinConfiguredMaximum
+    descriptorsRemaining := io.descriptorCount(descriptorRemainingBits - 1, 0)
     expectedDescriptorIndex := 0.U
     minimumReservoir := 0.U
     widthReservoir := 0.U
@@ -324,4 +338,3 @@ class DynamicBitPackEncoder(
     }
   }
 }
-

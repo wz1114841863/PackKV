@@ -91,6 +91,39 @@ Generate the initial 1024-token, 128-feature SystemVerilog point with:
 bash hardware/scripts/generate_attention_rtl.sh
 ```
 
+Generate the independent stats-off write-side quantization/repacking/encoding
+point with:
+
+```bash
+MAXIMUM_TOKENS=1024 MAXIMUM_FEATURE_DIM=128 ENABLE_STATS=false \
+  bash hardware/scripts/generate_write_encoder_rtl.sh
+```
+
+The default is the `v1` write quantizer used by the 2026081205 DC baseline.
+Set `QUANT_ARCHITECTURE=v2` only when regenerating the three-stage
+quantization-parameter ablation:
+
+```bash
+QUANT_ARCHITECTURE=v2 MAXIMUM_TOKENS=1024 \
+  MAXIMUM_FEATURE_DIM=128 ENABLE_STATS=false \
+  bash hardware/scripts/generate_write_encoder_rtl.sh
+```
+
+`MAXIMUM_TOKENS` must be a positive multiple of 64 and bounds the number of
+full blocks in one write transaction. Format v0 count and index ports remain
+32 bits wide, while the generated implementation sizes internal feature,
+descriptor, and remaining-block counters from these configured maxima.
+
+The two variants are deliberately retained and named independently. `v1`
+selects the exponent and validates zero point/range in one parameter state.
+`v2` registers exponent selection, zero-point calculation, and maximum-code
+validation as three parameter states. `v2` adds two cycles per token while
+preserving the Format v0 quantization and byte-stream contracts; it is an
+ablation rather than the default design.
+
+The write export contains `full` simulation RTL and `dc_logic` RTL with an
+automatically discovered SRAM inventory and bodyless DC black-box stubs.
+
 `full` retains behavioral memory modules for RTL lint/simulation.
 `dc_logic` includes an auto-generated SRAM black-box list and a CACTI-oriented
 memory inventory. Design Compiler must not be assumed to ignore inferred

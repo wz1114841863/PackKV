@@ -13,6 +13,21 @@ Generate the 1024-token, 128-feature baseline:
 bash hardware/scripts/generate_attention_rtl.sh
 ```
 
+Generate the independent 1024-token, 128-feature, signed Q12/24-bit write
+encoder baseline:
+
+```bash
+MAXIMUM_TOKENS=1024 MAXIMUM_FEATURE_DIM=128 ENABLE_STATS=false \
+  bash hardware/scripts/generate_write_encoder_rtl.sh
+```
+
+This creates `briskkv_write_v1_t1024_f128_i24/full` for RTL simulation and
+`briskkv_write_v1_t1024_f128_i24/dc_logic` for
+logic-only DC. The write generator scans
+the emitted CIRCT memories instead of hard-coding module names, then records
+module depth, width, and instance count in `memories.csv` before replacing the
+DC variant with bodyless black-box stubs.
+
 The two generated variants are:
 
 ```text
@@ -29,6 +44,28 @@ export CLOCK_PERIOD=2.0
 export REPORT_DIR=reports_t1024_f128
 dc_shell -f hardware/synthesis/dc/run_dc_logic.tcl
 ```
+
+For the write encoder, upload the complete generated `dc_logic` directory,
+`run_dc_logic.tcl`, and `run_write_encoder_dc.sh`. Absolute paths make the flow
+independent of the server repository layout:
+
+```bash
+export RTL_DIR=/absolute/path/to/briskkv_write_v1_t1024_f128_i24/dc_logic
+export TARGET_LIBRARY=/absolute/path/to/standard_cells.db
+export DC_TCL=/absolute/path/to/run_dc_logic.tcl
+export REPORT_ROOT=/absolute/path/to/write_encoder_reports
+export CLOCK_PERIODS="1.5 1.2 1.0"
+bash /absolute/path/to/run_write_encoder_dc.sh
+```
+
+To reproduce the v2 quantizer-pipeline ablation instead, generate it with
+`QUANT_ARCHITECTURE=v2`; its directory is
+`briskkv_write_v2_t1024_f128_i24/dc_logic`. The selected architecture and its
+extra parameter cycles are recorded in `manifest.json`, so v1/v2 reports must
+not share one report directory.
+
+The wrapper fixes `TOP=BriskKvWriteEncoderTop`, validates the manifest and
+black-box list, and creates one report directory per requested period.
 
 For a matched performance-counter area ablation, first generate both RTL
 variants. The DC server does not need the complete repository, but it must

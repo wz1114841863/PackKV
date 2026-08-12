@@ -221,5 +221,41 @@ class BriskKvWriteEncoderTopSpec
         dut.io.stats.rejectedTransactions.expect(1.U)
       }
     }
+
+    "must reject a transaction larger than the configured token bound" in {
+      simulate(
+        new BriskKvWriteEncoderTop(
+          maximumFeatureDim = 8,
+          maximumTokens = 128,
+          enableStats = false
+        )
+      ) { dut =>
+        dut.io.start.poke(false.B)
+        dut.io.featureDim.poke(2.U)
+        dut.io.blockCount.poke(3.U)
+        dut.io.firstBlockIndex.poke(0.U)
+        dut.io.in.valid.poke(false.B)
+        dut.io.kMinimumOut.ready.poke(false.B)
+        dut.io.kWidthOut.ready.poke(false.B)
+        dut.io.kPayloadOut.ready.poke(false.B)
+        dut.io.vMinimumOut.ready.poke(false.B)
+        dut.io.vWidthOut.ready.poke(false.B)
+        dut.io.vPayloadOut.ready.poke(false.B)
+        dut.io.kZeroOut.ready.poke(false.B)
+        dut.io.kExponentOut.ready.poke(false.B)
+        dut.io.vZeroOut.ready.poke(false.B)
+        dut.io.vExponentOut.ready.poke(false.B)
+        dut.io.bucketCountOut.ready.poke(false.B)
+
+        dut.io.start.poke(true.B)
+        dut.clock.step()
+        dut.io.start.poke(false.B)
+
+        dut.io.done.expect(true.B)
+        dut.io.error.expect(true.B)
+        dut.io.busy.expect(false.B)
+        dut.io.in.ready.expect(false.B)
+      }
+    }
   }
 }

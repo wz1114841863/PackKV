@@ -42,10 +42,19 @@ class CompactKvMetadataEncoder(
   metadataBits: Int = 8,
   countBits: Int = 32,
   tagBits: Int = 32,
-  enableStats: Boolean = true
+  enableStats: Boolean = true,
+  maximumParameterCount: Option[Int] = None
 ) extends Module {
   private val format = BriskKvFormatV0.params
   private val tokenIndexBits = log2Ceil(format.blockTokens)
+  private val parameterCounterBits = maximumParameterCount match {
+    case Some(maximum) => math.max(1, log2Ceil(maximum + 1))
+    case None => countBits
+  }
+
+  maximumParameterCount.foreach { maximum =>
+    require(maximum > 0 && maximum % format.blockTokens == 0)
+  }
 
   val io = IO(
     new CompactKvMetadataEncoderIO(
@@ -58,20 +67,45 @@ class CompactKvMetadataEncoder(
   )
 
   val kZero = Module(
-    new FixedWidthFieldPacker(format.kZeroBits, countBits, enableStats)
+    new FixedWidthFieldPacker(
+      format.kZeroBits,
+      countBits,
+      enableStats,
+      maximumParameterCount
+    )
   )
   val kExponent = Module(
-    new FixedWidthFieldPacker(format.exponentBits, countBits, enableStats)
+    new FixedWidthFieldPacker(
+      format.exponentBits,
+      countBits,
+      enableStats,
+      maximumParameterCount
+    )
   )
   val vZero = Module(
-    new FixedWidthFieldPacker(format.vZeroBits, countBits, enableStats)
+    new FixedWidthFieldPacker(
+      format.vZeroBits,
+      countBits,
+      enableStats,
+      maximumParameterCount
+    )
   )
   val vExponent = Module(
-    new FixedWidthFieldPacker(format.exponentBits, countBits, enableStats)
+    new FixedWidthFieldPacker(
+      format.exponentBits,
+      countBits,
+      enableStats,
+      maximumParameterCount
+    )
   )
 
+  val withinConfiguredMaximum = maximumParameterCount match {
+    case Some(maximum) => io.parameterCount <= maximum.U
+    case None => true.B
+  }
   val commandValid = io.parameterCount =/= 0.U &&
-    io.parameterCount(tokenIndexBits - 1, 0) === 0.U
+    io.parameterCount(tokenIndexBits - 1, 0) === 0.U &&
+    withinConfiguredMaximum
   val childStart = io.start && commandValid
   Seq(kZero, kExponent, vZero, vExponent).foreach { packer =>
     packer.io.start := childStart
@@ -83,7 +117,7 @@ class CompactKvMetadataEncoder(
   val active = RegInit(false.B)
   val doneReg = RegInit(false.B)
   val errorReg = RegInit(false.B)
-  val parameterIndex = RegInit(0.U(countBits.W))
+  val parameterIndex = RegInit(0.U(parameterCounterBits.W))
   val firstBlockIndexReg = RegInit(0.U(countBits.W))
   val childDone = RegInit(VecInit(Seq.fill(4)(false.B)))
 

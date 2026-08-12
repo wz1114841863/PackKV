@@ -193,9 +193,13 @@ def validate_run(
         errors.append(f"DC log does not exist: {dc_log}")
     else:
         log_text = dc_log.read_text(encoding="utf-8", errors="replace")
-        if "BRISK-KV DC completed successfully" not in log_text:
+        success_marker = re.search(
+            r"(?m)^BRISK-KV DC completed successfully\s*$", log_text
+        )
+        failure_marker = re.search(r"(?m)^BRISK-KV DC FAILED:", log_text)
+        if success_marker is None:
             errors.append("DC success marker is absent from the log")
-        if "BRISK-KV DC FAILED:" in log_text:
+        if failure_marker is not None:
             errors.append("DC failure marker is present in the log")
 
     metrics = extract_metrics(report_dir)

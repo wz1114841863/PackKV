@@ -83,6 +83,29 @@ class DcBaselineReportTest(unittest.TestCase):
             self.assertFalse(result["valid"])
             self.assertIn("DC success marker is absent from the log", result["errors"])
 
+    def test_ignores_failure_marker_inside_echoed_tcl_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            reports, log, modules = self._valid_fixture(Path(directory))
+            log.write_text(
+                'puts stderr "BRISK-KV DC FAILED: $briskkv_error"\n'
+                "BRISK-KV DC completed successfully\n",
+                encoding="utf-8",
+            )
+            result = validate_run(reports, log, modules)
+            self.assertTrue(result["valid"])
+
+    def test_rejects_executed_failure_marker_at_line_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            reports, log, modules = self._valid_fixture(Path(directory))
+            log.write_text(
+                "BRISK-KV DC FAILED: compile_ultra returned an error\n",
+                encoding="utf-8",
+            )
+            result = validate_run(reports, log, modules)
+            self.assertFalse(result["valid"])
+            self.assertIn("DC success marker is absent from the log", result["errors"])
+            self.assertIn("DC failure marker is present in the log", result["errors"])
+
 
 if __name__ == "__main__":
     unittest.main()

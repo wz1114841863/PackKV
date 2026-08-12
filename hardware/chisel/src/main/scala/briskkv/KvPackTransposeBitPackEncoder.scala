@@ -48,6 +48,8 @@ class KvPackTransposeBitPackEncoder(
 ) extends Module {
   private val format = BriskKvFormatV0.params
   private val tokenIndexBits = log2Ceil(format.blockTokens)
+  private val maximumDescriptorCount =
+    maximumFeatureDim * (format.blockTokens / format.packTokens)
   private val descriptorCount = Wire(UInt(countBits.W))
 
   val io = IO(
@@ -72,7 +74,8 @@ class KvPackTransposeBitPackEncoder(
       format.kQuantBits,
       format.packTokens,
       countBits,
-      enableStats
+      enableStats,
+      Some(maximumDescriptorCount)
     )
   )
   val vEncoder = Module(
@@ -80,7 +83,8 @@ class KvPackTransposeBitPackEncoder(
       format.vQuantBits,
       format.packTokens,
       countBits,
-      enableStats
+      enableStats,
+      Some(maximumDescriptorCount)
     )
   )
 

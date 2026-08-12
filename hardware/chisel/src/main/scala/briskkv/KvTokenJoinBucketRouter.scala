@@ -135,6 +135,8 @@ class KvTokenJoinBucketRouter(
   private val bucketIdBits = format.bucketIdBits
   private val bucketCountBits = format.bucketCountBits
   private val featureAddressBits = log2Ceil(maximumFeatureDim)
+  private val featureCountBits = math.max(1, log2Ceil(maximumFeatureDim + 1))
+  private val featureIndexBits = math.max(1, log2Ceil(maximumFeatureDim))
   private val memoryDepth = blockTokens * maximumFeatureDim
   private val scoreBits = format.kQuantBits + log2Ceil(maximumFeatureDim) + 1
 
@@ -159,12 +161,14 @@ class KvTokenJoinBucketRouter(
     sIdle,
     sMetadataIn,
     sValuesIn,
+    sPrepareThresholds,
     sClassify,
+    sCountClassified,
     sHeader,
     sFindToken,
     sMetadataOut,
     sValuesOut
-  ) = Enum(8)
+  ) = Enum(10)
   val state = RegInit(sIdle)
 
   val kMemory = SyncReadMem(memoryDepth, UInt(format.kQuantBits.W))
@@ -178,21 +182,25 @@ class KvTokenJoinBucketRouter(
   val bucketIds = Reg(Vec(blockTokens, UInt(bucketIdBits.W)))
   val bucketCounts = RegInit(VecInit(Seq.fill(bucketCount)(0.U(bucketCountBits.W))))
 
-  val featureDimReg = RegInit(0.U(countBits.W))
+  val featureDimReg = RegInit(0.U(featureCountBits.W))
   val blockIndexReg = RegInit(0.U(countBits.W))
   val blockLastReg = RegInit(false.B)
   val collectTokenIndex = RegInit(0.U(tokenIndexBits.W))
-  val collectFeatureIndex = RegInit(0.U(countBits.W))
+  val collectFeatureIndex = RegInit(0.U(featureIndexBits.W))
   val currentTokenTag = RegInit(0.U(tagBits.W))
   val scoreAccumulator = RegInit(0.U(scoreBits.W))
   val scoreMinimum = RegInit(0.U(scoreBits.W))
   val scoreMaximum = RegInit(0.U(scoreBits.W))
+  val threshold1Reg = RegInit(0.U(scoreBits.W))
+  val threshold2Reg = RegInit(0.U(scoreBits.W))
+  val threshold3Reg = RegInit(0.U(scoreBits.W))
   val classifyIndex = RegInit(0.U(tokenIndexBits.W))
+  val classifiedBucketReg = RegInit(0.U(bucketIdBits.W))
   val routeBucket = RegInit(0.U(bucketIdBits.W))
   val scanTokenIndex = RegInit(0.U(tokenIndexBits.W))
   val selectedTokenIndex = RegInit(0.U(tokenIndexBits.W))
   val routedTokenIndex = RegInit(0.U(tokenIndexBits.W))
-  val routeFeatureIndex = RegInit(0.U(countBits.W))
+  val routeFeatureIndex = RegInit(0.U(featureIndexBits.W))
   val emittedInBucket = RegInit(0.U(bucketCountBits.W))
   val qOutputValid = RegInit(false.B)
   val qOutputReg = Reg(
@@ -311,14 +319,15 @@ class KvTokenJoinBucketRouter(
   }
 
   val span = scoreMaximum - scoreMinimum + 1.U
-  val threshold1 = scoreMinimum + ((span + 3.U) >> 2)
-  val threshold2 = scoreMinimum + (((span << 1) + 3.U) >> 2)
-  val threshold3 = scoreMinimum + ((span + (span << 1) + 3.U) >> 2)
+  val computedThreshold1 = scoreMinimum + ((span + 3.U) >> 2)
+  val computedThreshold2 = scoreMinimum + (((span << 1) + 3.U) >> 2)
+  val computedThreshold3 =
+    scoreMinimum + ((span + (span << 1) + 3.U) >> 2)
   val scoreToClassify = scores(classifyIndex)
   val classifiedBucketWide =
-    (scoreToClassify >= threshold1) +&
-      (scoreToClassify >= threshold2) +&
-      (scoreToClassify >= threshold3)
+    (scoreToClassify >= threshold1Reg) +&
+      (scoreToClassify >= threshold2Reg) +&
+      (scoreToClassify >= threshold3Reg)
   val classifiedBucket = classifiedBucketWide(bucketIdBits - 1, 0)
 
   val headerFire = io.bucketCountsOut.valid && io.bucketCountsOut.ready
@@ -328,13 +337,17 @@ class KvTokenJoinBucketRouter(
   when(io.start && state === sIdle && !qOutputValid && !readOutstanding) {
     val commandValid = io.featureDim =/= 0.U &&
       io.featureDim <= maximumFeatureDim.U
-    featureDimReg := io.featureDim
+    featureDimReg := io.featureDim(featureCountBits - 1, 0)
     blockIndexReg := io.blockIndex
     blockLastReg := io.blockLast
     collectTokenIndex := 0.U
     collectFeatureIndex := 0.U
     scoreAccumulator := 0.U
+    threshold1Reg := 0.U
+    threshold2Reg := 0.U
+    threshold3Reg := 0.U
     classifyIndex := 0.U
+    classifiedBucketReg := 0.U
     routeBucket := 0.U
     scanTokenIndex := 0.U
     routedTokenIndex := 0.U
@@ -436,7 +449,7 @@ class KvTokenJoinBucketRouter(
         joinedTokens := joinedTokens + 1.U
         when(collectTokenIndex === (blockTokens - 1).U) {
           classifyIndex := 0.U
-          state := sClassify
+          state := sPrepareThresholds
         }.otherwise {
           collectTokenIndex := collectTokenIndex + 1.U
           state := sMetadataIn
@@ -447,9 +460,31 @@ class KvTokenJoinBucketRouter(
       }
     }
 
+    // Register the equal-width bucket thresholds before classification. This
+    // breaks the score min/max -> threshold arithmetic -> comparisons path.
+    when(state === sPrepareThresholds) {
+      threshold1Reg := computedThreshold1(scoreBits - 1, 0)
+      threshold2Reg := computedThreshold2(scoreBits - 1, 0)
+      threshold3Reg := computedThreshold3(scoreBits - 1, 0)
+      state := sClassify
+    }
+
+    // Classification and occupancy update intentionally occupy separate
+    // cycles. The first cycle records the token bucket; the second performs a
+    // fixed-register increment instead of a dynamic Vec read-modify-write.
     when(state === sClassify) {
       bucketIds(classifyIndex) := classifiedBucket
-      bucketCounts(classifiedBucket) := bucketCounts(classifiedBucket) + 1.U
+      classifiedBucketReg := classifiedBucket
+      state := sCountClassified
+    }
+
+    when(state === sCountClassified) {
+      switch(classifiedBucketReg) {
+        is(0.U) { bucketCounts(0) := bucketCounts(0) + 1.U }
+        is(1.U) { bucketCounts(1) := bucketCounts(1) + 1.U }
+        is(2.U) { bucketCounts(2) := bucketCounts(2) + 1.U }
+        is(3.U) { bucketCounts(3) := bucketCounts(3) + 1.U }
+      }
       when(classifyIndex === (blockTokens - 1).U) {
         when(errorReg) {
           errorReg := true.B
@@ -461,6 +496,7 @@ class KvTokenJoinBucketRouter(
         }
       }.otherwise {
         classifyIndex := classifyIndex + 1.U
+        state := sClassify
       }
     }
 

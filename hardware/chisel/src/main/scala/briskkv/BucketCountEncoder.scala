@@ -28,21 +28,27 @@ class BucketCountEncoderIO(countBits: Int, blockIndexBits: Int) extends Bundle {
 /** Encodes three 7-bit occupancies into one independently aligned header. */
 class BucketCountEncoder(
   blockIndexBits: Int = 32,
-  enableStats: Boolean = true
+  enableStats: Boolean = true,
+  maximumBlockCount: Option[Int] = None
 ) extends Module {
   private val format = BriskKvFormatV0.params
   private val countBits = format.bucketCountBits
   private val headerBits = format.bucketHeaderBytesPerBlock * 8
   private val byteIndexBits = log2Ceil(format.bucketHeaderBytesPerBlock)
+  private val blockCounterBits = maximumBlockCount match {
+    case Some(maximum) => math.max(1, log2Ceil(maximum + 1))
+    case None => blockIndexBits
+  }
 
   require(format.blockTokens == 64)
   require(format.bucketCount == 4)
   require(format.bucketHeaderBytesPerBlock == 3)
+  maximumBlockCount.foreach(maximum => require(maximum > 0))
 
   val io = IO(new BucketCountEncoderIO(countBits, blockIndexBits))
   private val sIdle :: sAccept :: sEmit :: Nil = Enum(3)
   val state = RegInit(sIdle)
-  val blocksRemaining = RegInit(0.U(blockIndexBits.W))
+  val blocksRemaining = RegInit(0.U(blockCounterBits.W))
   val expectedBlockIndex = RegInit(0.U(blockIndexBits.W))
   val header = RegInit(0.U(headerBits.W))
   val byteIndex = RegInit(0.U(byteIndexBits.W))
@@ -91,8 +97,12 @@ class BucketCountEncoder(
   )
 
   when(io.start && state === sIdle) {
-    val commandValid = io.blockCount =/= 0.U
-    blocksRemaining := io.blockCount
+    val withinConfiguredMaximum = maximumBlockCount match {
+      case Some(maximum) => io.blockCount <= maximum.U
+      case None => true.B
+    }
+    val commandValid = io.blockCount =/= 0.U && withinConfiguredMaximum
+    blocksRemaining := io.blockCount(blockCounterBits - 1, 0)
     expectedBlockIndex := io.firstBlockIndex
     header := 0.U
     byteIndex := 0.U

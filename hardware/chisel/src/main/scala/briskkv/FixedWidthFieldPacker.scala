@@ -26,19 +26,26 @@ class FixedWidthFieldPackerIO(fieldBits: Int, countBits: Int) extends Bundle {
 class FixedWidthFieldPacker(
   fieldBits: Int,
   countBits: Int = 32,
-  enableStats: Boolean = true
+  enableStats: Boolean = true,
+  maximumFieldCount: Option[Int] = None
 ) extends Module {
   require(fieldBits >= 1 && fieldBits <= 8)
 
   private val reservoirBits = 16
   private val reservoirCountBits = log2Ceil(reservoirBits + 1)
+  private val fieldCounterBits = maximumFieldCount match {
+    case Some(maximum) => math.max(1, log2Ceil(maximum + 1))
+    case None => countBits
+  }
   private val sIdle :: sAccept :: sEmit :: sFlush :: Nil = Enum(4)
+
+  maximumFieldCount.foreach(maximum => require(maximum > 0))
 
   val io = IO(new FixedWidthFieldPackerIO(fieldBits, countBits))
   val state = RegInit(sIdle)
   val reservoir = RegInit(0.U(reservoirBits.W))
   val reservoirCount = RegInit(0.U(reservoirCountBits.W))
-  val fieldsRemaining = RegInit(0.U(countBits.W))
+  val fieldsRemaining = RegInit(0.U(fieldCounterBits.W))
   val doneReg = RegInit(false.B)
   val errorReg = RegInit(false.B)
   val activeCycles = RegInit(0.U(64.W))
@@ -67,10 +74,14 @@ class FixedWidthFieldPacker(
   val countAppended = reservoirCount + fieldBits.U
 
   when(io.start && state === sIdle) {
-    val commandValid = io.fieldCount =/= 0.U
+    val withinConfiguredMaximum = maximumFieldCount match {
+      case Some(maximum) => io.fieldCount <= maximum.U
+      case None => true.B
+    }
+    val commandValid = io.fieldCount =/= 0.U && withinConfiguredMaximum
     reservoir := 0.U
     reservoirCount := 0.U
-    fieldsRemaining := io.fieldCount
+    fieldsRemaining := io.fieldCount(fieldCounterBits - 1, 0)
     doneReg := !commandValid
     errorReg := !commandValid
     activeCycles := 0.U

@@ -76,6 +76,12 @@ class KvPackTransposeBuffer(
   private val tokenIndexBits = log2Ceil(blockTokens)
   private val packLaneBits = log2Ceil(packTokens)
   private val packCount = blockTokens / packTokens
+  private val featureCountBits = math.max(1, log2Ceil(maximumFeatureDim + 1))
+  private val featureIndexBits = math.max(1, log2Ceil(maximumFeatureDim))
+  private val packIndexBits = math.max(1, log2Ceil(packCount))
+  private val maximumDescriptorCount = packCount * maximumFeatureDim
+  private val descriptorIndexBits =
+    math.max(1, log2Ceil(maximumDescriptorCount))
 
   require(packTokens == 16)
   require(blockTokens == 64)
@@ -101,13 +107,13 @@ class KvPackTransposeBuffer(
   val vBanks = Seq.fill(packTokens)(
     SyncReadMem(maximumFeatureDim, UInt(format.vQuantBits.W))
   )
-  val featureDimReg = RegInit(0.U(countBits.W))
+  val featureDimReg = RegInit(0.U(featureCountBits.W))
   val blockIndexReg = RegInit(0.U(countBits.W))
   val expectedTokenIndex = RegInit(0.U(tokenIndexBits.W))
-  val expectedFeatureIndex = RegInit(0.U(countBits.W))
-  val currentPackIndex = RegInit(0.U(countBits.W))
-  val emitFeatureIndex = RegInit(0.U(countBits.W))
-  val emitDescriptorIndex = RegInit(0.U(countBits.W))
+  val expectedFeatureIndex = RegInit(0.U(featureIndexBits.W))
+  val currentPackIndex = RegInit(0.U(packIndexBits.W))
+  val emitFeatureIndex = RegInit(0.U(featureIndexBits.W))
+  val emitDescriptorIndex = RegInit(0.U(descriptorIndexBits.W))
   val outputValid = RegInit(false.B)
   val outputReg = Reg(
     new KvPackFeatureVector(
@@ -172,7 +178,7 @@ class KvPackTransposeBuffer(
   when(io.start && state === sIdle && !outputValid && !readOutstanding) {
     val commandValid = io.featureDim =/= 0.U &&
       io.featureDim <= maximumFeatureDim.U
-    featureDimReg := io.featureDim
+    featureDimReg := io.featureDim(featureCountBits - 1, 0)
     blockIndexReg := io.blockIndex
     expectedTokenIndex := 0.U
     expectedFeatureIndex := 0.U

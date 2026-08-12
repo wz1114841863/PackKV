@@ -3,6 +3,37 @@ package briskkv
 import chisel3._
 import chisel3.util._
 
+sealed trait QuantParameterArchitecture {
+  def cliName: String
+  def manifestName: String
+  def extraParameterCyclesPerToken: Int
+}
+
+object QuantParameterArchitecture {
+  case object V1SingleStage extends QuantParameterArchitecture {
+    override val cliName = "v1"
+    override val manifestName = "priority-exponent-combined-zero-range"
+    override val extraParameterCyclesPerToken = 0
+  }
+
+  case object V2ThreeStage extends QuantParameterArchitecture {
+    override val cliName = "v2"
+    override val manifestName = "popcount-exponent-registered-zero-range"
+    override val extraParameterCyclesPerToken = 2
+  }
+
+  val supported: Seq[QuantParameterArchitecture] =
+    Seq(V1SingleStage, V2ThreeStage)
+
+  def fromCliName(name: String): QuantParameterArchitecture =
+    supported.find(_.cliName == name).getOrElse(
+      throw new IllegalArgumentException(
+        s"Unsupported quant parameter architecture '$name'; " +
+          s"expected one of ${supported.map(_.cliName).mkString(", ")}"
+      )
+    )
+}
+
 class KvWriteQuantizerInput(inputBits: Int, countBits: Int) extends Bundle {
   val fixedRaw = SInt(inputBits.W)
   val featureIndex = UInt(countBits.W)
@@ -88,13 +119,17 @@ class KvWriteQuantizer(
   metadataBits: Int = 8,
   countBits: Int = 32,
   tagBits: Int = 32,
-  enableStats: Boolean = true
+  enableStats: Boolean = true,
+  parameterArchitecture: QuantParameterArchitecture =
+    QuantParameterArchitecture.V1SingleStage
 ) extends Module {
   private val format = BriskKvFormatV0.params
   private val codeValueBits = if (isKey) format.kQuantBits else format.vQuantBits
   private val zeroPointBits = if (isKey) format.kZeroBits else format.vZeroBits
   private val maximumShift = inputFractionalBits + maximumExponent
   private val roundedBits = inputBits + 2
+  private val featureCountBits = math.max(1, log2Ceil(maximumFeatureDim + 1))
+  private val featureIndexBits = math.max(1, log2Ceil(maximumFeatureDim))
 
   require(inputBits >= 3)
   require(inputFractionalBits == 12)
@@ -114,14 +149,41 @@ class KvWriteQuantizer(
     )
   )
 
-  private val sIdle :: sCollect :: sPrepare :: sMetadata :: sEmit :: Nil =
-    Enum(5)
+  // Keep the v1 state encoding identical to the 2026081205 DC baseline. v2
+  // inserts two states, so its metadata and emit encodings are intentionally
+  // different and remain isolated in its own generated RTL directory.
+  private val parameterStates = Enum(
+    if (parameterArchitecture == QuantParameterArchitecture.V1SingleStage) 5
+    else 7
+  )
+  private val sIdle = parameterStates(0)
+  private val sCollect = parameterStates(1)
+  private val sSelectExponent = parameterStates(2)
+  private val sComputeZero =
+    if (parameterArchitecture == QuantParameterArchitecture.V1SingleStage)
+      parameterStates(2)
+    else parameterStates(3)
+  private val sValidateRange =
+    if (parameterArchitecture == QuantParameterArchitecture.V1SingleStage)
+      parameterStates(2)
+    else parameterStates(4)
+  private val sMetadata =
+    if (parameterArchitecture == QuantParameterArchitecture.V1SingleStage)
+      parameterStates(3)
+    else parameterStates(5)
+  private val sEmit =
+    if (parameterArchitecture == QuantParameterArchitecture.V1SingleStage)
+      parameterStates(4)
+    else parameterStates(6)
   val state = RegInit(sIdle)
   val valueMemory = SyncReadMem(maximumFeatureDim, SInt(inputBits.W))
-  val featureDimReg = RegInit(0.U(countBits.W))
+  // The public Format v0 interface remains countBits wide. Internally the
+  // dimension must represent maximumFeatureDim, while indices only represent
+  // 0 .. maximumFeatureDim - 1.
+  val featureDimReg = RegInit(0.U(featureCountBits.W))
   val tokenTagReg = RegInit(0.U(tagBits.W))
-  val collectIndex = RegInit(0.U(countBits.W))
-  val emitIndex = RegInit(0.U(countBits.W))
+  val collectIndex = RegInit(0.U(featureIndexBits.W))
+  val emitIndex = RegInit(0.U(featureIndexBits.W))
   val minimumReg = Reg(SInt(inputBits.W))
   val maximumReg = Reg(SInt(inputBits.W))
   val zeroPointReg = RegInit(0.S(metadataBits.W))
@@ -216,26 +278,56 @@ class KvWriteQuantizer(
   }
 
   val selectedExponentWide = Wire(SInt((metadataBits + 1).W))
-  selectedExponentWide := (minimumExponent - 1).S
-  for (exponent <- minimumExponent to maximumExponent + 1) {
-    when(rangeRaw >= entryThresholdRaw(exponent).U) {
-      selectedExponentWide := exponent.S
+  if (parameterArchitecture == QuantParameterArchitecture.V1SingleStage) {
+    // DC reference architecture used by the 2026081205 baseline. The
+    // monotonically increasing threshold bank is encoded as the original
+    // priority selection and exponent/zero/range validation shares one state.
+    selectedExponentWide := (minimumExponent - 1).S
+    for (exponent <- minimumExponent to maximumExponent + 1) {
+      when(rangeRaw >= entryThresholdRaw(exponent).U) {
+        selectedExponentWide := exponent.S
+      }
     }
+  } else {
+    // v2 timing experiment: parallel threshold comparisons followed by a
+    // population count. Later states register zero point and range checks.
+    val thresholdMatches = VecInit(
+      (minimumExponent to maximumExponent + 1).map { exponent =>
+        rangeRaw >= entryThresholdRaw(exponent).U
+      }
+    )
+    selectedExponentWide :=
+      PopCount(thresholdMatches).zext + (minimumExponent - 1).S
   }
-  val exponentValid = selectedExponentWide >= minimumExponent.S &&
+  val selectedExponentValid = selectedExponentWide >= minimumExponent.S &&
     selectedExponentWide <= maximumExponent.S
-  val selectedShift = (selectedExponentWide + inputFractionalBits.S).asUInt
+
+  val selectedShift =
+    (selectedExponentWide + inputFractionalBits.S).asUInt
   val selectedZeroWide = roundShiftEven(minimumReg, selectedShift)
   val selectedMaximumCode =
     roundShiftEven(maximumReg, selectedShift) - selectedZeroWide
+
+  // Exponent, zero point, and maximum-code validation are intentionally based
+  // on registers from the preceding stage. This prevents the threshold bank,
+  // runtime power-of-two shift, and range checks from forming one path.
+  val registeredShift = (exponentReg + inputFractionalBits.S).asUInt
+  val computedZeroWide = roundShiftEven(minimumReg, registeredShift)
+  val computedMaximumCode =
+    roundShiftEven(maximumReg, registeredShift) - zeroPointReg
   private val minimumZero = -(BigInt(1) << (zeroPointBits - 1))
   private val maximumZero = (BigInt(1) << (zeroPointBits - 1)) - 1
   private val maximumCode = (BigInt(1) << codeValueBits) - 1
-  val zeroPointValid = selectedZeroWide >= minimumZero.S(roundedBits.W) &&
+  val computedZeroValid = computedZeroWide >= minimumZero.S(roundedBits.W) &&
+    computedZeroWide <= maximumZero.S(roundedBits.W)
+  val computedCodeRangeValid = computedMaximumCode >= 0.S &&
+    computedMaximumCode <= maximumCode.S
+  val selectedZeroValid = selectedZeroWide >= minimumZero.S(roundedBits.W) &&
     selectedZeroWide <= maximumZero.S(roundedBits.W)
-  val codeRangeValid = selectedMaximumCode >= 0.S &&
+  val selectedCodeRangeValid = selectedMaximumCode >= 0.S &&
     selectedMaximumCode <= maximumCode.S
-  val quantParametersValid = exponentValid && zeroPointValid && codeRangeValid
+  val singleStageParametersValid = selectedExponentValid &&
+    selectedZeroValid && selectedCodeRangeValid
 
   val inputFire = io.in.valid && io.in.ready
   val metadataFire = io.metadataOut.valid && io.metadataOut.ready
@@ -265,7 +357,7 @@ class KvWriteQuantizer(
   when(io.start && state === sIdle && !qOutputValid && !readOutstanding) {
     val commandValid = io.featureDim =/= 0.U &&
       io.featureDim <= maximumFeatureDim.U
-    featureDimReg := io.featureDim
+    featureDimReg := io.featureDim(featureCountBits - 1, 0)
     tokenTagReg := io.tokenTag
     collectIndex := 0.U
     emitIndex := 0.U
@@ -319,23 +411,62 @@ class KvWriteQuantizer(
       }
       inputValues := inputValues + 1.U
       when(expectedLast) {
-        state := sPrepare
+        state := sSelectExponent
       }.otherwise {
         collectIndex := collectIndex + 1.U
       }
     }
 
-    when(state === sPrepare) {
-      when(errorReg || !quantParametersValid) {
-        errorReg := true.B
-        rejectedTokens := rejectedTokens + 1.U
-        doneReg := true.B
-        state := sIdle
-      }.otherwise {
-        zeroPointReg := selectedZeroWide.asUInt(metadataBits - 1, 0).asSInt
-        exponentReg :=
-          selectedExponentWide.asUInt(metadataBits - 1, 0).asSInt
-        state := sMetadata
+    if (parameterArchitecture == QuantParameterArchitecture.V1SingleStage) {
+      when(state === sSelectExponent) {
+        when(errorReg || !singleStageParametersValid) {
+          errorReg := true.B
+          rejectedTokens := rejectedTokens + 1.U
+          doneReg := true.B
+          state := sIdle
+        }.otherwise {
+          zeroPointReg :=
+            selectedZeroWide.asUInt(metadataBits - 1, 0).asSInt
+          exponentReg :=
+            selectedExponentWide.asUInt(metadataBits - 1, 0).asSInt
+          state := sMetadata
+        }
+      }
+    } else {
+      when(state === sSelectExponent) {
+        when(errorReg || !selectedExponentValid) {
+          errorReg := true.B
+          rejectedTokens := rejectedTokens + 1.U
+          doneReg := true.B
+          state := sIdle
+        }.otherwise {
+          exponentReg :=
+            selectedExponentWide.asUInt(metadataBits - 1, 0).asSInt
+          state := sComputeZero
+        }
+      }
+
+      when(state === sComputeZero) {
+        when(!computedZeroValid) {
+          errorReg := true.B
+          rejectedTokens := rejectedTokens + 1.U
+          doneReg := true.B
+          state := sIdle
+        }.otherwise {
+          zeroPointReg := computedZeroWide.asUInt(metadataBits - 1, 0).asSInt
+          state := sValidateRange
+        }
+      }
+
+      when(state === sValidateRange) {
+        when(!computedCodeRangeValid) {
+          errorReg := true.B
+          rejectedTokens := rejectedTokens + 1.U
+          doneReg := true.B
+          state := sIdle
+        }.otherwise {
+          state := sMetadata
+        }
       }
     }
 
