@@ -71,6 +71,18 @@ A hardware module is considered implemented only after it passes both:
 See [`docs/briskkv_format_v0.md`](docs/briskkv_format_v0.md) for the normative
 Format v0 component-stream contract.
 
+The write-side metadata path uses `FixedWidthFieldPacker` to serialize compact
+fields LSB-first. `CompactKvMetadataEncoder` produces four independently
+aligned K/V zero-point and exponent streams, while `BucketCountEncoder`
+produces one independently aligned three-byte occupancy header for every
+64-token block.
+
+`BriskKvWriteEncoderTop` connects the complete write path from paired Q12 K/V
+values through token-wise power-of-two quantization, stable four-bucket routing,
+16-token transpose, dynamic bit-packing, and all eleven Format v0 component
+byte streams. It sequences multiple full blocks and reports completion only
+after every output stream has drained.
+
 ## RTL and synthesis baseline
 
 Generate the initial 1024-token, 128-feature SystemVerilog point with:

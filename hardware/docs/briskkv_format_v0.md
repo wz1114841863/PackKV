@@ -101,6 +101,11 @@ zero_bytes     = ceil(parameter_count * zero_bits / 8)
 exponent_bytes = ceil(parameter_count * 4 / 8)
 ```
 
+The synthesizable `CompactKvMetadataEncoder` accepts metadata in routed token
+order and serializes the K-zero, K-exponent, V-zero, and V-exponent components
+as four continuous LSB-first streams. Padding is inserted only after the final
+parameter of the complete transaction, independently for each stream.
+
 Continuous scales and floating-point minima are invalid in Format v0.
 GREEDY and MEDIAN repacking are also outside Format v0 because their current
 software paths do not expose a token permutation that can be applied to the
@@ -183,6 +188,10 @@ count[3] = 64 - count[0] - count[1] - count[2]
 The 21 payload bits are independently padded for every base block, producing a
 three-byte bucket header per block. The decoder must reject a header whose first
 three counts sum to more than 64.
+
+The synthesizable `BucketCountEncoder` enforces this per-block alignment,
+checks that all four occupancies sum to 64, derives and validates the fourth
+occupancy, and emits the three stored counts in LSB-first byte order.
 
 Bucket counts delimit the repacked FIFO regions; they do not reconstruct the
 original token order. Decode-time attention is valid because K and V share the
@@ -653,6 +662,13 @@ Completed in the Python reference model:
 - Chisel 16-token K/V pack transpose and dual dynamic bit-pack encoder, checked
   byte-for-byte against an independent software-format model under six-stream
   backpressure and with zero-width descriptors that emit empty payloads.
+- Chisel write-side compact K/V metadata and bucket-count encoders, checked
+  byte-for-byte against an independent LSB-first software-format model under
+  randomized backpressure, including end padding and invalid-count rejection.
+- Chisel unified write-side encoder from paired Q12 K/V inputs to all eleven
+  Format v0 byte streams, checked across two consecutive 64-token blocks under
+  independent output backpressure. The current block-scoped q encoder profile
+  rejects odd feature dimensions so block concatenation cannot add padding.
 - Chisel pack-descriptor decoder and runtime-width payload unpacker;
 - integrated Chisel dynamic bit unpacker verified value-for-value against all
   committed directed/random K and V vectors, including zero-width packs and
