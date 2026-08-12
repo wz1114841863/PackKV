@@ -1,0 +1,72 @@
+ 
+****************************************
+Report : power
+        -analysis_effort low
+Design : BriskKvAttentionTop
+Version: O-2018.06-SP1
+Date   : Tue Aug 11 23:09:03 2026
+****************************************
+
+
+Library(s) Used:
+
+    tcbn28hpcplusbwp12t30p140lvtssg0p81v125c (File: /home/yaz80/wz_project/dc_project/pdk/TSMC28/tcbn28hpcplusbwp12t30p140lvtssg0p81v125c.db)
+
+
+Operating Conditions: ssg0p81v125c   Library: tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+Wire Load Model Mode: segmented
+
+Design        Wire Load Model            Library
+------------------------------------------------
+BriskKvAttentionTop    ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+AttentionScaleUnit     ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+StreamingSoftmax       ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+QkDotProductAccumulator
+                       ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+DecompressionPipelineController
+                       ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+DecompressionPipelineController_1
+                       ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+KvStreamDequantizer    ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+KvStreamDequantizer_1  ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+DynamicBitUnpacker     ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+BufferedPackMetadataDequantizer
+                       ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+DynamicBitUnpacker_1   ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+BufferedPackMetadataDequantizer_1
+                       ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+PackDescriptorDecoder  ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+PackDescriptorDecoder_1
+                       ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+
+
+Global Operating Voltage = 0.81 
+Power-specific unit information :
+    Voltage Units = 1V
+    Capacitance Units = 1.000000pf
+    Time Units = 1ns
+    Dynamic Power Units = 1mW    (derived from V,C,T units)
+    Leakage Power Units = 1nW
+
+
+  Cell Internal Power  =  17.8940 mW   (95%)
+  Net Switching Power  =   1.0306 mW    (5%)
+                         ---------
+Total Dynamic Power    =  18.9246 mW  (100%)
+
+Cell Leakage Power     =  40.1750 mW
+
+
+                 Internal         Switching           Leakage            Total
+Power Group      Power            Power               Power              Power   (   %    )  Attrs
+--------------------------------------------------------------------------------------------------
+io_pad             0.0000            0.0000            0.0000            0.0000  (   0.00%)
+memory             0.0000            0.0000            0.0000            0.0000  (   0.00%)
+black_box          0.0000        4.7648e-02            0.0000        4.7648e-02  (   0.08%)
+clock_network      0.6899            0.5734        6.8429e+06            8.1062  (  13.72%)
+register          16.4168        3.0378e-03        8.4035e+06           24.8234  (  42.00%)
+sequential         0.0000            0.0000            0.0000            0.0000  (   0.00%)
+combinational      0.7865            0.4065        2.4929e+07           26.1216  (  44.20%)
+--------------------------------------------------------------------------------------------------
+Total             17.8933 mW         1.0306 mW     4.0175e+07 nW        59.0988 mW
+1

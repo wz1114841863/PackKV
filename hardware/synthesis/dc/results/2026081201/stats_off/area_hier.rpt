@@ -1,0 +1,66 @@
+ 
+****************************************
+Report : area
+Design : BriskKvAttentionTop
+Version: O-2018.06-SP1
+Date   : Tue Aug 11 23:09:00 2026
+****************************************
+
+Library(s) Used:
+
+    tcbn28hpcplusbwp12t30p140lvtssg0p81v125c (File: /home/yaz80/wz_project/dc_project/pdk/TSMC28/tcbn28hpcplusbwp12t30p140lvtssg0p81v125c.db)
+
+Number of ports:                        11125
+Number of nets:                        147579
+Number of cells:                       126858
+Number of combinational cells:         117034
+Number of sequential cells:              9811
+Number of macros/black boxes:               0
+Number of buf/inv:                      15325
+Number of references:                     220
+
+Combinational area:             113087.350867
+Buf/Inv area:                     5250.167934
+Noncombinational area:           24534.383814
+Macro/Black Box area:                0.000000
+Net Interconnect area:      undefined  (Wire load has zero net area)
+
+Total cell area:                137621.734681
+Total area:                 undefined
+
+Hierarchical area distribution
+------------------------------
+
+                                  Global cell area              Local cell area
+                                  --------------------  ------------------------------- 
+Hierarchical cell                 Absolute     Percent  Combi-       Noncombi-   Black-
+                                  Total        Total    national     national    boxes   Design
+--------------------------------  -----------  -------  -----------  ----------  ------  ---------------------------------
+BriskKvAttentionTop               137621.7347    100.0   34996.7518   8014.7759  0.0000  BriskKvAttentionTop
+decompressionQk/compute/decompressor/kController
+                                   12291.7199      8.9    3703.5600    887.2080  0.0000  DecompressionPipelineController
+decompressionQk/compute/decompressor/kController/engine
+                                    7700.9519      5.6     704.4240    423.3600  0.0000  KvStreamDequantizer
+decompressionQk/compute/decompressor/kController/engine/joiner
+                                    3539.9280      2.6    1746.1920   1793.7360  0.0000  BufferedPackMetadataDequantizer
+decompressionQk/compute/decompressor/kController/engine/qDecoder
+                                    3033.2400      2.2     840.5040    597.9120  0.0000  DynamicBitUnpacker
+decompressionQk/compute/decompressor/kController/engine/qDecoder/descriptorDecoder
+                                    1594.8240      1.2     994.7280    600.0960  0.0000  PackDescriptorDecoder
+decompressionQk/compute/decompressor/vController
+                                   12294.4079      8.9    3724.2240    876.1200  0.0000  DecompressionPipelineController_1
+decompressionQk/compute/decompressor/vController/engine
+                                    7694.0639      5.6     760.8720    423.3600  0.0000  KvStreamDequantizer_1
+decompressionQk/compute/decompressor/vController/engine/joiner
+                                    3526.1520      2.6    1732.4160   1793.7360  0.0000  BufferedPackMetadataDequantizer_1
+decompressionQk/compute/decompressor/vController/engine/qDecoder
+                                    2983.6800      2.2     833.2800    592.3680  0.0000  DynamicBitUnpacker_1
+decompressionQk/compute/decompressor/vController/engine/qDecoder/descriptorDecoder
+                                    1558.0320      1.1     960.4560    597.5760  0.0000  PackDescriptorDecoder_1
+decompressionQk/qk/accumulator     21193.7038     15.4   17118.8638   4074.8400  0.0000  QkDotProductAccumulator
+scaleSoftmax/scaler                17137.5118     12.5   14967.7918   2169.7200  0.0000  AttentionScaleUnit
+scaleSoftmax/softmax               31692.8636     23.0   30003.2876   1689.5760  0.0000  StreamingSoftmax
+--------------------------------  -----------  -------  -----------  ----------  ------  ---------------------------------
+Total                                                   113087.3509  24534.3838  0.0000
+
+1

@@ -1,0 +1,2371 @@
+
+                           Design Compiler Graphical 
+                                 DC Ultra (TM)
+                                  DFTMAX (TM)
+                              Power Compiler (TM)
+                                 DesignWare (R)
+                                 DC Expert (TM)
+                               Design Vision (TM)
+                               HDL Compiler (TM)
+                               VHDL Compiler (TM)
+                                  DFT Compiler
+                               Design Compiler(R)
+
+               Version O-2018.06-SP1 for linux64 - Jul 19, 2018 
+
+                    Copyright (c) 1988 - 2018 Synopsys, Inc.
+   This software and the associated documentation are proprietary to Synopsys,
+ Inc. This software may only be used in accordance with the terms and conditions
+ of a written license agreement with Synopsys, Inc. All other use, reproduction,
+            or distribution of this software is strictly prohibited.
+Initializing...
+# BRISK-KV logic-only synthesis template for Design Compiler 2018+.
+# Required environment:
+#   RTL_DIR, TARGET_LIBRARY
+# Optional:
+#   TOP, CLOCK_PERIOD, REPORT_DIR, LINK_LIBRARY
+proc briskkv_dc_main {} {
+  if {![info exists ::env(RTL_DIR)]} {
+    error "RTL_DIR is required"
+  }
+  if {![info exists ::env(TARGET_LIBRARY)]} {
+    error "TARGET_LIBRARY is required"
+  }
+
+  set rtl_dir [file normalize $::env(RTL_DIR)]
+  set top [expr {[info exists ::env(TOP)] ? $::env(TOP) : "BriskKvAttentionTop"}]
+  set clock_period [expr {
+    [info exists ::env(CLOCK_PERIOD)] ? $::env(CLOCK_PERIOD) : 2.0
+  }]
+  set report_dir [file normalize [expr {
+    [info exists ::env(REPORT_DIR)] ? $::env(REPORT_DIR) : "reports"
+  }]]
+  file mkdir $report_dir
+
+  # A per-process WORK library prevents stale analyzed .db files from an older
+  # run from replacing newly generated bodyless SRAM stubs.
+  set work_dir [file join $report_dir "work_[pid]"]
+  file mkdir $work_dir
+  define_design_lib WORK -path $work_dir
+
+  # Keep an ordinary Tcl variable as well as the DC application variable.
+  # set_app_var does not create a procedure-local variable named
+  # "target_library" in DC O-2018.
+  set target_libraries [split $::env(TARGET_LIBRARY) ":"]
+  set_app_var target_library $target_libraries
+  if {[info exists ::env(LINK_LIBRARY)]} {
+    set_app_var link_library [concat "*" [split $::env(LINK_LIBRARY) ":"]]
+  } else {
+    set_app_var link_library [concat "*" $target_libraries]
+  }
+
+  set memory_module_file [file join $rtl_dir memory_modules.tcl]
+  if {![file exists $memory_module_file]} {
+    error "Missing memory black-box list: $memory_module_file"
+  }
+  source $memory_module_file
+  if {[llength $BRISKKV_MEMORY_MODULES] == 0} {
+    error "BRISKKV_MEMORY_MODULES is empty"
+  }
+
+  set sv_files [glob -nocomplain -directory $rtl_dir *.sv]
+  if {[llength $sv_files] == 0} {
+    error "No SystemVerilog files found in $rtl_dir"
+  }
+
+  # DC O-2018 does not provide a set_black_box command. The generated stubs
+  # carry the recognized syn_black_box attribute. Reject any behavioral array
+  # or missing marker before DC sees the RTL.
+  foreach memory_module $BRISKKV_MEMORY_MODULES {
+    set stub_file [file join $rtl_dir "${memory_module}.sv"]
+    if {![file exists $stub_file]} {
+      error "Missing architectural memory stub: $stub_file"
+    }
+    set channel [open $stub_file r]
+    set stub_text [read $channel]
+    close $channel
+    if {[string first "Memory\[" $stub_text] >= 0} {
+      error "Behavioral memory implementation found in dc_logic stub: $stub_file"
+    }
+    if {[string first "syn_black_box" $stub_text] < 0} {
+      error "Memory stub is missing syn_black_box marker: $stub_file"
+    }
+  }
+
+  analyze -format sverilog $sv_files
+  elaborate $top
+  current_design $top
+  link
+
+  # Audit and preserve every elaborated SRAM instance. Matching zero is a
+  # fatal export/hierarchy error, not a reason to continue with invalid PPA.
+  set total_memory_instances 0
+  set audit_file [file join $report_dir memory_blackboxes_precompile.rpt]
+  set audit_channel [open $audit_file w]
+  puts $audit_channel "BRISK-KV architectural SRAM black-box audit"
+  foreach memory_module $BRISKKV_MEMORY_MODULES {
+    set memory_design [get_designs -quiet $memory_module]
+    if {[sizeof_collection $memory_design] == 0} {
+      close $audit_channel
+      error "Architectural memory design not found after elaborate: $memory_module"
+    }
+
+    set memory_cells [get_cells -quiet -hierarchical -filter "ref_name == $memory_module"]
+    set instance_count [sizeof_collection $memory_cells]
+    if {$instance_count == 0} {
+      close $audit_channel
+      error "No elaborated architectural memory instance found for: $memory_module"
+    }
+
+    # The source attribute establishes black-box status. These constraints
+    # prevent compile_ultra from absorbing or ungrouping the interface cell.
+    set_dont_touch $memory_cells true
+    set_ungroup $memory_cells false
+    set total_memory_instances [expr {$total_memory_instances + $instance_count}]
+    puts $audit_channel "$memory_module instances=$instance_count source=syn_black_box"
+  }
+  puts $audit_channel "total_instances=$total_memory_instances"
+  close $audit_channel
+
+  create_clock -name clk -period $clock_period [get_ports clock]
+  set_clock_uncertainty [expr {$clock_period * 0.05}] [get_clocks clk]
+  set_input_delay [expr {$clock_period * 0.10}] -clock clk     [remove_from_collection [all_inputs] [get_ports clock]]
+  set_output_delay [expr {$clock_period * 0.10}] -clock clk [all_outputs]
+  set_false_path -from [get_ports reset]
+
+  check_design > "$report_dir/check_design.rpt"
+  check_timing > "$report_dir/check_timing.rpt"
+  compile_ultra
+
+  # The dont_touch instances must still be present after compile.
+  set post_audit_file [file join $report_dir memory_blackboxes_postcompile.rpt]
+  set post_audit_channel [open $post_audit_file w]
+  puts $post_audit_channel "BRISK-KV post-compile SRAM black-box audit"
+  foreach memory_module $BRISKKV_MEMORY_MODULES {
+    set memory_cells [get_cells -quiet -hierarchical -filter "ref_name == $memory_module"]
+    set instance_count [sizeof_collection $memory_cells]
+    if {$instance_count == 0} {
+      close $post_audit_channel
+      error "Architectural memory instance disappeared during compile: $memory_module"
+    }
+    puts $post_audit_channel "$memory_module instances=$instance_count"
+  }
+  close $post_audit_channel
+
+  report_units > "$report_dir/units.rpt"
+  report_clock > "$report_dir/clocks.rpt"
+  report_qor > "$report_dir/qor.rpt"
+  report_area -hierarchy > "$report_dir/area_hier.rpt"
+  report_timing -delay_type max -max_paths 20 -transition_time -nets     > "$report_dir/timing_setup.rpt"
+  report_timing -delay_type min -max_paths 20 -transition_time -nets     > "$report_dir/timing_hold.rpt"
+  report_constraint -all_violators > "$report_dir/constraints.rpt"
+  report_power > "$report_dir/power.rpt"
+  report_reference -hierarchy > "$report_dir/references.rpt"
+
+  write -format ddc -hierarchy -output "$report_dir/${top}.ddc"
+  write -format verilog -hierarchy -output "$report_dir/${top}_mapped.v"
+}
+# dc_shell may otherwise continue after a command error in a -f script. Catch
+# the complete flow and return an explicit process status to shell/tmux jobs.
+if {[catch {briskkv_dc_main} briskkv_error briskkv_options]} {
+  puts stderr "BRISK-KV DC FAILED: $briskkv_error"
+  if {[dict exists $briskkv_options -errorinfo]} {
+    puts stderr [dict get $briskkv_options -errorinfo]
+  }
+  exit 1
+}
+Running PRESTO HDLC
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/Queue2_QueryFeature.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/SoftmaxVComputePipeline.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/AttentionFeaturePacketizer.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/StreamingSoftmax.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/AvOutputQuantizer.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/queryMemory_128x18.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/QkDotProductAccumulator.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/DynamicPayloadUnpacker.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/FixedWidthFieldUnpacker_1.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/SoftmaxVAccumulator.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/exponentMemory_64x277.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/DecompressionPipelineController.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/BufferedPackMetadataDequantizer.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/memory_8192x288.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/CompactMetadataDecoder_1.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/PackDescriptorDecoder.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/DualKvDecompressionController.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/DynamicBitUnpacker_1.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/QkScaleSoftmaxPipeline.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/BucketCountDecoder.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/KvStreamDequantizer_1.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/CompactMetadataDecoder.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/DynamicBitUnpacker.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/AttentionScaleUnit.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/DynamicPayloadUnpacker_1.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/CompactMetadataDecoder_2.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/BriskKvAttentionTop.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/DecompressionPipelineController_1.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/weightMemory_64x256.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/BriskKvDecompressQkTop.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/FixedWidthFieldUnpacker.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/IterativeUnsignedDivider.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/QkComputePipeline.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/FixedWidthFieldUnpacker_3.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/PackDescriptorDecoder_1.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/KvStreamDequantizer.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/BriskKvComputeInterface.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/Po2FixedPointDequantizer_1.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/logitMemory_64x709.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/VPacketBuffer.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/FixedWidthFieldUnpacker_6.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/FixedWidthFieldUnpacker_2.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/Po2FixedPointDequantizer.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/QueryReplayBuffer.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/BufferedPackMetadataDequantizer_1.sv
+Compiling source file /home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/ram_2x83.sv
+Presto compilation completed successfully.
+Loading db file '/home/yaz80/wz_project/dc_project/pdk/TSMC28/tcbn28hpcplusbwp12t30p140lvtssg0p81v125c.db'
+Loading db file '/opt/synopsys/dc2018/O-2018.06-SP1/libraries/syn/gtech.db'
+Loading db file '/opt/synopsys/dc2018/O-2018.06-SP1/libraries/syn/standard.sldb'
+  Loading link library 'tcbn28hpcplusbwp12t30p140lvtssg0p81v125c'
+  Loading link library 'gtech'
+Running PRESTO HDLC
+
+Inferred memory devices in process
+	in routine BriskKvAttentionTop line 235 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/BriskKvAttentionTop.sv'.
+===============================================================================
+|    Register Name    |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+===============================================================================
+|  attentionDone_reg  | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|  commandActive_reg  | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+===============================================================================
+Presto compilation completed successfully.
+Elaborated 1 design.
+Current design is now 'BriskKvAttentionTop'.
+Information: Building the design 'BriskKvDecompressQkTop'. (HDL-193)
+
+Inferred memory devices in process
+	in routine BriskKvDecompressQkTop line 221 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/BriskKvDecompressQkTop.sv'.
+==============================================================================================
+|           Register Name            |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+==============================================================================================
+| invalidCommand_descriptorCount_reg | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|         commandActive_reg          | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|             qkDone_reg             | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|       invalidResultValid_reg       | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|       invalidCommand_tag_reg       | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|   invalidCommand_tokenCount_reg    | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+==============================================================================================
+Presto compilation completed successfully.
+Information: Building the design 'QkScaleSoftmaxPipeline'. (HDL-193)
+Presto compilation completed successfully.
+Information: Building the design 'SoftmaxVComputePipeline'. (HDL-193)
+Presto compilation completed successfully.
+Information: Building the design 'AvOutputQuantizer'. (HDL-193)
+
+Inferred memory devices in process
+	in routine AvOutputQuantizer line 45 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/AvOutputQuantizer.sv'.
+======================================================================================
+|       Register Name        |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+======================================================================================
+| outputReg_featureIndex_reg | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+| downstreamStallCycles_reg  | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|         active_reg         | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|        doneReg_reg         | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|        errorReg_reg        | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|     featureDimReg_reg      | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|  expectedFeatureIndex_reg  | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|      outputValid_reg       | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|      activeCycles_reg      | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|     inputFeatures_reg      | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|     outputFeatures_reg     | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|  positiveSaturations_reg   | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|  negativeSaturations_reg   | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|     outputReg_last_reg     | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|    outputReg_value_reg     | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+======================================================================================
+Presto compilation completed successfully.
+Information: Building the design 'BriskKvComputeInterface'. (HDL-193)
+
+Inferred memory devices in process
+	in routine BriskKvComputeInterface line 173 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/BriskKvComputeInterface.sv'.
+===============================================================================
+|    Register Name    |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+===============================================================================
+|  vPacketsDone_reg   | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|  kPacketsDone_reg   | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+===============================================================================
+Presto compilation completed successfully.
+Information: Building the design 'QkComputePipeline'. (HDL-193)
+
+Inferred memory devices in process
+	in routine QkComputePipeline line 97 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/QkComputePipeline.sv'.
+===============================================================================
+|    Register Name    |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+===============================================================================
+|   replayDone_reg    | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|     active_reg      | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|     doneReg_reg     | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|    errorReg_reg     | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+===============================================================================
+Presto compilation completed successfully.
+Information: Building the design 'AttentionScaleUnit'. (HDL-193)
+
+Inferred memory devices in process
+	in routine AttentionScaleUnit line 97 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/AttentionScaleUnit.sv'.
+============================================================================================
+|          Register Name           |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+============================================================================================
+| outputPacket_packWithinBlock_reg | Flip-flop |   2   |  Y  | N  | N  | N  | N  | N  | N  |
+|            active_reg            | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|           errorReg_reg           | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|         packCountReg_reg         | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|      expectedPackIndex_reg       | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|           scaleReg_reg           | Flip-flop |  19   |  Y  | N  | N  | N  | N  | N  | N  |
+|         outputValid_reg          | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|        scalingActive_reg         | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|          scaleGroup_reg          | Flip-flop |   2   |  Y  | N  | N  | N  | N  | N  | N  |
+|         activeCycles_reg         | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|         inputPackets_reg         | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|        outputPackets_reg         | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|    downstreamStallCycles_reg     | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_logits_0_reg     | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_logits_1_reg     | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_logits_2_reg     | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_logits_3_reg     | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_logits_4_reg     | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_logits_5_reg     | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_logits_6_reg     | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_logits_7_reg     | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_logits_8_reg     | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_logits_9_reg     | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_logits_10_reg    | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_logits_11_reg    | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_logits_12_reg    | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_logits_13_reg    | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_logits_14_reg    | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_logits_15_reg    | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|      outputPacket_last_reg       | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|   outputPacket_validTokens_reg   | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_packIndex_reg    | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|   outputPacket_blockIndex_reg    | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+============================================================================================
+Statistics for MUX_OPs
+============================================================
+|    block name/line     | Inputs | Outputs | # sel inputs |
+============================================================
+| AttentionScaleUnit/484 |   16   |   44    |      4       |
+| AttentionScaleUnit/504 |   16   |    1    |      4       |
+| AttentionScaleUnit/515 |   16   |    1    |      4       |
+| AttentionScaleUnit/526 |   16   |    1    |      4       |
+============================================================
+Presto compilation completed successfully.
+Information: Building the design 'StreamingSoftmax'. (HDL-193)
+
+Inferred memory devices in process
+	in routine StreamingSoftmax line 488 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/StreamingSoftmax.sv'.
+============================================================================================
+|          Register Name           |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+============================================================================================
+|   outputPacket_blockIndex_reg    | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|        maximumUpdates_reg        | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|            state_reg             | Flip-flop |   4   |  Y  | N  | N  | N  | N  | N  | N  |
+|           errorReg_reg           | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|         packCountReg_reg         | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|     finalValidTokensReg_reg      | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+|         collectIndex_reg         | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|          passIndex_reg           | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|        globalMaximum_reg         | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|         exponentSum_reg          | Flip-flop |  28   |  Y  | N  | N  | N  | N  | N  | N  |
+|          reciprocal_reg          | Flip-flop |  33   |  Y  | N  | N  | N  | N  | N  | N  |
+|         activeCycles_reg         | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|         inputPackets_reg         | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|       exponentPackets_reg        | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|        outputPackets_reg         | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|    downstreamStallCycles_reg     | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+| outputPacket_packWithinBlock_reg | Flip-flop |   2   |  Y  | N  | N  | N  | N  | N  | N  |
+|      outputPacket_last_reg       | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_weights_0_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_weights_1_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_weights_2_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_weights_3_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_weights_4_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_weights_5_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_weights_6_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_weights_7_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_weights_8_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_weights_9_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|   outputPacket_weights_10_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|   outputPacket_weights_11_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|   outputPacket_weights_12_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|   outputPacket_weights_13_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|   outputPacket_weights_14_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|   outputPacket_weights_15_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|   outputPacket_validTokens_reg   | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputPacket_packIndex_reg    | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+============================================================================================
+Presto compilation completed successfully.
+Information: Building the design 'VPacketBuffer'. (HDL-193)
+
+Inferred memory devices in process
+	in routine VPacketBuffer line 117 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/VPacketBuffer.sv'.
+===========================================================================================
+|          Register Name          |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+===========================================================================================
+|       readDataPending_reg       | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|           active_reg            | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|          loadedReg_reg          | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|          errorReg_reg           | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|        featureDimReg_reg        | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|        packCountReg_reg         | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|     finalValidTokensReg_reg     | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+|     expectedDescriptor_reg      | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|       readOutstanding_reg       | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|        responseValid_reg        | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|      pendingPackIndex_reg       | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|     pendingFeatureIndex_reg     | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|        activeCycles_reg         | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|        loadedPackets_reg        | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|        readRequests_reg         | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|        readResponses_reg        | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|       loadStallCycles_reg       | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|     responseStallCycles_reg     | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+| responsePacket_featureIndex_reg | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|   responsePacket_values_0_reg   | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|   responsePacket_values_1_reg   | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|   responsePacket_values_2_reg   | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|   responsePacket_values_3_reg   | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|   responsePacket_values_4_reg   | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|   responsePacket_values_5_reg   | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|   responsePacket_values_6_reg   | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|   responsePacket_values_7_reg   | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|   responsePacket_values_8_reg   | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|   responsePacket_values_9_reg   | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|  responsePacket_values_10_reg   | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|  responsePacket_values_11_reg   | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|  responsePacket_values_12_reg   | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|  responsePacket_values_13_reg   | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|  responsePacket_values_14_reg   | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|  responsePacket_values_15_reg   | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+| responsePacket_validTokens_reg  | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+|  responsePacket_packIndex_reg   | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+===========================================================================================
+Presto compilation completed successfully.
+Information: Building the design 'SoftmaxVAccumulator'. (HDL-193)
+
+Inferred memory devices in process
+	in routine SoftmaxVAccumulator line 125 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/SoftmaxVAccumulator.sv'.
+==========================================================================================
+|         Register Name          |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+==========================================================================================
+|   outputReg_featureIndex_reg   | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|           state_reg            | Flip-flop |   3   |  Y  | N  | N  | N  | N  | N  | N  |
+|          doneReg_reg           | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|          errorReg_reg          | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|       featureDimReg_reg        | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|        packCountReg_reg        | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|    finalValidTokensReg_reg     | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+|      weightLoadIndex_reg       | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|    computeFeatureIndex_reg     | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|      computePackIndex_reg      | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|     featureAccumulator_reg     | Flip-flop |  50   |  Y  | N  | N  | N  | N  | N  | N  |
+|        activeCycles_reg        | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|    loadedWeightPackets_reg     | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|       vReadRequests_reg        | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|       vReadResponses_reg       | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|       outputFeatures_reg       | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|       macOperations_reg        | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|      vLoadWaitCycles_reg       | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|    vResponseWaitCycles_reg     | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|   downstreamStallCycles_reg    | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+| weightPacketReg_weights_15_reg | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+| weightPacketReg_weights_0_reg  | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+| weightPacketReg_weights_1_reg  | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+| weightPacketReg_weights_2_reg  | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+| weightPacketReg_weights_3_reg  | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+| weightPacketReg_weights_4_reg  | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+| weightPacketReg_weights_5_reg  | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+| weightPacketReg_weights_6_reg  | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+| weightPacketReg_weights_7_reg  | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+| weightPacketReg_weights_8_reg  | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+| weightPacketReg_weights_9_reg  | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+| weightPacketReg_weights_10_reg | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+| weightPacketReg_weights_11_reg | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+| weightPacketReg_weights_12_reg | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+| weightPacketReg_weights_13_reg | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+| weightPacketReg_weights_14_reg | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|       outputReg_last_reg       | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|      outputReg_value_reg       | Flip-flop |  50   |  Y  | N  | N  | N  | N  | N  | N  |
+==========================================================================================
+Statistics for MUX_OPs
+=============================================================
+|    block name/line      | Inputs | Outputs | # sel inputs |
+=============================================================
+| SoftmaxVAccumulator/362 |   8    |    3    |      3       |
+=============================================================
+Presto compilation completed successfully.
+Information: Building the design 'DualKvDecompressionController'. (HDL-193)
+
+Inferred memory devices in process
+	in routine DualKvDecompressionController line 159 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/DualKvDecompressionController.sv'.
+======================================================================================================
+|               Register Name                |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+======================================================================================================
+|      commandReg_kPayloadByteCount_reg      | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|              resultError_reg               | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|                 state_reg                  | Flip-flop |   2   |  Y  | N  | N  | N  | N  | N  | N  |
+|              packCountReg_reg              | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|             blockCountReg_reg              | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|             bucketRecords_reg              | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|            commandLaunched_reg             | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|              kResultSeen_reg               | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|              vResultSeen_reg               | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|             bucketDoneSeen_reg             | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|             kResultReg_tag_reg             | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|            kResultReg_error_reg            | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|         kResultReg_tokenCount_reg          | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|     kResultReg_stats_activeCycles_reg      | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|     kResultReg_stats_outputValues_reg      | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|  kResultReg_stats_metadataStallCycles_reg  | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+| kResultReg_stats_downstreamStallCycles_reg | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|             vResultReg_tag_reg             | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|            vResultReg_error_reg            | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|         vResultReg_tokenCount_reg          | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|     vResultReg_stats_activeCycles_reg      | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|     vResultReg_stats_outputValues_reg      | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|  vResultReg_stats_metadataStallCycles_reg  | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+| vResultReg_stats_downstreamStallCycles_reg | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|      commandReg_vPayloadByteCount_reg      | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|             commandReg_tag_reg             | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|         commandReg_tokenCount_reg          | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|         commandReg_featureDim_reg          | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|       commandReg_descriptorCount_reg       | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+======================================================================================================
+Presto compilation completed successfully.
+Information: Building the design 'AttentionFeaturePacketizer'. (HDL-193)
+
+Inferred memory devices in process
+	in routine AttentionFeaturePacketizer line 90 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/AttentionFeaturePacketizer.sv'.
+=======================================================================================
+|        Register Name        |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+=======================================================================================
+|     packetValues_14_reg     | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|  downstreamStallCycles_reg  | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|         active_reg          | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|         doneReg_reg         | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|        errorReg_reg         | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|       packetValid_reg       | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|    packetValidTokens_reg    | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+|  packetDescriptorIndex_reg  | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|     packetPackIndex_reg     | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|   packetFeatureIndex_reg    | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|    packetBlockIndex_reg     | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|  packetPackWithinBlock_reg  | Flip-flop |   2   |  Y  | N  | N  | N  | N  | N  | N  |
+|       packetLast_reg        | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|   currentValidTokens_reg    | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+|     tokensRemaining_reg     | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+| expectedDescriptorIndex_reg | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|   expectedTokenIndex_reg    | Flip-flop |   4   |  Y  | N  | N  | N  | N  | N  | N  |
+|        packIndex_reg        | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|      featureIndex_reg       | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|       blockIndex_reg        | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|     packWithinBlock_reg     | Flip-flop |   2   |  Y  | N  | N  | N  | N  | N  | N  |
+|      featureDimReg_reg      | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|   descriptorCountReg_reg    | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|       inputValues_reg       | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|      outputPackets_reg      | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|     packetValues_0_reg      | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|     packetValues_15_reg     | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|     packetValues_1_reg      | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|     packetValues_2_reg      | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|     packetValues_3_reg      | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|     packetValues_4_reg      | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|     packetValues_5_reg      | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|     packetValues_6_reg      | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|     packetValues_7_reg      | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|     packetValues_8_reg      | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|     packetValues_9_reg      | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|     packetValues_10_reg     | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|     packetValues_11_reg     | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|     packetValues_12_reg     | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+|     packetValues_13_reg     | Flip-flop |  18   |  Y  | N  | N  | N  | N  | N  | N  |
+=======================================================================================
+Presto compilation completed successfully.
+Information: Building the design 'QueryReplayBuffer'. (HDL-193)
+
+Inferred memory devices in process
+	in routine QueryReplayBuffer line 61 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/QueryReplayBuffer.sv'.
+=====================================================================================
+|       Register Name       |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+=====================================================================================
+|     responseLast_reg      | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|        loading_reg        | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|       replaying_reg       | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|       loadedReg_reg       | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|        doneReg_reg        | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|       errorReg_reg        | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|     featureDimReg_reg     | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|     packCountReg_reg      | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|       loadIndex_reg       | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|   issueFeatureIndex_reg   | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|    issuePackIndex_reg     | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|    issuesComplete_reg     | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|     activeCycles_reg      | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|     loadedValues_reg      | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|     readRequests_reg      | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|    replayedValues_reg     | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|    loadWaitCycles_reg     | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+| downstreamStallCycles_reg | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|     responseValid_reg     | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+| responseFeatureIndex_reg  | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|   responsePackIndex_reg   | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+=====================================================================================
+Presto compilation completed successfully.
+Information: Building the design 'QkDotProductAccumulator'. (HDL-193)
+
+Inferred memory devices in process
+	in routine QkDotProductAccumulator line 130 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/QkDotProductAccumulator.sv'.
+=======================================================================================
+|        Register Name        |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+=======================================================================================
+|     outputLogits_14_reg     | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|  downstreamStallCycles_reg  | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|         active_reg          | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|         doneReg_reg         | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|        errorReg_reg         | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|      featureDimReg_reg      | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|  expectedFeatureIndex_reg   | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|    expectedPackIndex_reg    | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+| expectedDescriptorIndex_reg | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|     packValidTokens_reg     | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+|     accumulators_0_reg      | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     accumulators_1_reg      | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     accumulators_2_reg      | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     accumulators_3_reg      | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     accumulators_4_reg      | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     accumulators_5_reg      | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     accumulators_6_reg      | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     accumulators_7_reg      | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     accumulators_8_reg      | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     accumulators_9_reg      | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     accumulators_10_reg     | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     accumulators_11_reg     | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     accumulators_12_reg     | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     accumulators_13_reg     | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     accumulators_14_reg     | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     accumulators_15_reg     | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|       outputValid_reg       | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|    outputValidTokens_reg    | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+|     outputPackIndex_reg     | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|    outputBlockIndex_reg     | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|  outputPackWithinBlock_reg  | Flip-flop |   2   |  Y  | N  | N  | N  | N  | N  | N  |
+|       outputLast_reg        | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|      activeCycles_reg       | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|      inputPackets_reg       | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|      outputPackets_reg      | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|      macOperations_reg      | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|     queryWaitCycles_reg     | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|      keyWaitCycles_reg      | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|     outputLogits_15_reg     | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     outputLogits_0_reg      | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     outputLogits_1_reg      | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     outputLogits_2_reg      | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     outputLogits_3_reg      | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     outputLogits_4_reg      | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     outputLogits_5_reg      | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     outputLogits_6_reg      | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     outputLogits_7_reg      | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     outputLogits_8_reg      | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     outputLogits_9_reg      | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     outputLogits_10_reg     | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     outputLogits_11_reg     | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     outputLogits_12_reg     | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+|     outputLogits_13_reg     | Flip-flop |  44   |  Y  | N  | N  | N  | N  | N  | N  |
+=======================================================================================
+Presto compilation completed successfully.
+Information: Building the design 'logitMemory_64x709'. (HDL-193)
+Presto compilation completed successfully.
+Information: Building the design 'exponentMemory_64x277'. (HDL-193)
+Presto compilation completed successfully.
+Information: Building the design 'IterativeUnsignedDivider'. (HDL-193)
+
+Inferred memory devices in process
+	in routine IterativeUnsignedDivider line 22 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/IterativeUnsignedDivider.sv'.
+===============================================================================
+|    Register Name    |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+===============================================================================
+|    iteration_reg    | Flip-flop |   6   |  Y  | N  | N  | N  | N  | N  | N  |
+|     active_reg      | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|     doneReg_reg     | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|    errorReg_reg     | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|  numeratorReg_reg   | Flip-flop |  33   |  Y  | N  | N  | N  | N  | N  | N  |
+| denominatorReg_reg  | Flip-flop |  28   |  Y  | N  | N  | N  | N  | N  | N  |
+|  remainderReg_reg   | Flip-flop |  28   |  Y  | N  | N  | N  | N  | N  | N  |
+|   quotientReg_reg   | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|    resultReg_reg    | Flip-flop |  33   |  Y  | N  | N  | N  | N  | N  | N  |
+===============================================================================
+Presto compilation completed successfully.
+Information: Building the design 'memory_8192x288'. (HDL-193)
+Presto compilation completed successfully.
+Information: Building the design 'weightMemory_64x256'. (HDL-193)
+Presto compilation completed successfully.
+Information: Building the design 'DecompressionPipelineController'. (HDL-193)
+
+Inferred memory devices in process
+	in routine DecompressionPipelineController line 78 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/DecompressionPipelineController.sv'.
+=================================================================================================
+|             Register Name             |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+=================================================================================================
+|    commandReg_descriptorCount_reg     | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+| resultStats_downstreamStallCycles_reg | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|               state_reg               | Flip-flop |   2   |  Y  | N  | N  | N  | N  | N  | N  |
+|           packCountReg_reg            | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|           blockCountReg_reg           | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|        currentValidTokens_reg         | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+|          tokensRemaining_reg          | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|         featureWithinPack_reg         | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|          packWithinBlock_reg          | Flip-flop |   2   |  Y  | N  | N  | N  | N  | N  | N  |
+|          completedValues_reg          | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|       completedDescriptors_reg        | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|          completedPacks_reg           | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|          completedBlocks_reg          | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|            resultError_reg            | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|     resultStats_activeCycles_reg      | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|     resultStats_outputValues_reg      | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|  resultStats_metadataStallCycles_reg  | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|    commandReg_payloadByteCount_reg    | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|          commandReg_tag_reg           | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|       commandReg_tokenCount_reg       | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|       commandReg_featureDim_reg       | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+=================================================================================================
+Presto compilation completed successfully.
+Information: Building the design 'DecompressionPipelineController_1'. (HDL-193)
+
+Inferred memory devices in process
+	in routine DecompressionPipelineController_1 line 78 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/DecompressionPipelineController_1.sv'.
+=================================================================================================
+|             Register Name             |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+=================================================================================================
+|    commandReg_descriptorCount_reg     | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+| resultStats_downstreamStallCycles_reg | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|               state_reg               | Flip-flop |   2   |  Y  | N  | N  | N  | N  | N  | N  |
+|           packCountReg_reg            | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|           blockCountReg_reg           | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|        currentValidTokens_reg         | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+|          tokensRemaining_reg          | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|         featureWithinPack_reg         | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|          packWithinBlock_reg          | Flip-flop |   2   |  Y  | N  | N  | N  | N  | N  | N  |
+|          completedValues_reg          | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|       completedDescriptors_reg        | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|          completedPacks_reg           | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|          completedBlocks_reg          | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|            resultError_reg            | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|     resultStats_activeCycles_reg      | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|     resultStats_outputValues_reg      | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|  resultStats_metadataStallCycles_reg  | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|    commandReg_payloadByteCount_reg    | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|          commandReg_tag_reg           | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|       commandReg_tokenCount_reg       | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|       commandReg_featureDim_reg       | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+=================================================================================================
+Presto compilation completed successfully.
+Information: Building the design 'BucketCountDecoder'. (HDL-193)
+
+Inferred memory devices in process
+	in routine BucketCountDecoder line 36 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/BucketCountDecoder.sv'.
+=================================================================================
+|     Register Name     |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+=================================================================================
+|  recordCounts_2_reg   | Flip-flop |   7   |  Y  | N  | N  | N  | N  | N  | N  |
+|    recordValid_reg    | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|      active_reg       | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|      doneReg_reg      | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|     errorReg_reg      | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|      header_reg       | Flip-flop |  24   |  Y  | N  | N  | N  | N  | N  | N  |
+|     byteIndex_reg     | Flip-flop |   2   |  Y  | N  | N  | N  | N  | N  | N  |
+|  blocksRemaining_reg  | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+| currentBlockIndex_reg | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|  recordCounts_3_reg   | Flip-flop |   7   |  Y  | N  | N  | N  | N  | N  | N  |
+|  recordCounts_0_reg   | Flip-flop |   7   |  Y  | N  | N  | N  | N  | N  | N  |
+|  recordCounts_1_reg   | Flip-flop |   7   |  Y  | N  | N  | N  | N  | N  | N  |
+=================================================================================
+Statistics for MUX_OPs
+===========================================================
+|   block name/line     | Inputs | Outputs | # sel inputs |
+===========================================================
+| BucketCountDecoder/51 |   4    |   24    |      2       |
+===========================================================
+Presto compilation completed successfully.
+Information: Building the design 'queryMemory_128x18'. (HDL-193)
+Presto compilation completed successfully.
+Information: Building the design 'Queue2_QueryFeature'. (HDL-193)
+
+Inferred memory devices in process
+	in routine Queue2_QueryFeature line 30 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/Queue2_QueryFeature.sv'.
+===============================================================================
+|    Register Name    |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+===============================================================================
+|   maybe_full_reg    | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|  enq_ptr_value_reg  | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|  deq_ptr_value_reg  | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+===============================================================================
+Presto compilation completed successfully.
+Information: Building the design 'KvStreamDequantizer'. (HDL-193)
+Presto compilation completed successfully.
+Information: Building the design 'KvStreamDequantizer_1'. (HDL-193)
+Presto compilation completed successfully.
+Information: Building the design 'ram_2x83'. (HDL-193)
+
+Inferred memory devices in process
+	in routine ram_2x83 line 15 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/ram_2x83.sv'.
+===============================================================================
+|    Register Name    |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+===============================================================================
+|     Memory_reg      | Flip-flop |  166  |  Y  | N  | N  | N  | N  | N  | N  |
+===============================================================================
+Presto compilation completed successfully.
+Information: Building the design 'DynamicBitUnpacker'. (HDL-193)
+Presto compilation completed successfully.
+Information: Building the design 'CompactMetadataDecoder'. (HDL-193)
+Presto compilation completed successfully.
+Information: Building the design 'CompactMetadataDecoder_1'. (HDL-193)
+Presto compilation completed successfully.
+Information: Building the design 'BufferedPackMetadataDequantizer'. (HDL-193)
+
+Inferred memory devices in process
+	in routine BufferedPackMetadataDequantizer line 201 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/BufferedPackMetadataDequantizer.sv'.
+=======================================================================================
+|        Register Name        |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+=======================================================================================
+|   metadataStallCycles_reg   | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_0_0_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_0_1_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_0_2_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_0_3_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_0_4_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_0_5_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_0_6_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_0_7_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_0_8_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_0_9_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_0_10_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_0_11_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_0_12_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_0_13_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_0_14_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_0_15_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_1_0_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_1_1_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_1_2_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_1_3_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_1_4_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_1_5_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_1_6_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_1_7_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_1_8_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_1_9_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_1_10_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_1_11_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_1_12_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_1_13_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_1_14_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_1_15_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_0_0_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_0_1_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_0_2_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_0_3_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_0_4_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_0_5_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_0_6_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_0_7_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_0_8_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_0_9_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_0_10_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_0_11_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_0_12_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_0_13_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_0_14_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_0_15_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_1_0_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_1_1_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_1_2_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_1_3_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_1_4_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_1_5_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_1_6_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_1_7_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_1_8_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_1_9_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_1_10_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_1_11_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_1_12_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_1_13_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_1_14_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_1_15_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    bankTokenCount_1_reg     | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+|    bankTokenCount_0_reg     | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+|  downstreamStallCycles_reg  | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|       bankReady_0_reg       | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|       bankReady_1_reg       | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|        readBank_reg         | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|        loadBank_reg         | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|        loadCount_reg        | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+|       loadTarget_reg        | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+| metadataTokensRemaining_reg | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|         active_reg          | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|         doneReg_reg         | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|        errorReg_reg         | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|   descriptorCountReg_reg    | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|      featureDimReg_reg      | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|  descriptorsWithinPack_reg  | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+| expectedDescriptorIndex_reg | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|   expectedTokenIndex_reg    | Flip-flop |   4   |  Y  | N  | N  | N  | N  | N  | N  |
+|     tokensRemaining_reg     | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|      activeCycles_reg       | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|      outputValues_reg       | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+=======================================================================================
+Statistics for MUX_OPs
+=========================================================================
+|          block name/line            | Inputs | Outputs | # sel inputs |
+=========================================================================
+| BufferedPackMetadataDequantizer/714 |   16   |   16    |      4       |
+=========================================================================
+Presto compilation completed successfully.
+Information: Building the design 'DynamicBitUnpacker_1'. (HDL-193)
+Presto compilation completed successfully.
+Information: Building the design 'CompactMetadataDecoder_2'. (HDL-193)
+Presto compilation completed successfully.
+Information: Building the design 'BufferedPackMetadataDequantizer_1'. (HDL-193)
+
+Inferred memory devices in process
+	in routine BufferedPackMetadataDequantizer_1 line 201 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/BufferedPackMetadataDequantizer_1.sv'.
+=======================================================================================
+|        Register Name        |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+=======================================================================================
+|   metadataStallCycles_reg   | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_0_0_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_0_1_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_0_2_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_0_3_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_0_4_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_0_5_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_0_6_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_0_7_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_0_8_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_0_9_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_0_10_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_0_11_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_0_12_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_0_13_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_0_14_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_0_15_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_1_0_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_1_1_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_1_2_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_1_3_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_1_4_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_1_5_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_1_6_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_1_7_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_1_8_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|      zeroBanks_1_9_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_1_10_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_1_11_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_1_12_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_1_13_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_1_14_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     zeroBanks_1_15_reg      | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_0_0_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_0_1_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_0_2_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_0_3_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_0_4_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_0_5_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_0_6_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_0_7_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_0_8_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_0_9_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_0_10_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_0_11_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_0_12_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_0_13_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_0_14_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_0_15_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_1_0_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_1_1_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_1_2_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_1_3_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_1_4_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_1_5_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_1_6_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_1_7_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_1_8_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    exponentBanks_1_9_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_1_10_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_1_11_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_1_12_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_1_13_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_1_14_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|   exponentBanks_1_15_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|    bankTokenCount_1_reg     | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+|    bankTokenCount_0_reg     | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+|  downstreamStallCycles_reg  | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|       bankReady_0_reg       | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|       bankReady_1_reg       | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|        readBank_reg         | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|        loadBank_reg         | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|        loadCount_reg        | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+|       loadTarget_reg        | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+| metadataTokensRemaining_reg | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|         active_reg          | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|         doneReg_reg         | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|        errorReg_reg         | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|   descriptorCountReg_reg    | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|      featureDimReg_reg      | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|  descriptorsWithinPack_reg  | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+| expectedDescriptorIndex_reg | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|   expectedTokenIndex_reg    | Flip-flop |   4   |  Y  | N  | N  | N  | N  | N  | N  |
+|     tokensRemaining_reg     | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|      activeCycles_reg       | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+|      outputValues_reg       | Flip-flop |  64   |  Y  | N  | N  | N  | N  | N  | N  |
+=======================================================================================
+Statistics for MUX_OPs
+===========================================================================
+|           block name/line             | Inputs | Outputs | # sel inputs |
+===========================================================================
+| BufferedPackMetadataDequantizer_1/714 |   16   |   16    |      4       |
+===========================================================================
+Presto compilation completed successfully.
+Information: Building the design 'PackDescriptorDecoder'. (HDL-193)
+
+Inferred memory devices in process
+	in routine PackDescriptorDecoder line 36 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/PackDescriptorDecoder.sv'.
+====================================================================================
+|      Register Name       |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+====================================================================================
+|   descriptorIndex_reg    | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|        active_reg        | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|       errorReg_reg       | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+| descriptorsRemaining_reg | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+====================================================================================
+Presto compilation completed successfully.
+Information: Building the design 'DynamicPayloadUnpacker'. (HDL-193)
+
+Inferred memory devices in process
+	in routine DynamicPayloadUnpacker line 51 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/DynamicPayloadUnpacker.sv'.
+=======================================================================================
+|        Register Name        |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+=======================================================================================
+|     reservoirCount_reg      | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+|         active_reg          | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|        errorReg_reg         | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|  payloadBytesRemaining_reg  | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|  declaredPayloadBytes_reg   | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|  expectedPayloadBytes_reg   | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|  descriptorsRemaining_reg   | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+| expectedDescriptorIndex_reg | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|     descriptorValid_reg     | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|    descriptorMinimum_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     descriptorWidth_reg     | Flip-flop |   3   |  Y  | N  | N  | N  | N  | N  | N  |
+|     descriptorIndex_reg     | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|     descriptorLast_reg      | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|       tokenIndex_reg        | Flip-flop |   4   |  Y  | N  | N  | N  | N  | N  | N  |
+|        reservoir_reg        | Flip-flop |  24   |  Y  | N  | N  | N  | N  | N  | N  |
+=======================================================================================
+Presto compilation completed successfully.
+Information: Building the design 'FixedWidthFieldUnpacker_2'. (HDL-193)
+
+Inferred memory devices in process
+	in routine FixedWidthFieldUnpacker_2 line 24 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/FixedWidthFieldUnpacker_2.sv'.
+===============================================================================
+|    Register Name    |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+===============================================================================
+| bytesRemaining_reg  | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|     active_reg      | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|    errorReg_reg     | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|    reservoir_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|    bitCount_reg     | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+| fieldsRemaining_reg | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+===============================================================================
+Presto compilation completed successfully.
+Information: Building the design 'FixedWidthFieldUnpacker_3'. (HDL-193)
+
+Inferred memory devices in process
+	in routine FixedWidthFieldUnpacker_3 line 24 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/FixedWidthFieldUnpacker_3.sv'.
+===============================================================================
+|    Register Name    |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+===============================================================================
+| bytesRemaining_reg  | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|     active_reg      | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|    errorReg_reg     | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|    reservoir_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|    bitCount_reg     | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+| fieldsRemaining_reg | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+===============================================================================
+Presto compilation completed successfully.
+Information: Building the design 'Po2FixedPointDequantizer'. (HDL-193)
+Presto compilation completed successfully.
+Information: Building the design 'PackDescriptorDecoder_1'. (HDL-193)
+
+Inferred memory devices in process
+	in routine PackDescriptorDecoder_1 line 36 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/PackDescriptorDecoder_1.sv'.
+====================================================================================
+|      Register Name       |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+====================================================================================
+|   descriptorIndex_reg    | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|        active_reg        | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|       errorReg_reg       | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+| descriptorsRemaining_reg | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+====================================================================================
+Presto compilation completed successfully.
+Information: Building the design 'DynamicPayloadUnpacker_1'. (HDL-193)
+
+Inferred memory devices in process
+	in routine DynamicPayloadUnpacker_1 line 51 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/DynamicPayloadUnpacker_1.sv'.
+=======================================================================================
+|        Register Name        |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+=======================================================================================
+|     reservoirCount_reg      | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+|         active_reg          | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|        errorReg_reg         | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|  payloadBytesRemaining_reg  | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|  declaredPayloadBytes_reg   | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|  expectedPayloadBytes_reg   | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|  descriptorsRemaining_reg   | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+| expectedDescriptorIndex_reg | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|     descriptorValid_reg     | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|    descriptorMinimum_reg    | Flip-flop |   8   |  Y  | N  | N  | N  | N  | N  | N  |
+|     descriptorWidth_reg     | Flip-flop |   3   |  Y  | N  | N  | N  | N  | N  | N  |
+|     descriptorIndex_reg     | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|     descriptorLast_reg      | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|       tokenIndex_reg        | Flip-flop |   4   |  Y  | N  | N  | N  | N  | N  | N  |
+|        reservoir_reg        | Flip-flop |  24   |  Y  | N  | N  | N  | N  | N  | N  |
+=======================================================================================
+Presto compilation completed successfully.
+Information: Building the design 'FixedWidthFieldUnpacker_6'. (HDL-193)
+
+Inferred memory devices in process
+	in routine FixedWidthFieldUnpacker_6 line 24 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/FixedWidthFieldUnpacker_6.sv'.
+===============================================================================
+|    Register Name    |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+===============================================================================
+| bytesRemaining_reg  | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|     active_reg      | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|    errorReg_reg     | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|    reservoir_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|    bitCount_reg     | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+| fieldsRemaining_reg | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+===============================================================================
+Presto compilation completed successfully.
+Information: Building the design 'Po2FixedPointDequantizer_1'. (HDL-193)
+Presto compilation completed successfully.
+Information: Building the design 'FixedWidthFieldUnpacker'. (HDL-193)
+
+Inferred memory devices in process
+	in routine FixedWidthFieldUnpacker line 24 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/FixedWidthFieldUnpacker.sv'.
+===============================================================================
+|    Register Name    |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+===============================================================================
+| bytesRemaining_reg  | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|     active_reg      | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|    errorReg_reg     | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|    reservoir_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|    bitCount_reg     | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+| fieldsRemaining_reg | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+===============================================================================
+Presto compilation completed successfully.
+Information: Building the design 'FixedWidthFieldUnpacker_1'. (HDL-193)
+
+Inferred memory devices in process
+	in routine FixedWidthFieldUnpacker_1 line 24 in file
+		'/home/yaz80/wz_project/dc_project/project/BriskKV/rtl/stats_ablation_t1024_f128_s4/stats_on/dc_logic/FixedWidthFieldUnpacker_1.sv'.
+===============================================================================
+|    Register Name    |   Type    | Width | Bus | MB | AR | AS | SR | SS | ST |
+===============================================================================
+| bytesRemaining_reg  | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+|     active_reg      | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|    errorReg_reg     | Flip-flop |   1   |  N  | N  | N  | N  | N  | N  | N  |
+|    reservoir_reg    | Flip-flop |  16   |  Y  | N  | N  | N  | N  | N  | N  |
+|    bitCount_reg     | Flip-flop |   5   |  Y  | N  | N  | N  | N  | N  | N  |
+| fieldsRemaining_reg | Flip-flop |  32   |  Y  | N  | N  | N  | N  | N  | N  |
+===============================================================================
+Presto compilation completed successfully.
+Current design is 'BriskKvAttentionTop'.
+
+  Linking design 'BriskKvAttentionTop'
+  Using the following designs and libraries:
+  --------------------------------------------------------------------------
+  * (46 designs)              /home/yaz80/wz_project/dc_project/project/BriskKV/runs/2026081201_output/work/BriskKvAttentionTop.db, etc
+  tcbn28hpcplusbwp12t30p140lvtssg0p81v125c (library) /home/yaz80/wz_project/dc_project/pdk/TSMC28/tcbn28hpcplusbwp12t30p140lvtssg0p81v125c.db
+
+Loading db file '/opt/synopsys/dc2018/O-2018.06-SP1/libraries/syn/dw_foundation.sldb'
+Warning: DesignWare synthetic library dw_foundation.sldb is added to the synthetic_library in the current command. (UISN-40)
+Information: Performing power optimization. (PWR-850)
+Analyzing: "/home/yaz80/wz_project/dc_project/pdk/TSMC28/tcbn28hpcplusbwp12t30p140lvtssg0p81v125c.db"
+Library analysis succeeded.
+Warning: DesignWare synthetic library dw_foundation.sldb is added to the synthetic_library in the current command. (UISN-40)
+Information: Evaluating DesignWare library utilization. (UISN-27)
+
+============================================================================
+| DesignWare Building Block Library  |         Version         | Available |
+============================================================================
+| Basic DW Building Blocks           | O-2018.06-DWBB_201806.1 |     *     |
+| Licensed DW Building Blocks        | O-2018.06-DWBB_201806.1 |     *     |
+============================================================================
+
+Information: Sequential output inversion is enabled.  SVF file must be used for formal verification. (OPT-1208)
+
+Information: There are 976 potential problems in your design. Please run 'check_design' for more information. (LINT-99)
+
+Information: Uniquified 2 instances of design 'AttentionFeaturePacketizer'. (OPT-1056)
+Information: Uniquified 2 instances of design 'CompactMetadataDecoder_1'. (OPT-1056)
+Information: Uniquified 3 instances of design 'FixedWidthFieldUnpacker_3'. (OPT-1056)
+Information: Uniquified 2 instances of design 'FixedWidthFieldUnpacker_1'. (OPT-1056)
+  Simplifying Design 'BriskKvAttentionTop'
+
+Loaded alib file './alib-52/tcbn28hpcplusbwp12t30p140lvtssg0p81v125c.db.alib'
+  Building model 'DW01_NAND2'
+Information: Ungrouping hierarchy scaleSoftmax/softmax/reciprocalDivider before Pass 1 (OPT-776)
+Information: Ungrouping hierarchy decompressionQk/compute/decompressor/bucketDecoder before Pass 1 (OPT-776)
+Information: Ungrouping hierarchy decompressionQk/qk/queryReplay/responseQueue before Pass 1 (OPT-776)
+Information: Ungrouping hierarchy decompressionQk/qk/queryReplay/responseQueue/ram_ext before Pass 1 (OPT-776)
+Information: Ungrouping hierarchy decompressionQk/compute/decompressor/kController/engine/zeroDecoder before Pass 1 (OPT-776)
+Information: Ungrouping hierarchy decompressionQk/compute/decompressor/kController/engine/exponentDecoder before Pass 1 (OPT-776)
+Information: Ungrouping hierarchy decompressionQk/compute/decompressor/vController/engine/zeroDecoder before Pass 1 (OPT-776)
+Information: Ungrouping hierarchy decompressionQk/compute/decompressor/vController/engine/exponentDecoder before Pass 1 (OPT-776)
+Information: Ungrouping hierarchy decompressionQk/compute/decompressor/kController/engine/qDecoder/payloadDecoder before Pass 1 (OPT-776)
+Information: Ungrouping hierarchy decompressionQk/compute/decompressor/kController/engine/zeroDecoder/unpacker before Pass 1 (OPT-776)
+Information: Ungrouping hierarchy decompressionQk/compute/decompressor/kController/engine/exponentDecoder/unpacker before Pass 1 (OPT-776)
+Information: Ungrouping hierarchy decompressionQk/compute/decompressor/kController/engine/joiner/dequantizer before Pass 1 (OPT-776)
+Information: Ungrouping hierarchy decompressionQk/compute/decompressor/vController/engine/qDecoder/payloadDecoder before Pass 1 (OPT-776)
+Information: Ungrouping hierarchy decompressionQk/compute/decompressor/vController/engine/zeroDecoder/unpacker before Pass 1 (OPT-776)
+Information: Ungrouping hierarchy decompressionQk/compute/decompressor/vController/engine/joiner/dequantizer before Pass 1 (OPT-776)
+Information: Ungrouping hierarchy decompressionQk/compute/decompressor/vController/engine/exponentDecoder/unpacker before Pass 1 (OPT-776)
+Information: Ungrouping hierarchy decompressionQk/compute/decompressor/kController/engine/qDecoder/descriptorDecoder/minimumDecoder before Pass 1 (OPT-776)
+Information: Ungrouping hierarchy decompressionQk/compute/decompressor/kController/engine/qDecoder/descriptorDecoder/widthDecoder before Pass 1 (OPT-776)
+Information: Ungrouping hierarchy decompressionQk/compute/decompressor/vController/engine/qDecoder/descriptorDecoder/minimumDecoder before Pass 1 (OPT-776)
+Information: Ungrouping hierarchy decompressionQk/compute/decompressor/vController/engine/qDecoder/descriptorDecoder/widthDecoder before Pass 1 (OPT-776)
+Information: Ungrouping 20 of 46 hierarchies before Pass 1 (OPT-775)
+Information: State dependent leakage is now switched from on to off.
+
+  Beginning Pass 1 Mapping
+  ------------------------
+  Processing 'StreamingSoftmax'
+Information: Added key list 'DesignWare' to design 'StreamingSoftmax'. (DDB-72)
+Information: The register 'packCountReg_reg[31]' is a constant and will be removed. (OPT-1206)
+Information: The register 'packCountReg_reg[30]' is a constant and will be removed. (OPT-1206)
+Information: The register 'packCountReg_reg[29]' is a constant and will be removed. (OPT-1206)
+Information: The register 'packCountReg_reg[28]' is a constant and will be removed. (OPT-1206)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[29]' is removed because it is merged to 'outputPacket_packIndex_reg[31]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[28]' is removed because it is merged to 'outputPacket_packIndex_reg[30]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[27]' is removed because it is merged to 'outputPacket_packIndex_reg[29]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[26]' is removed because it is merged to 'outputPacket_packIndex_reg[28]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[25]' is removed because it is merged to 'outputPacket_packIndex_reg[27]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[24]' is removed because it is merged to 'outputPacket_packIndex_reg[26]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[23]' is removed because it is merged to 'outputPacket_packIndex_reg[25]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[22]' is removed because it is merged to 'outputPacket_packIndex_reg[24]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[21]' is removed because it is merged to 'outputPacket_packIndex_reg[23]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[20]' is removed because it is merged to 'outputPacket_packIndex_reg[22]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[19]' is removed because it is merged to 'outputPacket_packIndex_reg[21]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[18]' is removed because it is merged to 'outputPacket_packIndex_reg[20]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[17]' is removed because it is merged to 'outputPacket_packIndex_reg[19]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[16]' is removed because it is merged to 'outputPacket_packIndex_reg[18]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[15]' is removed because it is merged to 'outputPacket_packIndex_reg[17]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[14]' is removed because it is merged to 'outputPacket_packIndex_reg[16]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[13]' is removed because it is merged to 'outputPacket_packIndex_reg[15]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[12]' is removed because it is merged to 'outputPacket_packIndex_reg[14]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[11]' is removed because it is merged to 'outputPacket_packIndex_reg[13]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[10]' is removed because it is merged to 'outputPacket_packIndex_reg[12]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[9]' is removed because it is merged to 'outputPacket_packIndex_reg[11]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[8]' is removed because it is merged to 'outputPacket_packIndex_reg[10]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[7]' is removed because it is merged to 'outputPacket_packIndex_reg[9]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[6]' is removed because it is merged to 'outputPacket_packIndex_reg[8]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[5]' is removed because it is merged to 'outputPacket_packIndex_reg[7]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[4]' is removed because it is merged to 'outputPacket_packIndex_reg[6]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[3]' is removed because it is merged to 'outputPacket_packIndex_reg[5]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[2]' is removed because it is merged to 'outputPacket_packIndex_reg[4]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[1]' is removed because it is merged to 'outputPacket_packIndex_reg[3]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[0]' is removed because it is merged to 'outputPacket_packIndex_reg[2]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_packIndex_reg[1]' is removed because it is merged to 'outputPacket_packWithinBlock_reg[1]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_packIndex_reg[0]' is removed because it is merged to 'outputPacket_packWithinBlock_reg[0]'. (OPT-1215)
+Information: In design 'StreamingSoftmax', the register 'outputPacket_blockIndex_reg[31]' is removed because it is merged to 'outputPacket_blockIndex_reg[30]'. (OPT-1215)
+ Implement Synthetic for 'StreamingSoftmax'.
+  Processing 'QkDotProductAccumulator'
+Information: Added key list 'DesignWare' to design 'QkDotProductAccumulator'. (DDB-72)
+ Implement Synthetic for 'QkDotProductAccumulator'.
+  Processing 'AttentionScaleUnit'
+Information: Added key list 'DesignWare' to design 'AttentionScaleUnit'. (DDB-72)
+Information: The register 'packCountReg_reg[31]' is a constant and will be removed. (OPT-1206)
+Information: The register 'packCountReg_reg[30]' is a constant and will be removed. (OPT-1206)
+Information: The register 'packCountReg_reg[29]' is a constant and will be removed. (OPT-1206)
+Information: The register 'packCountReg_reg[28]' is a constant and will be removed. (OPT-1206)
+ Implement Synthetic for 'AttentionScaleUnit'.
+  Processing 'SoftmaxVAccumulator'
+Information: Added key list 'DesignWare' to design 'SoftmaxVAccumulator'. (DDB-72)
+Information: The register 'packCountReg_reg[31]' is a constant and will be removed. (OPT-1206)
+Information: The register 'packCountReg_reg[30]' is a constant and will be removed. (OPT-1206)
+Information: The register 'packCountReg_reg[29]' is a constant and will be removed. (OPT-1206)
+Information: The register 'packCountReg_reg[28]' is a constant and will be removed. (OPT-1206)
+ Implement Synthetic for 'SoftmaxVAccumulator'.
+  Processing 'DualKvDecompressionController'
+Information: Added key list 'DesignWare' to design 'DualKvDecompressionController'. (DDB-72)
+Information: The register 'packCountReg_reg[31]' is a constant and will be removed. (OPT-1206)
+Information: The register 'packCountReg_reg[30]' is a constant and will be removed. (OPT-1206)
+Information: The register 'packCountReg_reg[29]' is a constant and will be removed. (OPT-1206)
+Information: The register 'packCountReg_reg[28]' is a constant and will be removed. (OPT-1206)
+Information: The register 'blockCountReg_reg[31]' is a constant and will be removed. (OPT-1206)
+Information: The register 'blockCountReg_reg[30]' is a constant and will be removed. (OPT-1206)
+Information: The register 'blockCountReg_reg[29]' is a constant and will be removed. (OPT-1206)
+Information: The register 'blockCountReg_reg[28]' is a constant and will be removed. (OPT-1206)
+Information: The register 'blockCountReg_reg[27]' is a constant and will be removed. (OPT-1206)
+Information: The register 'blockCountReg_reg[26]' is a constant and will be removed. (OPT-1206)
+ Implement Synthetic for 'DualKvDecompressionController'.
+  Processing 'BufferedPackMetadataDequantizer'
+Information: Added key list 'DesignWare' to design 'BufferedPackMetadataDequantizer'. (DDB-72)
+ Implement Synthetic for 'BufferedPackMetadataDequantizer'.
+  Processing 'BufferedPackMetadataDequantizer_1'
+Information: Added key list 'DesignWare' to design 'BufferedPackMetadataDequantizer_1'. (DDB-72)
+ Implement Synthetic for 'BufferedPackMetadataDequantizer_1'.
+  Processing 'BriskKvAttentionTop'
+  Processing 'VPacketBuffer'
+Information: Added key list 'DesignWare' to design 'VPacketBuffer'. (DDB-72)
+Information: The register 'packCountReg_reg[31]' is a constant and will be removed. (OPT-1206)
+Information: The register 'packCountReg_reg[30]' is a constant and will be removed. (OPT-1206)
+Information: The register 'packCountReg_reg[29]' is a constant and will be removed. (OPT-1206)
+Information: The register 'packCountReg_reg[28]' is a constant and will be removed. (OPT-1206)
+ Implement Synthetic for 'VPacketBuffer'.
+  Processing 'VPacketBuffer_DW_div_uns_J9_0'
+  Processing 'VPacketBuffer_DW_div_uns_J9_1'
+  Processing 'AttentionFeaturePacketizer_0'
+Information: Added key list 'DesignWare' to design 'AttentionFeaturePacketizer_0'. (DDB-72)
+ Implement Synthetic for 'AttentionFeaturePacketizer_0'.
+  Processing 'QueryReplayBuffer'
+Information: Added key list 'DesignWare' to design 'QueryReplayBuffer'. (DDB-72)
+ Implement Synthetic for 'QueryReplayBuffer'.
+  Processing 'DecompressionPipelineController_1'
+Information: Added key list 'DesignWare' to design 'DecompressionPipelineController_1'. (DDB-72)
+Information: The register 'packCountReg_reg[31]' is a constant and will be removed. (OPT-1206)
+Information: The register 'packCountReg_reg[30]' is a constant and will be removed. (OPT-1206)
+Information: The register 'packCountReg_reg[29]' is a constant and will be removed. (OPT-1206)
+Information: The register 'packCountReg_reg[28]' is a constant and will be removed. (OPT-1206)
+Information: The register 'blockCountReg_reg[31]' is a constant and will be removed. (OPT-1206)
+Information: The register 'blockCountReg_reg[30]' is a constant and will be removed. (OPT-1206)
+Information: The register 'blockCountReg_reg[29]' is a constant and will be removed. (OPT-1206)
+Information: The register 'blockCountReg_reg[28]' is a constant and will be removed. (OPT-1206)
+Information: The register 'blockCountReg_reg[27]' is a constant and will be removed. (OPT-1206)
+Information: The register 'blockCountReg_reg[26]' is a constant and will be removed. (OPT-1206)
+ Implement Synthetic for 'DecompressionPipelineController_1'.
+  Processing 'DecompressionPipelineController'
+Information: Added key list 'DesignWare' to design 'DecompressionPipelineController'. (DDB-72)
+Information: The register 'packCountReg_reg[31]' is a constant and will be removed. (OPT-1206)
+Information: The register 'packCountReg_reg[30]' is a constant and will be removed. (OPT-1206)
+Information: The register 'packCountReg_reg[29]' is a constant and will be removed. (OPT-1206)
+Information: The register 'packCountReg_reg[28]' is a constant and will be removed. (OPT-1206)
+Information: The register 'blockCountReg_reg[31]' is a constant and will be removed. (OPT-1206)
+Information: The register 'blockCountReg_reg[30]' is a constant and will be removed. (OPT-1206)
+Information: The register 'blockCountReg_reg[29]' is a constant and will be removed. (OPT-1206)
+Information: The register 'blockCountReg_reg[28]' is a constant and will be removed. (OPT-1206)
+Information: The register 'blockCountReg_reg[27]' is a constant and will be removed. (OPT-1206)
+Information: The register 'blockCountReg_reg[26]' is a constant and will be removed. (OPT-1206)
+ Implement Synthetic for 'DecompressionPipelineController'.
+  Processing 'AvOutputQuantizer'
+Information: Added key list 'DesignWare' to design 'AvOutputQuantizer'. (DDB-72)
+ Implement Synthetic for 'AvOutputQuantizer'.
+  Processing 'BriskKvDecompressQkTop'
+ Implement Synthetic for 'BriskKvDecompressQkTop'.
+Information: Added key list 'DesignWare' to design 'BriskKvDecompressQkTop'. (DDB-72)
+  Processing 'PackDescriptorDecoder'
+ Implement Synthetic for 'PackDescriptorDecoder'.
+Information: Added key list 'DesignWare' to design 'PackDescriptorDecoder'. (DDB-72)
+  Processing 'PackDescriptorDecoder_1'
+Information: Added key list 'DesignWare' to design 'PackDescriptorDecoder_1'. (DDB-72)
+ Implement Synthetic for 'PackDescriptorDecoder_1'.
+  Processing 'BriskKvComputeInterface'
+ Implement Synthetic for 'BriskKvComputeInterface'.
+  Processing 'QkComputePipeline'
+ Implement Synthetic for 'QkComputePipeline'.
+Information: Added key list 'DesignWare' to design 'QkComputePipeline'. (DDB-72)
+  Processing 'QkScaleSoftmaxPipeline'
+  Processing 'SoftmaxVComputePipeline'
+  Processing 'KvStreamDequantizer_1'
+ Implement Synthetic for 'KvStreamDequantizer_1'.
+Information: Added key list 'DesignWare' to design 'KvStreamDequantizer_1'. (DDB-72)
+  Processing 'KvStreamDequantizer'
+ Implement Synthetic for 'KvStreamDequantizer'.
+Information: Added key list 'DesignWare' to design 'KvStreamDequantizer'. (DDB-72)
+  Processing 'DynamicBitUnpacker'
+Information: Added key list 'DesignWare' to design 'DynamicBitUnpacker'. (DDB-72)
+Information: In design 'DynamicBitUnpacker', the register 'payloadDecoder/descriptorMinimum_reg[6]' is removed because it is merged to 'payloadDecoder/descriptorMinimum_reg[7]'. (OPT-1215)
+ Implement Synthetic for 'DynamicBitUnpacker'.
+  Processing 'DynamicBitUnpacker_1'
+Information: Added key list 'DesignWare' to design 'DynamicBitUnpacker_1'. (DDB-72)
+Information: In design 'DynamicBitUnpacker_1', the register 'payloadDecoder/descriptorMinimum_reg[6]' is removed because it is merged to 'payloadDecoder/descriptorMinimum_reg[7]'. (OPT-1215)
+Information: In design 'DynamicBitUnpacker_1', the register 'payloadDecoder/descriptorMinimum_reg[5]' is removed because it is merged to 'payloadDecoder/descriptorMinimum_reg[7]'. (OPT-1215)
+Information: In design 'DynamicBitUnpacker_1', the register 'payloadDecoder/descriptorMinimum_reg[4]' is removed because it is merged to 'payloadDecoder/descriptorMinimum_reg[7]'. (OPT-1215)
+ Implement Synthetic for 'DynamicBitUnpacker_1'.
+Memory usage for J1 task 1135 Mbytes -- main task 1135 Mbytes.
+Memory usage for J2 task 1135 Mbytes -- main task 1135 Mbytes.
+Memory usage for J3 task 1135 Mbytes -- main task 1135 Mbytes.
+Memory usage for J4 task 1135 Mbytes -- main task 1135 Mbytes.
+Memory usage for J5 task 1135 Mbytes -- main task 1135 Mbytes.
+Memory usage for J6 task 1135 Mbytes -- main task 1135 Mbytes.
+Memory usage for J7 task 1135 Mbytes -- main task 1135 Mbytes.
+Memory usage for J8 task 1135 Mbytes -- main task 1135 Mbytes.
+Memory usage for J9 task 1135 Mbytes -- main task 1135 Mbytes.
+Memory usage for J10 task 1135 Mbytes -- main task 1135 Mbytes.
+Memory usage for J11 task 1135 Mbytes -- main task 1135 Mbytes.
+Memory usage for J12 task 1135 Mbytes -- main task 1135 Mbytes.
+Memory usage for J13 task 1135 Mbytes -- main task 1135 Mbytes.
+Memory usage for J14 task 1135 Mbytes -- main task 1135 Mbytes.
+Memory usage for J15 task 1135 Mbytes -- main task 1135 Mbytes.
+Memory usage for J16 task 1135 Mbytes -- main task 1135 Mbytes.
+Memory usage for J17 task 1135 Mbytes -- main task 1135 Mbytes.
+Memory usage for J18 task 1135 Mbytes -- main task 1135 Mbytes.
+Memory usage for J19 task 1135 Mbytes -- main task 1135 Mbytes.
+Memory usage for J20 task 1135 Mbytes -- main task 1135 Mbytes.
+Memory usage for J21 task 1135 Mbytes -- main task 1135 Mbytes.
+Memory usage for J22 task 1135 Mbytes -- main task 1135 Mbytes.
+Memory usage for J23 task 1135 Mbytes -- main task 1135 Mbytes.
+
+  Updating timing information
+Information: Updating design information... (UID-85)
+Information: The library cell 'TIELBWP12T30P140LVT' in the library 'tcbn28hpcplusbwp12t30p140lvtssg0p81v125c' is not characterized for internal power. (PWR-536)
+Information: The library cell 'TIEHBWP12T30P140LVT' in the library 'tcbn28hpcplusbwp12t30p140lvtssg0p81v125c' is not characterized for internal power. (PWR-536)
+Information: The target library(s) contains cell(s), other than black boxes, that are not characterized for internal power. (PWR-24)
+Information: Complementing port 'io_command_ready' in design 'BriskKvComputeInterface'.
+	 The new name of the port is 'io_command_ready_BAR'. (OPT-319)
+Information: Complementing port 'io_command_ready' in design 'DualKvDecompressionController'.
+	 The new name of the port is 'io_command_ready_BAR'. (OPT-319)
+Information: Complementing port 'io_keyIn_valid' in design 'QkComputePipeline'.
+	 The new name of the port is 'io_keyIn_valid_BAR'. (OPT-319)
+Information: Complementing port 'io_kFeatureOut_valid' in design 'BriskKvComputeInterface'.
+	 The new name of the port is 'io_kFeatureOut_valid_BAR'. (OPT-319)
+Information: Complementing port 'io_keyIn_valid' in design 'QkDotProductAccumulator'.
+	 The new name of the port is 'io_keyIn_valid_BAR'. (OPT-319)
+Information: Complementing port 'io_out_valid' in design 'AttentionFeaturePacketizer_1'.
+	 The new name of the port is 'io_out_valid_BAR'. (OPT-319)
+Information: The register 'decompressionQk/compute/decompressor/vController/engine/qDecoder/payloadDecoder/expectedPayloadBytes_reg[0]' is a constant and will be removed. (OPT-1206)
+Information: The register 'decompressionQk/compute/decompressor/vController/engine/qDecoder/descriptorDecoder/minimumDecoder/bitCount_reg[0]' is a constant and will be removed. (OPT-1206)
+Information: The register 'decompressionQk/compute/decompressor/vController/engine/qDecoder/descriptorDecoder/minimumDecoder/bitCount_reg[1]' is a constant and will be removed. (OPT-1206)
+Information: The register 'decompressionQk/compute/decompressor/vController/engine/qDecoder/payloadDecoder/descriptorMinimum_reg[7]' is a constant and will be removed. (OPT-1206)
+Information: The register 'decompressionQk/compute/decompressor/vController/engine/exponentDecoder/unpacker/bitCount_reg[0]' is a constant and will be removed. (OPT-1206)
+Information: The register 'decompressionQk/compute/decompressor/vController/engine/exponentDecoder/unpacker/bitCount_reg[1]' is a constant and will be removed. (OPT-1206)
+Information: The register 'decompressionQk/compute/decompressor/bucketDecoder/header_reg[16]' is a constant and will be removed. (OPT-1206)
+Information: The register 'decompressionQk/compute/decompressor/bucketDecoder/header_reg[17]' is a constant and will be removed. (OPT-1206)
+Information: The register 'decompressionQk/compute/decompressor/bucketDecoder/header_reg[18]' is a constant and will be removed. (OPT-1206)
+Information: The register 'decompressionQk/compute/decompressor/bucketDecoder/header_reg[19]' is a constant and will be removed. (OPT-1206)
+Information: The register 'decompressionQk/compute/decompressor/bucketDecoder/header_reg[20]' is a constant and will be removed. (OPT-1206)
+Information: The register 'decompressionQk/compute/decompressor/kController/engine/qDecoder/payloadDecoder/expectedPayloadBytes_reg[0]' is a constant and will be removed. (OPT-1206)
+Information: The register 'decompressionQk/compute/decompressor/kController/engine/qDecoder/descriptorDecoder/minimumDecoder/bitCount_reg[0]' is a constant and will be removed. (OPT-1206)
+Information: The register 'decompressionQk/compute/decompressor/kController/engine/qDecoder/payloadDecoder/descriptorMinimum_reg[7]' is a constant and will be removed. (OPT-1206)
+Information: The register 'decompressionQk/compute/decompressor/kController/engine/exponentDecoder/unpacker/bitCount_reg[0]' is a constant and will be removed. (OPT-1206)
+Information: The register 'decompressionQk/compute/decompressor/kController/engine/exponentDecoder/unpacker/bitCount_reg[1]' is a constant and will be removed. (OPT-1206)
+Information: The register 'decompressionQk/qk/queryReplay/packCountReg_reg[31]' is a constant and will be removed. (OPT-1206)
+Information: The register 'decompressionQk/qk/queryReplay/packCountReg_reg[30]' is a constant and will be removed. (OPT-1206)
+Information: The register 'decompressionQk/qk/queryReplay/packCountReg_reg[29]' is a constant and will be removed. (OPT-1206)
+Information: The register 'decompressionQk/qk/queryReplay/packCountReg_reg[28]' is a constant and will be removed. (OPT-1206)
+Information: The register 'scaleSoftmax/softmax/outputPacket_blockIndex_reg[30]' is a constant and will be removed. (OPT-1206)
+
+  Beginning Mapping Optimizations  (Ultra High effort)
+  -------------------------------
+Information: Ungrouping hierarchy decompressionQk 'BriskKvDecompressQkTop' #insts = 1040. (OPT-777)
+Information: Added key list 'DesignWare' to design 'BriskKvAttentionTop'. (DDB-72)
+Information: Ungrouping hierarchy scaleSoftmax 'QkScaleSoftmaxPipeline' #insts = 2. (OPT-777)
+Information: Ungrouping hierarchy softmaxV 'SoftmaxVComputePipeline' #insts = 2. (OPT-777)
+Information: Ungrouping hierarchy decompressionQk/compute 'BriskKvComputeInterface' #insts = 32. (OPT-777)
+Information: Ungrouping hierarchy decompressionQk/qk 'QkComputePipeline' #insts = 43. (OPT-777)
+  Structuring 'VPacketBuffer_DW_div_uns_0'
+  Mapping 'VPacketBuffer_DW_div_uns_0'
+  Mapping 'DW01_add'
+  Mapping 'DW01_add'
+  Mapping 'DW01_add'
+  Mapping 'DW01_add'
+  Mapping 'VPacketBuffer_DW01_add_9'
+  Mapping 'VPacketBuffer_DW01_add_10'
+  Mapping 'VPacketBuffer_DW01_add_11'
+  Mapping 'VPacketBuffer_DW01_add_12'
+  Mapping 'VPacketBuffer_DW01_add_13'
+  Mapping 'VPacketBuffer_DW01_add_14'
+  Mapping 'VPacketBuffer_DW01_add_15'
+  Mapping 'VPacketBuffer_DW01_add_16'
+  Mapping 'VPacketBuffer_DW01_add_17'
+  Mapping 'VPacketBuffer_DW01_add_18'
+  Mapping 'VPacketBuffer_DW01_add_19'
+  Mapping 'VPacketBuffer_DW01_add_20'
+  Mapping 'VPacketBuffer_DW01_add_21'
+  Mapping 'VPacketBuffer_DW01_add_22'
+  Mapping 'VPacketBuffer_DW01_add_23'
+  Mapping 'VPacketBuffer_DW01_add_24'
+  Mapping 'VPacketBuffer_DW01_add_25'
+  Mapping 'VPacketBuffer_DW01_add_26'
+  Mapping 'VPacketBuffer_DW01_add_27'
+  Mapping 'VPacketBuffer_DW01_add_28'
+  Mapping 'VPacketBuffer_DW01_add_29'
+  Mapping 'VPacketBuffer_DW01_add_30'
+  Mapping 'VPacketBuffer_DW01_add_31'
+  Mapping 'VPacketBuffer_DW01_add_32'
+  Mapping 'VPacketBuffer_DW01_add_33'
+  Mapping 'VPacketBuffer_DW01_add_34'
+  Mapping 'VPacketBuffer_DW01_add_35'
+  Structuring 'VPacketBuffer_DW_div_uns_1'
+  Mapping 'VPacketBuffer_DW_div_uns_1'
+  Mapping 'VPacketBuffer_DW01_add_36'
+  Mapping 'DW01_add'
+  Mapping 'DW01_add'
+  Mapping 'DW01_add'
+  Mapping 'DW01_add'
+  Mapping 'DW01_add'
+  Mapping 'DW01_add'
+  Mapping 'VPacketBuffer_DW01_add_37'
+  Mapping 'VPacketBuffer_DW01_add_38'
+  Mapping 'VPacketBuffer_DW01_add_39'
+  Mapping 'VPacketBuffer_DW01_add_40'
+  Mapping 'VPacketBuffer_DW01_add_41'
+  Mapping 'VPacketBuffer_DW01_add_42'
+  Mapping 'VPacketBuffer_DW01_add_43'
+  Mapping 'VPacketBuffer_DW01_add_44'
+  Mapping 'VPacketBuffer_DW01_add_45'
+  Mapping 'VPacketBuffer_DW01_add_46'
+  Mapping 'VPacketBuffer_DW01_add_47'
+  Mapping 'VPacketBuffer_DW01_add_48'
+  Mapping 'VPacketBuffer_DW01_add_49'
+  Mapping 'VPacketBuffer_DW01_add_50'
+  Mapping 'VPacketBuffer_DW01_add_51'
+  Mapping 'VPacketBuffer_DW01_add_52'
+  Mapping 'VPacketBuffer_DW01_add_53'
+  Mapping 'VPacketBuffer_DW01_add_54'
+  Mapping 'VPacketBuffer_DW01_add_55'
+  Mapping 'VPacketBuffer_DW01_add_56'
+  Mapping 'VPacketBuffer_DW01_add_57'
+  Mapping 'VPacketBuffer_DW01_add_58'
+  Mapping 'VPacketBuffer_DW01_add_59'
+  Mapping 'VPacketBuffer_DW01_add_60'
+  Mapping 'VPacketBuffer_DW01_add_61'
+  Mapping 'VPacketBuffer_DW01_add_62'
+  Mapping 'VPacketBuffer_DW01_add_63'
+  Mapping 'VPacketBuffer_DW01_add_64'
+  Mapping 'VPacketBuffer_DW01_add_65'
+  Mapping 'VPacketBuffer_DW01_add_66'
+  Mapping 'VPacketBuffer_DW01_add_67'
+  Mapping 'VPacketBuffer_DW01_add_68'
+  Mapping 'VPacketBuffer_DW01_add_69'
+  Mapping 'VPacketBuffer_DW01_add_70'
+  Mapping 'VPacketBuffer_DW01_add_71'
+  Mapping 'VPacketBuffer_DW01_add_72'
+  Mapping 'VPacketBuffer_DW01_add_73'
+  Mapping 'VPacketBuffer_DW01_add_74'
+  Mapping 'VPacketBuffer_DW01_add_75'
+  Structuring 'VPacketBuffer_DW_div_uns_2'
+  Mapping 'VPacketBuffer_DW_div_uns_2'
+  Mapping 'VPacketBuffer_DW01_add_76'
+  Mapping 'VPacketBuffer_DW01_add_77'
+  Mapping 'VPacketBuffer_DW01_add_78'
+  Mapping 'VPacketBuffer_DW01_sub_0'
+  Mapping 'VPacketBuffer_DW01_add_79'
+  Mapping 'VPacketBuffer_DW01_add_80'
+  Mapping 'VPacketBuffer_DW01_add_81'
+  Mapping 'VPacketBuffer_DW01_add_86'
+  Mapping 'VPacketBuffer_DW01_add_87'
+  Mapping 'VPacketBuffer_DW01_add_88'
+  Mapping 'VPacketBuffer_DW01_add_89'
+  Mapping 'VPacketBuffer_DW01_add_90'
+  Mapping 'VPacketBuffer_DW01_add_91'
+  Mapping 'VPacketBuffer_DW01_add_92'
+  Mapping 'VPacketBuffer_DW01_add_93'
+  Mapping 'VPacketBuffer_DW01_add_94'
+  Mapping 'VPacketBuffer_DW01_add_95'
+  Mapping 'VPacketBuffer_DW01_add_96'
+  Mapping 'VPacketBuffer_DW01_add_97'
+  Mapping 'VPacketBuffer_DW01_add_98'
+  Mapping 'VPacketBuffer_DW01_add_99'
+  Mapping 'VPacketBuffer_DW01_add_100'
+  Mapping 'VPacketBuffer_DW01_add_101'
+  Mapping 'VPacketBuffer_DW01_add_102'
+  Mapping 'VPacketBuffer_DW01_add_103'
+  Mapping 'VPacketBuffer_DW01_add_104'
+  Mapping 'VPacketBuffer_DW01_add_105'
+  Mapping 'VPacketBuffer_DW01_add_106'
+  Mapping 'VPacketBuffer_DW01_add_107'
+  Mapping 'VPacketBuffer_DW01_add_108'
+  Mapping 'VPacketBuffer_DW01_add_109'
+  Mapping 'VPacketBuffer_DW01_add_110'
+  Mapping 'VPacketBuffer_DW01_add_111'
+  Mapping 'VPacketBuffer_DW01_add_112'
+  Mapping 'VPacketBuffer_DW01_add_113'
+  Mapping 'VPacketBuffer_DW01_add_114'
+  Mapping 'VPacketBuffer_DW01_add_115'
+  Mapping 'VPacketBuffer_DW01_add_116'
+  Mapping 'VPacketBuffer_DW01_add_117'
+  Mapping 'VPacketBuffer_DW01_add_118'
+  Mapping 'VPacketBuffer_DW01_add_119'
+  Mapping 'VPacketBuffer_DW01_add_120'
+  Mapping 'VPacketBuffer_DW01_add_121'
+  Mapping 'VPacketBuffer_DW01_add_122'
+  Mapping 'VPacketBuffer_DW01_add_123'
+  Mapping 'VPacketBuffer_DW01_add_124'
+  Mapping 'VPacketBuffer_DW01_add_125'
+  Mapping 'VPacketBuffer_DW01_add_126'
+  Mapping 'VPacketBuffer_DW01_add_127'
+  Mapping 'VPacketBuffer_DW01_add_128'
+  Mapping 'VPacketBuffer_DW01_add_129'
+  Mapping 'VPacketBuffer_DW01_add_130'
+  Mapping 'VPacketBuffer_DW01_add_131'
+  Mapping 'VPacketBuffer_DW01_add_132'
+  Mapping 'VPacketBuffer_DW01_add_133'
+  Mapping 'VPacketBuffer_DW01_add_134'
+  Mapping 'VPacketBuffer_DW01_add_135'
+  Mapping 'VPacketBuffer_DW01_add_136'
+  Mapping 'VPacketBuffer_DW01_add_137'
+  Mapping 'VPacketBuffer_DW01_add_138'
+  Mapping 'VPacketBuffer_DW01_add_139'
+  Mapping 'VPacketBuffer_DW01_add_140'
+  Mapping 'VPacketBuffer_DW01_add_141'
+  Mapping 'VPacketBuffer_DW01_add_142'
+  Mapping 'VPacketBuffer_DW01_add_143'
+  Mapping 'VPacketBuffer_DW01_add_144'
+  Mapping 'VPacketBuffer_DW01_add_145'
+  Mapping 'VPacketBuffer_DW01_add_146'
+  Mapping 'VPacketBuffer_DW01_add_147'
+  Mapping 'VPacketBuffer_DW01_add_148'
+  Mapping 'VPacketBuffer_DW01_add_149'
+  Mapping 'VPacketBuffer_DW01_add_150'
+  Mapping 'VPacketBuffer_DW01_add_151'
+  Mapping 'VPacketBuffer_DW01_add_152'
+  Mapping 'VPacketBuffer_DW01_add_153'
+  Mapping 'VPacketBuffer_DW01_add_154'
+  Mapping 'VPacketBuffer_DW01_add_155'
+  Structuring 'VPacketBuffer_DW_div_uns_3'
+  Mapping 'VPacketBuffer_DW_div_uns_3'
+  Mapping 'VPacketBuffer_DW01_add_156'
+  Mapping 'DW01_add'
+  Mapping 'DW01_add'
+  Mapping 'DW01_add'
+  Mapping 'DW01_add'
+  Mapping 'DW01_add'
+  Mapping 'DW01_add'
+  Mapping 'VPacketBuffer_DW01_add_157'
+  Mapping 'VPacketBuffer_DW01_add_158'
+  Mapping 'VPacketBuffer_DW01_add_159'
+  Mapping 'VPacketBuffer_DW01_add_160'
+  Mapping 'VPacketBuffer_DW01_add_161'
+  Mapping 'VPacketBuffer_DW01_add_162'
+  Mapping 'VPacketBuffer_DW01_add_163'
+  Mapping 'VPacketBuffer_DW01_add_164'
+  Mapping 'VPacketBuffer_DW01_add_165'
+  Mapping 'VPacketBuffer_DW01_add_166'
+  Mapping 'VPacketBuffer_DW01_add_167'
+  Mapping 'VPacketBuffer_DW01_add_168'
+  Mapping 'VPacketBuffer_DW01_add_169'
+  Mapping 'VPacketBuffer_DW01_add_170'
+  Mapping 'VPacketBuffer_DW01_add_171'
+  Mapping 'VPacketBuffer_DW01_add_172'
+  Mapping 'VPacketBuffer_DW01_add_173'
+  Mapping 'VPacketBuffer_DW01_add_174'
+  Mapping 'VPacketBuffer_DW01_add_175'
+  Mapping 'VPacketBuffer_DW01_add_176'
+  Mapping 'VPacketBuffer_DW01_add_177'
+  Mapping 'VPacketBuffer_DW01_add_178'
+  Mapping 'VPacketBuffer_DW01_add_179'
+  Mapping 'VPacketBuffer_DW01_add_180'
+  Mapping 'VPacketBuffer_DW01_add_181'
+  Mapping 'VPacketBuffer_DW01_add_182'
+  Mapping 'VPacketBuffer_DW01_add_183'
+  Mapping 'VPacketBuffer_DW01_add_184'
+  Mapping 'VPacketBuffer_DW01_add_185'
+  Mapping 'VPacketBuffer_DW01_add_186'
+  Mapping 'VPacketBuffer_DW01_add_187'
+  Mapping 'VPacketBuffer_DW01_add_188'
+  Mapping 'VPacketBuffer_DW01_add_189'
+  Mapping 'VPacketBuffer_DW01_add_190'
+  Mapping 'VPacketBuffer_DW01_add_191'
+  Mapping 'VPacketBuffer_DW01_add_192'
+  Mapping 'VPacketBuffer_DW01_add_193'
+  Mapping 'VPacketBuffer_DW01_add_194'
+  Mapping 'VPacketBuffer_DW01_add_195'
+  Structuring 'VPacketBuffer_DW_div_uns_4'
+  Mapping 'VPacketBuffer_DW_div_uns_4'
+  Mapping 'DW01_add'
+  Mapping 'DW01_add'
+  Mapping 'DW01_add'
+  Mapping 'DW01_add'
+  Mapping 'VPacketBuffer_DW01_add_196'
+  Mapping 'VPacketBuffer_DW01_add_197'
+  Mapping 'VPacketBuffer_DW01_add_198'
+  Mapping 'VPacketBuffer_DW01_add_199'
+  Mapping 'VPacketBuffer_DW01_add_200'
+  Mapping 'VPacketBuffer_DW01_add_201'
+  Mapping 'VPacketBuffer_DW01_add_202'
+  Mapping 'VPacketBuffer_DW01_add_203'
+  Mapping 'VPacketBuffer_DW01_add_204'
+  Mapping 'VPacketBuffer_DW01_add_205'
+  Mapping 'VPacketBuffer_DW01_add_206'
+  Mapping 'VPacketBuffer_DW01_add_207'
+  Mapping 'VPacketBuffer_DW01_add_208'
+  Mapping 'VPacketBuffer_DW01_add_209'
+  Mapping 'VPacketBuffer_DW01_add_210'
+  Mapping 'VPacketBuffer_DW01_add_211'
+  Mapping 'VPacketBuffer_DW01_add_212'
+  Mapping 'VPacketBuffer_DW01_add_213'
+  Mapping 'VPacketBuffer_DW01_add_214'
+  Mapping 'VPacketBuffer_DW01_add_215'
+  Mapping 'VPacketBuffer_DW01_add_216'
+  Mapping 'VPacketBuffer_DW01_add_217'
+  Mapping 'VPacketBuffer_DW01_add_218'
+  Mapping 'VPacketBuffer_DW01_add_219'
+  Mapping 'VPacketBuffer_DW01_add_220'
+  Mapping 'VPacketBuffer_DW01_add_221'
+  Mapping 'VPacketBuffer_DW01_add_222'
+  Structuring 'VPacketBuffer_DW_div_uns_5'
+  Mapping 'VPacketBuffer_DW_div_uns_5'
+  Mapping 'VPacketBuffer_DW01_add_223'
+  Mapping 'DW01_add'
+  Mapping 'DW01_add'
+  Mapping 'DW01_add'
+  Mapping 'DW01_add'
+  Mapping 'DW01_add'
+  Mapping 'DW01_add'
+  Mapping 'VPacketBuffer_DW01_add_224'
+  Mapping 'VPacketBuffer_DW01_add_225'
+  Mapping 'VPacketBuffer_DW01_add_226'
+  Mapping 'VPacketBuffer_DW01_add_227'
+  Mapping 'VPacketBuffer_DW01_add_228'
+  Mapping 'VPacketBuffer_DW01_add_229'
+  Mapping 'VPacketBuffer_DW01_add_230'
+  Mapping 'VPacketBuffer_DW01_add_231'
+  Mapping 'VPacketBuffer_DW01_add_232'
+  Mapping 'VPacketBuffer_DW01_add_233'
+  Mapping 'VPacketBuffer_DW01_add_234'
+  Mapping 'VPacketBuffer_DW01_add_235'
+  Mapping 'VPacketBuffer_DW01_add_236'
+  Mapping 'VPacketBuffer_DW01_add_237'
+  Mapping 'VPacketBuffer_DW01_add_238'
+  Mapping 'VPacketBuffer_DW01_add_239'
+  Mapping 'VPacketBuffer_DW01_add_240'
+  Mapping 'VPacketBuffer_DW01_add_241'
+  Mapping 'VPacketBuffer_DW01_add_242'
+  Mapping 'VPacketBuffer_DW01_add_243'
+  Mapping 'VPacketBuffer_DW01_add_244'
+  Mapping 'VPacketBuffer_DW01_add_245'
+  Mapping 'VPacketBuffer_DW01_add_246'
+  Mapping 'VPacketBuffer_DW01_add_247'
+  Mapping 'VPacketBuffer_DW01_add_248'
+  Mapping 'VPacketBuffer_DW01_add_249'
+  Mapping 'VPacketBuffer_DW01_add_250'
+  Mapping 'VPacketBuffer_DW01_add_251'
+  Mapping 'VPacketBuffer_DW01_add_252'
+  Mapping 'VPacketBuffer_DW01_add_253'
+  Mapping 'VPacketBuffer_DW01_add_254'
+  Mapping 'VPacketBuffer_DW01_add_255'
+  Mapping 'VPacketBuffer_DW01_add_256'
+  Mapping 'VPacketBuffer_DW01_add_257'
+  Mapping 'VPacketBuffer_DW01_add_258'
+  Mapping 'VPacketBuffer_DW01_add_259'
+  Mapping 'VPacketBuffer_DW01_add_260'
+  Mapping 'VPacketBuffer_DW01_add_261'
+  Mapping 'VPacketBuffer_DW01_add_262'
+  Structuring 'VPacketBuffer_DW_div_uns_6'
+  Mapping 'VPacketBuffer_DW_div_uns_6'
+  Mapping 'VPacketBuffer_DW01_add_263'
+  Mapping 'VPacketBuffer_DW01_add_264'
+  Mapping 'VPacketBuffer_DW01_add_265'
+  Mapping 'VPacketBuffer_DW01_sub_1'
+  Mapping 'VPacketBuffer_DW01_add_266'
+  Mapping 'VPacketBuffer_DW01_add_267'
+  Mapping 'VPacketBuffer_DW01_add_268'
+  Mapping 'VPacketBuffer_DW01_add_273'
+  Mapping 'VPacketBuffer_DW01_add_274'
+  Mapping 'VPacketBuffer_DW01_add_275'
+  Mapping 'VPacketBuffer_DW01_add_276'
+  Mapping 'VPacketBuffer_DW01_add_277'
+  Mapping 'VPacketBuffer_DW01_add_278'
+  Mapping 'VPacketBuffer_DW01_add_279'
+  Mapping 'VPacketBuffer_DW01_add_280'
+  Mapping 'VPacketBuffer_DW01_add_281'
+  Mapping 'VPacketBuffer_DW01_add_282'
+  Mapping 'VPacketBuffer_DW01_add_283'
+  Mapping 'VPacketBuffer_DW01_add_284'
+  Mapping 'VPacketBuffer_DW01_add_285'
+  Mapping 'VPacketBuffer_DW01_add_286'
+  Mapping 'VPacketBuffer_DW01_add_287'
+  Mapping 'VPacketBuffer_DW01_add_288'
+  Mapping 'VPacketBuffer_DW01_add_289'
+  Mapping 'VPacketBuffer_DW01_add_290'
+  Mapping 'VPacketBuffer_DW01_add_291'
+  Mapping 'VPacketBuffer_DW01_add_292'
+  Mapping 'VPacketBuffer_DW01_add_293'
+  Mapping 'VPacketBuffer_DW01_add_294'
+  Mapping 'VPacketBuffer_DW01_add_295'
+  Mapping 'VPacketBuffer_DW01_add_296'
+  Mapping 'VPacketBuffer_DW01_add_297'
+  Mapping 'VPacketBuffer_DW01_add_298'
+  Mapping 'VPacketBuffer_DW01_add_299'
+  Mapping 'VPacketBuffer_DW01_add_300'
+  Mapping 'VPacketBuffer_DW01_add_301'
+  Mapping 'VPacketBuffer_DW01_add_302'
+  Mapping 'VPacketBuffer_DW01_add_303'
+  Mapping 'VPacketBuffer_DW01_add_304'
+  Mapping 'VPacketBuffer_DW01_add_305'
+  Mapping 'VPacketBuffer_DW01_add_306'
+  Mapping 'VPacketBuffer_DW01_add_307'
+  Mapping 'VPacketBuffer_DW01_add_308'
+  Mapping 'VPacketBuffer_DW01_add_309'
+  Mapping 'VPacketBuffer_DW01_add_310'
+  Mapping 'VPacketBuffer_DW01_add_311'
+  Mapping 'VPacketBuffer_DW01_add_312'
+  Mapping 'VPacketBuffer_DW01_add_313'
+  Mapping 'VPacketBuffer_DW01_add_314'
+  Mapping 'VPacketBuffer_DW01_add_315'
+  Mapping 'VPacketBuffer_DW01_add_316'
+  Mapping 'VPacketBuffer_DW01_add_317'
+  Mapping 'VPacketBuffer_DW01_add_318'
+  Mapping 'VPacketBuffer_DW01_add_319'
+  Mapping 'VPacketBuffer_DW01_add_320'
+  Mapping 'VPacketBuffer_DW01_add_321'
+  Mapping 'VPacketBuffer_DW01_add_322'
+  Mapping 'VPacketBuffer_DW01_add_323'
+  Mapping 'VPacketBuffer_DW01_add_324'
+  Mapping 'VPacketBuffer_DW01_add_325'
+  Mapping 'VPacketBuffer_DW01_add_326'
+  Mapping 'VPacketBuffer_DW01_add_327'
+  Mapping 'VPacketBuffer_DW01_add_328'
+  Mapping 'VPacketBuffer_DW01_add_329'
+  Mapping 'VPacketBuffer_DW01_add_330'
+  Mapping 'VPacketBuffer_DW01_add_331'
+  Mapping 'VPacketBuffer_DW01_add_332'
+  Mapping 'VPacketBuffer_DW01_add_333'
+  Mapping 'VPacketBuffer_DW01_add_334'
+  Mapping 'VPacketBuffer_DW01_add_335'
+  Mapping 'VPacketBuffer_DW01_add_336'
+  Mapping 'VPacketBuffer_DW01_add_337'
+  Mapping 'VPacketBuffer_DW01_add_338'
+  Mapping 'VPacketBuffer_DW01_add_339'
+  Mapping 'VPacketBuffer_DW01_add_340'
+  Mapping 'VPacketBuffer_DW01_add_341'
+  Mapping 'VPacketBuffer_DW01_add_342'
+  Structuring 'VPacketBuffer_DW_div_uns_7'
+  Mapping 'VPacketBuffer_DW_div_uns_7'
+  Mapping 'VPacketBuffer_DW01_add_343'
+  Mapping 'VPacketBuffer_DW01_add_344'
+  Mapping 'VPacketBuffer_DW01_add_345'
+  Mapping 'VPacketBuffer_DW01_sub_2'
+  Mapping 'VPacketBuffer_DW01_add_346'
+  Mapping 'VPacketBuffer_DW01_add_347'
+  Mapping 'VPacketBuffer_DW01_add_348'
+  Mapping 'VPacketBuffer_DW01_add_353'
+  Mapping 'VPacketBuffer_DW01_add_354'
+  Mapping 'VPacketBuffer_DW01_add_355'
+  Mapping 'VPacketBuffer_DW01_add_356'
+  Mapping 'VPacketBuffer_DW01_add_357'
+  Mapping 'VPacketBuffer_DW01_add_358'
+  Mapping 'VPacketBuffer_DW01_add_359'
+  Mapping 'VPacketBuffer_DW01_add_360'
+  Mapping 'VPacketBuffer_DW01_add_361'
+  Mapping 'VPacketBuffer_DW01_add_362'
+  Mapping 'VPacketBuffer_DW01_add_363'
+  Mapping 'VPacketBuffer_DW01_add_364'
+  Mapping 'VPacketBuffer_DW01_add_365'
+  Mapping 'VPacketBuffer_DW01_add_366'
+  Mapping 'VPacketBuffer_DW01_add_367'
+  Mapping 'VPacketBuffer_DW01_add_368'
+  Mapping 'VPacketBuffer_DW01_add_369'
+  Mapping 'VPacketBuffer_DW01_add_370'
+  Mapping 'VPacketBuffer_DW01_add_371'
+  Mapping 'VPacketBuffer_DW01_add_372'
+  Mapping 'VPacketBuffer_DW01_add_373'
+  Mapping 'VPacketBuffer_DW01_add_374'
+  Mapping 'VPacketBuffer_DW01_add_375'
+  Mapping 'VPacketBuffer_DW01_add_376'
+  Mapping 'VPacketBuffer_DW01_add_377'
+  Mapping 'VPacketBuffer_DW01_add_378'
+  Mapping 'VPacketBuffer_DW01_add_379'
+  Mapping 'VPacketBuffer_DW01_add_380'
+  Mapping 'VPacketBuffer_DW01_add_381'
+  Mapping 'VPacketBuffer_DW01_add_382'
+  Mapping 'VPacketBuffer_DW01_add_383'
+  Mapping 'VPacketBuffer_DW01_add_384'
+  Mapping 'VPacketBuffer_DW01_add_385'
+  Mapping 'VPacketBuffer_DW01_add_386'
+  Mapping 'VPacketBuffer_DW01_add_387'
+  Mapping 'VPacketBuffer_DW01_add_388'
+  Mapping 'VPacketBuffer_DW01_add_389'
+  Mapping 'VPacketBuffer_DW01_add_390'
+  Mapping 'VPacketBuffer_DW01_add_391'
+  Mapping 'VPacketBuffer_DW01_add_392'
+  Mapping 'VPacketBuffer_DW01_add_393'
+  Mapping 'VPacketBuffer_DW01_add_394'
+  Mapping 'VPacketBuffer_DW01_add_395'
+  Mapping 'VPacketBuffer_DW01_add_396'
+  Mapping 'VPacketBuffer_DW01_add_397'
+  Mapping 'VPacketBuffer_DW01_add_398'
+  Mapping 'VPacketBuffer_DW01_add_399'
+  Mapping 'VPacketBuffer_DW01_add_400'
+  Mapping 'VPacketBuffer_DW01_add_401'
+  Mapping 'VPacketBuffer_DW01_add_402'
+  Mapping 'VPacketBuffer_DW01_add_403'
+  Mapping 'VPacketBuffer_DW01_add_404'
+  Mapping 'VPacketBuffer_DW01_add_405'
+  Mapping 'VPacketBuffer_DW01_add_406'
+  Mapping 'VPacketBuffer_DW01_add_407'
+  Mapping 'VPacketBuffer_DW01_add_408'
+  Mapping 'VPacketBuffer_DW01_add_409'
+  Mapping 'VPacketBuffer_DW01_add_410'
+  Mapping 'VPacketBuffer_DW01_add_411'
+  Mapping 'VPacketBuffer_DW01_add_412'
+  Mapping 'VPacketBuffer_DW01_add_413'
+  Mapping 'VPacketBuffer_DW01_add_414'
+  Mapping 'VPacketBuffer_DW01_add_415'
+  Mapping 'VPacketBuffer_DW01_add_416'
+  Mapping 'VPacketBuffer_DW01_add_417'
+  Mapping 'VPacketBuffer_DW01_add_418'
+  Mapping 'VPacketBuffer_DW01_add_419'
+  Mapping 'VPacketBuffer_DW01_add_420'
+  Mapping 'VPacketBuffer_DW01_add_421'
+  Mapping 'VPacketBuffer_DW01_add_422'
+  Mapping 'VPacketBuffer_DW_div_uns_7'
+Information: Ungrouping hierarchy softmaxV/vBuffer 'VPacketBuffer' #insts = 9557. (OPT-777)
+  Mapping Optimization (Phase 1)
+  Mapping Optimization (Phase 2)
+  Mapping Optimization (Phase 3)
+  Mapping Optimization (Phase 4)
+  Mapping Optimization (Phase 5)
+  Mapping Optimization (Phase 6)
+  Mapping Optimization (Phase 7)
+  Mapping Optimization (Phase 8)
+  Mapping Optimization (Phase 9)
+  Mapping Optimization (Phase 10)
+  Mapping Optimization (Phase 11)
+  Mapping Optimization (Phase 12)
+  Mapping Optimization (Phase 13)
+  Mapping Optimization (Phase 14)
+  Mapping Optimization (Phase 15)
+  Mapping Optimization (Phase 16)
+  Mapping Optimization (Phase 17)
+  Mapping Optimization (Phase 18)
+  Mapping Optimization (Phase 19)
+  Mapping Optimization (Phase 20)
+  Mapping Optimization (Phase 21)
+  Mapping Optimization (Phase 22)
+  Mapping Optimization (Phase 23)
+  Mapping Optimization (Phase 24)
+  Mapping Optimization (Phase 25)
+  Mapping Optimization (Phase 26)
+  Mapping Optimization (Phase 27)
+  Mapping Optimization (Phase 28)
+  Mapping Optimization (Phase 29)
+  Mapping Optimization (Phase 30)
+  Mapping Optimization (Phase 31)
+  Mapping Optimization (Phase 32)
+  Mapping Optimization (Phase 33)
+  Mapping Optimization (Phase 34)
+  Mapping Optimization (Phase 35)
+  Mapping Optimization (Phase 36)
+  Mapping Optimization (Phase 37)
+  Mapping Optimization (Phase 38)
+  Mapping Optimization (Phase 39)
+  Mapping Optimization (Phase 40)
+  Mapping Optimization (Phase 41)
+  Mapping Optimization (Phase 42)
+  Mapping Optimization (Phase 43)
+  Mapping Optimization (Phase 44)
+  Mapping Optimization (Phase 45)
+  Mapping Optimization (Phase 46)
+  Mapping Optimization (Phase 47)
+  Mapping Optimization (Phase 48)
+  Mapping Optimization (Phase 49)
+  Mapping Optimization (Phase 50)
+  Mapping Optimization (Phase 51)
+  Mapping Optimization (Phase 52)
+  Mapping Optimization (Phase 53)
+  Mapping Optimization (Phase 54)
+  Mapping Optimization (Phase 55)
+  Mapping Optimization (Phase 56)
+  Mapping Optimization (Phase 57)
+  Mapping Optimization (Phase 58)
+  Mapping Optimization (Phase 59)
+  Mapping Optimization (Phase 60)
+  Mapping Optimization (Phase 61)
+
+  Beginning Constant Register Removal
+  -----------------------------------
+Information: The register 'decompressionQk/compute/decompressor/vController/engine/qDecoder/descriptorDecoder/widthDecoder/bytesRemaining_reg[31]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[19]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[20]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[21]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[22]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[23]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[24]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[25]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[26]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[27]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[28]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[29]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[30]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/packCountReg_reg[26]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[31]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/packCountReg_reg[7]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[8]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[9]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[10]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[11]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[12]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[13]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[14]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[15]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[16]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[17]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/featureDimReg_reg[18]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/packCountReg_reg[27]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/packCountReg_reg[23]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/packCountReg_reg[24]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/packCountReg_reg[25]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/packCountReg_reg[8]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/packCountReg_reg[9]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/packCountReg_reg[10]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/packCountReg_reg[11]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/packCountReg_reg[12]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/packCountReg_reg[13]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/packCountReg_reg[14]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/packCountReg_reg[15]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/packCountReg_reg[19]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/packCountReg_reg[16]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/packCountReg_reg[17]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/packCountReg_reg[18]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/packCountReg_reg[20]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/packCountReg_reg[21]' is a constant and will be removed. (OPT-1206)
+Information: The register 'softmaxV/vBuffer/packCountReg_reg[22]' is a constant and will be removed. (OPT-1206)
+Information: The register 'decompressionQk/compute/decompressor/kController/engine/qDecoder/descriptorDecoder/widthDecoder/bytesRemaining_reg[31]' is a constant and will be removed. (OPT-1206)
+
+  Beginning Global Optimizations
+  ------------------------------
+  Numerical Synthesis (Phase 1)
+  Numerical Synthesis (Phase 2)
+  Global Optimization (Phase 1)
+  Global Optimization (Phase 2)
+  Global Optimization (Phase 3)
+  Global Optimization (Phase 4)
+  Global Optimization (Phase 5)
+  Global Optimization (Phase 6)
+  Global Optimization (Phase 7)
+  Global Optimization (Phase 8)
+  Global Optimization (Phase 9)
+  Global Optimization (Phase 10)
+  Global Optimization (Phase 11)
+  Global Optimization (Phase 12)
+  Global Optimization (Phase 13)
+  Global Optimization (Phase 14)
+  Global Optimization (Phase 15)
+  Global Optimization (Phase 16)
+  Global Optimization (Phase 17)
+  Global Optimization (Phase 18)
+  Global Optimization (Phase 19)
+  Global Optimization (Phase 20)
+  Global Optimization (Phase 21)
+  Global Optimization (Phase 22)
+  Global Optimization (Phase 23)
+  Global Optimization (Phase 24)
+  Global Optimization (Phase 25)
+  Global Optimization (Phase 26)
+  Global Optimization (Phase 27)
+  Global Optimization (Phase 28)
+  Global Optimization (Phase 29)
+  Global Optimization (Phase 30)
+  Global Optimization (Phase 31)
+  Global Optimization (Phase 32)
+  Global Optimization (Phase 33)
+  Mapping 'BriskKvAttentionTop_DW01_add_856'
+  Mapping 'BriskKvAttentionTop_DW01_add_857'
+  Mapping 'BriskKvAttentionTop_DW01_add_858'
+  Mapping 'BriskKvAttentionTop_DW01_add_859'
+  Mapping 'BriskKvAttentionTop_DW01_add_860'
+  Mapping 'BriskKvAttentionTop_DW01_add_861'
+  Mapping 'BriskKvAttentionTop_DW01_add_862'
+
+  Beginning Isolate Ports
+  -----------------------
+
+  Beginning Delay Optimization
+  ----------------------------
+
+                                  TOTAL                                                
+   ELAPSED            WORST NEG   SETUP    DESIGN                              LEAKAGE 
+    TIME      AREA      SLACK     COST    RULE COST         ENDPOINT            POWER  
+  --------- --------- --------- --------- --------- ------------------------- ---------
+    0:23:33  173810.1      1.41      44.4       1.0                           60109956.0000
+    0:24:03  176801.4      0.16       7.3       0.9                           61539496.0000
+    0:24:03  176801.4      0.16       7.3       0.9                           61539496.0000
+    0:24:04  176776.2      0.16       7.3       0.9                           61522860.0000
+
+  Beginning WLM Backend Optimization
+  --------------------------------------
+    0:27:51  168946.7      0.28       4.8       0.9                           58431452.0000
+    0:27:55  168846.0      0.28       4.8       0.9                           58323528.0000
+    0:27:59  168813.5      0.28       4.8       0.9                           58275320.0000
+    0:28:06  168731.5      0.28       4.8       0.9                           58196356.0000
+    0:28:12  168700.9      0.28       4.8       0.9                           58148928.0000
+    0:28:17  168618.4      0.28       4.8       0.9                           58089404.0000
+    0:28:20  168152.9      0.28       4.8       0.9                           57710172.0000
+    0:28:27  167264.3      0.23       4.7       0.8                           57011988.0000
+    0:28:32  166639.9      0.23       4.7       0.8                           56585188.0000
+    0:28:37  166319.2      0.23       4.8       0.8                           56409880.0000
+    0:28:40  165790.0      0.19       4.8       0.8                           55963640.0000
+    0:28:44  165848.9      0.14       3.4       0.8                           56013880.0000
+    0:29:39  164420.8      0.14       3.3       0.5                           54029796.0000
+    0:29:40  164420.8      0.14       3.3       0.5                           54029796.0000
+    0:30:38  167772.7      0.00       0.0       0.5                           55531712.0000
+    0:30:38  167772.7      0.00       0.0       0.5                           55531712.0000
+    0:30:38  167772.7      0.00       0.0       0.5                           55531712.0000
+    0:30:38  167772.7      0.00       0.0       0.5                           55531712.0000
+    0:30:38  167772.7      0.00       0.0       0.5                           55531712.0000
+    0:30:38  167772.7      0.00       0.0       0.5                           55531712.0000
+    0:30:38  167772.7      0.00       0.0       0.5                           55531712.0000
+    0:30:38  167772.7      0.00       0.0       0.5                           55531712.0000
+    0:30:38  167772.7      0.00       0.0       0.5                           55531712.0000
+    0:30:38  167772.7      0.00       0.0       0.5                           55531712.0000
+    0:30:38  167772.7      0.00       0.0       0.5                           55531712.0000
+    0:30:38  167772.7      0.00       0.0       0.5                           55531712.0000
+    0:30:38  167772.7      0.00       0.0       0.5                           55531712.0000
+    0:30:38  167772.7      0.00       0.0       0.5                           55531712.0000
+    0:30:38  167772.7      0.00       0.0       0.5                           55531712.0000
+    0:30:38  167772.7      0.00       0.0       0.5                           55531712.0000
+    0:30:38  167772.7      0.00       0.0       0.5                           55531712.0000
+
+
+  Beginning Design Rule Fixing  (min_capacitance)  (max_transition)  (max_capacitance)
+  ----------------------------
+
+                                  TOTAL                                                
+   ELAPSED            WORST NEG   SETUP    DESIGN                              LEAKAGE 
+    TIME      AREA      SLACK     COST    RULE COST         ENDPOINT            POWER  
+  --------- --------- --------- --------- --------- ------------------------- ---------
+    0:30:38  167772.7      0.00       0.0       0.5                           55531712.0000
+  Global Optimization (Phase 34)
+  Global Optimization (Phase 35)
+  Global Optimization (Phase 36)
+    0:30:41  167773.5      0.00       0.0       0.4                           55532300.0000
+    0:30:41  167773.5      0.00       0.0       0.4                           55532300.0000
+
+
+  Beginning Leakage Power Optimization  (max_leakage_power 0)
+  ------------------------------------
+
+                                  TOTAL                                                
+   ELAPSED            WORST NEG   SETUP    DESIGN                              LEAKAGE 
+    TIME      AREA      SLACK     COST    RULE COST         ENDPOINT            POWER  
+  --------- --------- --------- --------- --------- ------------------------- ---------
+    0:30:41  167773.5      0.00       0.0       0.4                           55532300.0000
+  Global Optimization (Phase 37)
+  Global Optimization (Phase 38)
+  Global Optimization (Phase 39)
+  Global Optimization (Phase 40)
+  Global Optimization (Phase 41)
+  Global Optimization (Phase 42)
+  Global Optimization (Phase 43)
+  Global Optimization (Phase 44)
+  Global Optimization (Phase 45)
+  Global Optimization (Phase 46)
+  Global Optimization (Phase 47)
+  Global Optimization (Phase 48)
+  Global Optimization (Phase 49)
+  Global Optimization (Phase 50)
+  Global Optimization (Phase 51)
+  Global Optimization (Phase 52)
+    0:31:22  164535.8      0.25       8.0       0.4                           50316592.0000
+Information: Complementing port 'io_result_bits_tokenCount[7]' in design 'DualKvDecompressionController'.
+	 The new name of the port is 'io_result_bits_tokenCount[7]_BAR'. (OPT-319)
+Information: Complementing port 'io_command_bits_tokenCount[7]' in design 'DecompressionPipelineController'.
+	 The new name of the port is 'io_command_bits_tokenCount[7]_BAR'. (OPT-319)
+Information: Complementing port 'io_command_bits_tokenCount[7]' in design 'DecompressionPipelineController_1'.
+	 The new name of the port is 'io_command_bits_tokenCount[7]_BAR'. (OPT-319)
+Information: Complementing port 'io_result_bits_tokenCount[8]' in design 'DualKvDecompressionController'.
+	 The new name of the port is 'io_result_bits_tokenCount[8]_BAR'. (OPT-319)
+Information: Complementing port 'io_command_bits_tokenCount[8]' in design 'DecompressionPipelineController'.
+	 The new name of the port is 'io_command_bits_tokenCount[8]_BAR'. (OPT-319)
+Information: Complementing port 'io_command_bits_tokenCount[8]' in design 'DecompressionPipelineController_1'.
+	 The new name of the port is 'io_command_bits_tokenCount[8]_BAR'. (OPT-319)
+Information: Complementing port 'io_result_bits_tokenCount[10]' in design 'DualKvDecompressionController'.
+	 The new name of the port is 'io_result_bits_tokenCount[10]_BAR'. (OPT-319)
+Information: Complementing port 'io_command_bits_tokenCount[10]' in design 'DecompressionPipelineController'.
+	 The new name of the port is 'io_command_bits_tokenCount[10]_BAR'. (OPT-319)
+Information: Complementing port 'io_command_bits_tokenCount[10]' in design 'DecompressionPipelineController_1'.
+	 The new name of the port is 'io_command_bits_tokenCount[10]_BAR'. (OPT-319)
+Information: Complementing port 'io_result_bits_tokenCount[11]' in design 'DualKvDecompressionController'.
+	 The new name of the port is 'io_result_bits_tokenCount[11]_BAR'. (OPT-319)
+Information: Complementing port 'io_command_bits_tokenCount[11]' in design 'DecompressionPipelineController'.
+	 The new name of the port is 'io_command_bits_tokenCount[11]_BAR'. (OPT-319)
+Information: Complementing port 'io_command_bits_tokenCount[11]' in design 'DecompressionPipelineController_1'.
+	 The new name of the port is 'io_command_bits_tokenCount[11]_BAR'. (OPT-319)
+Information: Complementing port 'io_result_bits_tokenCount[12]' in design 'DualKvDecompressionController'.
+	 The new name of the port is 'io_result_bits_tokenCount[12]_BAR'. (OPT-319)
+Information: Complementing port 'io_command_bits_tokenCount[12]' in design 'DecompressionPipelineController'.
+	 The new name of the port is 'io_command_bits_tokenCount[12]_BAR'. (OPT-319)
+Information: Complementing port 'io_command_bits_tokenCount[12]' in design 'DecompressionPipelineController_1'.
+	 The new name of the port is 'io_command_bits_tokenCount[12]_BAR'. (OPT-319)
+Information: Complementing port 'io_result_bits_tokenCount[14]' in design 'DualKvDecompressionController'.
+	 The new name of the port is 'io_result_bits_tokenCount[14]_BAR'. (OPT-319)
+Information: Complementing port 'io_command_bits_tokenCount[14]' in design 'DecompressionPipelineController'.
+	 The new name of the port is 'io_command_bits_tokenCount[14]_BAR'. (OPT-319)
+Information: Complementing port 'io_command_bits_tokenCount[14]' in design 'DecompressionPipelineController_1'.
+	 The new name of the port is 'io_command_bits_tokenCount[14]_BAR'. (OPT-319)
+Information: Complementing port 'io_result_bits_tokenCount[17]' in design 'DualKvDecompressionController'.
+	 The new name of the port is 'io_result_bits_tokenCount[17]_BAR'. (OPT-319)
+Information: Complementing port 'io_command_bits_tokenCount[17]' in design 'DecompressionPipelineController'.
+	 The new name of the port is 'io_command_bits_tokenCount[17]_BAR'. (OPT-319)
+Information: Complementing port 'io_command_bits_tokenCount[17]' in design 'DecompressionPipelineController_1'.
+	 The new name of the port is 'io_command_bits_tokenCount[17]_BAR'. (OPT-319)
+Information: Complementing port 'io_result_bits_tokenCount[18]' in design 'DualKvDecompressionController'.
+	 The new name of the port is 'io_result_bits_tokenCount[18]_BAR'. (OPT-319)
+Information: Complementing port 'io_command_bits_tokenCount[18]' in design 'DecompressionPipelineController'.
+	 The new name of the port is 'io_command_bits_tokenCount[18]_BAR'. (OPT-319)
+Information: Complementing port 'io_command_bits_tokenCount[18]' in design 'DecompressionPipelineController_1'.
+	 The new name of the port is 'io_command_bits_tokenCount[18]_BAR'. (OPT-319)
+Information: Complementing port 'io_result_bits_tokenCount[19]' in design 'DualKvDecompressionController'.
+	 The new name of the port is 'io_result_bits_tokenCount[19]_BAR'. (OPT-319)
+Information: Complementing port 'io_command_bits_tokenCount[19]' in design 'DecompressionPipelineController'.
+	 The new name of the port is 'io_command_bits_tokenCount[19]_BAR'. (OPT-319)
+Information: Complementing port 'io_command_bits_tokenCount[19]' in design 'DecompressionPipelineController_1'.
+	 The new name of the port is 'io_command_bits_tokenCount[19]_BAR'. (OPT-319)
+Information: Complementing port 'io_result_bits_tokenCount[22]' in design 'DualKvDecompressionController'.
+	 The new name of the port is 'io_result_bits_tokenCount[22]_BAR'. (OPT-319)
+Information: Complementing port 'io_command_bits_tokenCount[22]' in design 'DecompressionPipelineController'.
+	 The new name of the port is 'io_command_bits_tokenCount[22]_BAR'. (OPT-319)
+Information: Complementing port 'io_command_bits_tokenCount[22]' in design 'DecompressionPipelineController_1'.
+	 The new name of the port is 'io_command_bits_tokenCount[22]_BAR'. (OPT-319)
+Information: Complementing port 'io_start' in design 'AttentionFeaturePacketizer_1'.
+	 The new name of the port is 'io_start_BAR'. (OPT-319)
+Information: Complementing port 'io_start' in design 'AttentionFeaturePacketizer_0'.
+	 The new name of the port is 'io_start_BAR'. (OPT-319)
+Information: Complementing port 'io_start' in design 'AvOutputQuantizer'.
+	 The new name of the port is 'io_start_BAR'. (OPT-319)
+Information: Complementing port 'io_vReadRequest_bits_featureIndex[23]' in design 'SoftmaxVAccumulator'.
+	 The new name of the port is 'io_vReadRequest_bits_featureIndex[23]_BAR'. (OPT-319)
+Information: Complementing port 'io_vReadRequest_bits_featureIndex[25]' in design 'SoftmaxVAccumulator'.
+	 The new name of the port is 'io_vReadRequest_bits_featureIndex[25]_BAR'. (OPT-319)
+Information: Complementing port 'io_vReadRequest_bits_featureIndex[28]' in design 'SoftmaxVAccumulator'.
+	 The new name of the port is 'io_vReadRequest_bits_featureIndex[28]_BAR'. (OPT-319)
+Information: Complementing port 'io_vReadRequest_bits_featureIndex[29]' in design 'SoftmaxVAccumulator'.
+	 The new name of the port is 'io_vReadRequest_bits_featureIndex[29]_BAR'. (OPT-319)
+Information: Complementing port 'io_vReadRequest_bits_packIndex[15]' in design 'SoftmaxVAccumulator'.
+	 The new name of the port is 'io_vReadRequest_bits_packIndex[15]_BAR'. (OPT-319)
+Information: Complementing port 'io_vReadRequest_bits_packIndex[17]' in design 'SoftmaxVAccumulator'.
+	 The new name of the port is 'io_vReadRequest_bits_packIndex[17]_BAR'. (OPT-319)
+Information: Complementing port 'io_vReadRequest_bits_packIndex[19]' in design 'SoftmaxVAccumulator'.
+	 The new name of the port is 'io_vReadRequest_bits_packIndex[19]_BAR'. (OPT-319)
+Information: Complementing port 'io_vReadRequest_bits_packIndex[23]' in design 'SoftmaxVAccumulator'.
+	 The new name of the port is 'io_vReadRequest_bits_packIndex[23]_BAR'. (OPT-319)
+Information: Complementing port 'io_vReadRequest_bits_packIndex[29]' in design 'SoftmaxVAccumulator'.
+	 The new name of the port is 'io_vReadRequest_bits_packIndex[29]_BAR'. (OPT-319)
+Information: Complementing port 'io_tokenCount[11]' in design 'BufferedPackMetadataDequantizer_1'.
+	 The new name of the port is 'io_tokenCount[11]_BAR'. (OPT-319)
+Information: Complementing port 'io_result_bits_tokenCount[11]' in design 'DecompressionPipelineController_1'.
+	 The new name of the port is 'io_result_bits_tokenCount[11]_BAR'. (OPT-319)
+Information: Complementing port 'io_tokenCount[11]' in design 'KvStreamDequantizer_1'.
+	 The new name of the port is 'io_tokenCount[11]_BAR'. (OPT-319)
+Information: Complementing port 'io_command_bits_tokenCount[18]_BAR' in design 'DecompressionPipelineController_1'.
+	 The new name of the port is 'io_command_bits_tokenCount[18]'. (OPT-319)
+Information: Complementing port 'io_command_bits_tokenCount[18]_BAR' in design 'DecompressionPipelineController'.
+	 The new name of the port is 'io_command_bits_tokenCount[18]'. (OPT-319)
+Information: Complementing port 'io_result_bits_tokenCount[18]_BAR' in design 'DualKvDecompressionController'.
+	 The new name of the port is 'io_result_bits_tokenCount[18]'. (OPT-319)
+Information: Complementing port 'io_command_valid' in design 'DecompressionPipelineController'.
+	 The new name of the port is 'io_command_valid_BAR'. (OPT-319)
+Information: Complementing port 'io_command_valid' in design 'DecompressionPipelineController_1'.
+	 The new name of the port is 'io_command_valid_BAR'. (OPT-319)
+    0:31:35  166643.7      0.03       1.0       0.4                           52030800.0000
+    0:32:08  168326.4      0.00       0.0       0.4                           52831824.0000
+    0:32:08  168326.4      0.00       0.0       0.4                           52831824.0000
+    0:32:35  164456.2      0.00       0.0       0.4                           50173152.0000
+    0:32:35  164456.2      0.00       0.0       0.4                           50173152.0000
+    0:32:37  164459.9      0.00       0.0       0.4                           50174252.0000
+    0:32:37  164459.9      0.00       0.0       0.4                           50174252.0000
+    0:32:37  164459.9      0.00       0.0       0.4                           50174252.0000
+    0:32:37  164459.9      0.00       0.0       0.4                           50174252.0000
+    0:32:37  164459.9      0.00       0.0       0.4                           50174252.0000
+    0:32:37  164459.9      0.00       0.0       0.4                           50174252.0000
+    0:32:37  164459.9      0.00       0.0       0.4                           50174252.0000
+    0:32:37  164459.9      0.00       0.0       0.4                           50174252.0000
+    0:32:37  164459.9      0.00       0.0       0.4                           50174252.0000
+    0:32:37  164459.9      0.00       0.0       0.4                           50174252.0000
+    0:32:37  164459.9      0.00       0.0       0.4                           50174252.0000
+    0:32:37  164459.9      0.00       0.0       0.4                           50174252.0000
+    0:32:37  164459.9      0.00       0.0       0.4                           50174252.0000
+    0:32:37  164459.9      0.00       0.0       0.4                           50174252.0000
+    0:32:37  164459.9      0.00       0.0       0.4                           50174252.0000
+    0:32:37  164459.9      0.00       0.0       0.4                           50174252.0000
+    0:32:37  164459.9      0.00       0.0       0.4                           50174252.0000
+
+                                  TOTAL                                                
+   ELAPSED            WORST NEG   SETUP    DESIGN                              LEAKAGE 
+    TIME      AREA      SLACK     COST    RULE COST         ENDPOINT            POWER  
+  --------- --------- --------- --------- --------- ------------------------- ---------
+    0:32:43  164455.5      0.00       0.0       0.4                           50174252.0000
+    0:33:07  163322.9      0.02       0.2       0.4                           49607488.0000
+    0:33:09  163359.8      0.00       0.0       0.4                           49626576.0000
+    0:33:10  163359.8      0.00       0.0       0.4                           49626576.0000
+    0:33:27  163134.6      0.00       0.0       0.4                           49508772.0000
+    0:33:30  163115.4      0.00       0.0       0.4                           49501512.0000
+    0:33:32  163083.6      0.00       0.0       0.4                           49488904.0000
+    0:33:36  162977.6      0.00       0.0       0.4                           49441244.0000
+    0:33:42  162929.8      0.00       0.0       0.4                           49413180.0000
+    0:33:47  162912.3      0.00       0.0       0.4                           49398204.0000
+    0:33:48  162907.8      0.00       0.0       0.4                           49395380.0000
+    0:33:48  162907.8      0.00       0.0       0.4                           49395380.0000
+    0:33:48  162907.8      0.00       0.0       0.4                           49395380.0000
+    0:33:48  162907.8      0.00       0.0       0.4                           49395380.0000
+    0:33:59  162670.2      0.00       0.0       0.4                           49291080.0000
+Loading db file '/home/yaz80/wz_project/dc_project/pdk/TSMC28/tcbn28hpcplusbwp12t30p140lvtssg0p81v125c.db'
+
+
+Note: Symbol # after min delay cost means estimated hold TNS across all active scenarios 
+
+
+  Optimization Complete
+  ---------------------
+Warning: Design 'BriskKvAttentionTop' contains 1 high-fanout nets. A fanout number of 1000 will be used for delay calculations involving these nets. (TIM-134)
+     Net 'decompressionQk/compute/vPacketizer/clock': 14961 load(s), 1 driver(s)
+Information: State dependent leakage is now switched from off to on.
+Information: Propagating switching activity (low effort zero delay simulation). (PWR-6)
+Warning: Design has unannotated black box outputs. (PWR-428)
+Writing ddc file '/home/yaz80/wz_project/dc_project/project/BriskKV/runs/2026081201_output/outputs/stats_on/BriskKvAttentionTop.ddc'.
+Writing verilog file '/home/yaz80/wz_project/dc_project/project/BriskKV/runs/2026081201_output/outputs/stats_on/BriskKvAttentionTop_mapped.v'.
+Warning: Verilog 'assign' or 'tran' statements are written out. (VO-4)
+Warning: Verilog writer has added 2 nets to module DynamicBitUnpacker using SYNOPSYS_UNCONNECTED_ as prefix.  Please use the change_names command to make the correct changes before invoking the verilog writer.  (VO-11)
+Warning: Verilog writer has added 2 nets to module KvStreamDequantizer using SYNOPSYS_UNCONNECTED_ as prefix.  Please use the change_names command to make the correct changes before invoking the verilog writer.  (VO-11)
+Warning: Verilog writer has added 4 nets to module DynamicBitUnpacker_1 using SYNOPSYS_UNCONNECTED_ as prefix.  Please use the change_names command to make the correct changes before invoking the verilog writer.  (VO-11)
+Warning: Verilog writer has added 4 nets to module KvStreamDequantizer_1 using SYNOPSYS_UNCONNECTED_ as prefix.  Please use the change_names command to make the correct changes before invoking the verilog writer.  (VO-11)
+Warning: Verilog writer has added 42 nets to module BriskKvAttentionTop using SYNOPSYS_UNCONNECTED_ as prefix.  Please use the change_names command to make the correct changes before invoking the verilog writer.  (VO-11)
+puts "BRISK-KV DC completed successfully"
+BRISK-KV DC completed successfully
+exit 0
+
+Memory usage for main task 1391 Mbytes.
+Memory usage for this session 1391 Mbytes.
+CPU usage for this session 2136 seconds ( 0.59 hours ).
+
+Thank you...

@@ -76,6 +76,9 @@ class VPacketBuffer(
   private val maximumDescriptors = maximumPacks * maximumFeatureDim
   private val addressBits = math.max(1, log2Ceil(maximumDescriptors))
   private val packsPerBlock = blockTokens / packTokens
+  private val packsPerBlockShift = log2Ceil(packsPerBlock)
+  private val packWithinBlockBits = math.max(1, packsPerBlockShift)
+  require(isPow2(packsPerBlock))
 
   val io = IO(new VPacketBufferIO(valueBits, packTokens, countBits))
 
@@ -92,6 +95,8 @@ class VPacketBuffer(
   val packCountReg = RegInit(0.U(countBits.W))
   val finalValidTokensReg = RegInit(0.U(log2Ceil(packTokens + 1).W))
   val expectedDescriptor = RegInit(0.U(countBits.W))
+  val expectedPackIndex = RegInit(0.U(countBits.W))
+  val expectedFeatureIndex = RegInit(0.U(countBits.W))
 
   val readOutstanding = RegInit(false.B)
   val responseValid = RegInit(false.B)
@@ -158,6 +163,8 @@ class VPacketBuffer(
     val remainder = io.tokenCount & (packTokens - 1).U
     finalValidTokensReg := Mux(remainder === 0.U, packTokens.U, remainder)
     expectedDescriptor := 0.U
+    expectedPackIndex := 0.U
+    expectedFeatureIndex := 0.U
     readOutstanding := false.B
     responseValid := false.B
     activeCycles := 0.U
@@ -180,19 +187,24 @@ class VPacketBuffer(
     }
 
     when(loadFire) {
-      val packIndex = expectedDescriptor / featureDimReg
-      val featureIndex = expectedDescriptor % featureDimReg
-      val expectedLast = expectedDescriptor === packCountReg * featureDimReg - 1.U
+      val expectedLast = expectedPackIndex === packCountReg - 1.U &&
+        expectedFeatureIndex === featureDimReg - 1.U
       val expectedValidTokens = Mux(
-        packIndex === packCountReg - 1.U,
+        expectedPackIndex === packCountReg - 1.U,
         finalValidTokensReg,
         packTokens.U
       )
+      val expectedBlockIndex = expectedPackIndex >> packsPerBlockShift
+      val expectedPackWithinBlock = if (packsPerBlock == 1) {
+        0.U(packWithinBlockBits.W)
+      } else {
+        expectedPackIndex(packWithinBlockBits - 1, 0)
+      }
       val packetValid = io.loadIn.bits.descriptorIndex === expectedDescriptor &&
-        io.loadIn.bits.packIndex === packIndex &&
-        io.loadIn.bits.featureIndex === featureIndex &&
-        io.loadIn.bits.blockIndex === packIndex / packsPerBlock.U &&
-        io.loadIn.bits.packWithinBlock === packIndex % packsPerBlock.U &&
+        io.loadIn.bits.packIndex === expectedPackIndex &&
+        io.loadIn.bits.featureIndex === expectedFeatureIndex &&
+        io.loadIn.bits.blockIndex === expectedBlockIndex &&
+        io.loadIn.bits.packWithinBlock === expectedPackWithinBlock &&
         io.loadIn.bits.validTokens === expectedValidTokens &&
         io.loadIn.bits.last === expectedLast
       when(!packetValid) {
@@ -202,6 +214,12 @@ class VPacketBuffer(
       storedValues.values := io.loadIn.bits.values
       memory.write(expectedDescriptor(addressBits - 1, 0), storedValues)
       expectedDescriptor := expectedDescriptor + 1.U
+      when(expectedFeatureIndex === featureDimReg - 1.U) {
+        expectedFeatureIndex := 0.U
+        expectedPackIndex := expectedPackIndex + 1.U
+      }.otherwise {
+        expectedFeatureIndex := expectedFeatureIndex + 1.U
+      }
       loadedPackets := loadedPackets + 1.U
       when(expectedLast) {
         loadedReg := true.B
@@ -230,8 +248,12 @@ class VPacketBuffer(
       responsePacket.descriptorIndex := pendingDescriptorIndex
       responsePacket.packIndex := pendingPackIndex
       responsePacket.featureIndex := pendingFeatureIndex
-      responsePacket.blockIndex := pendingPackIndex / packsPerBlock.U
-      responsePacket.packWithinBlock := pendingPackIndex % packsPerBlock.U
+      responsePacket.blockIndex := pendingPackIndex >> packsPerBlockShift
+      responsePacket.packWithinBlock := (if (packsPerBlock == 1) {
+        0.U(packWithinBlockBits.W)
+      } else {
+        pendingPackIndex(packWithinBlockBits - 1, 0)
+      })
       responsePacket.last := finalPack &&
         pendingFeatureIndex === featureDimReg - 1.U
       responseValid := true.B

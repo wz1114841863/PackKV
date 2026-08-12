@@ -120,6 +120,10 @@ weight packet.
 
 `VPacketBuffer` validates and stores the incoming pack-major/feature-major Q6
 V stream in synchronous memory, then serves tagged `(pack, feature)` reads.
+Its load-order checker advances explicit pack and feature counters instead of
+dividing the descriptor index by the runtime feature dimension. Block and
+within-block fields use shifts and bit slices because Format v0 fixes four
+packs per 64-token block; no divider or modulo operator remains in this module.
 `SoftmaxVAccumulator` stores each Q0.15 weight pack once and replays it for
 every V feature. Each compute step uses 16 signed V multipliers and an adder
 tree; pack partial sums are accumulated into an exact signed Q21 result.

@@ -1,0 +1,85 @@
+Information: Updating design information... (UID-85)
+Warning: Design 'BriskKvAttentionTop' contains 1 high-fanout nets. A fanout number of 1000 will be used for delay calculations involving these nets. (TIM-134)
+ 
+****************************************
+Report : qor
+Design : BriskKvAttentionTop
+Version: O-2018.06-SP1
+Date   : Tue Aug 11 22:30:20 2026
+****************************************
+
+
+  Timing Path Group 'clk'
+  -----------------------------------
+  Levels of Logic:             153.00
+  Critical Path Length:          1.89
+  Critical Path Slack:           0.00
+  Critical Path Clk Period:      2.00
+  Total Negative Slack:          0.00
+  No. of Violating Paths:        0.00
+  Worst Hold Violation:         -0.06
+  Total Hold Violation:       -628.94
+  No. of Hold Violations:    14860.00
+  -----------------------------------
+
+
+  Cell Count
+  -----------------------------------
+  Hierarchical Cell Count:         19
+  Hierarchical Port Count:      14749
+  Leaf Cell Count:             147123
+  Buf/Inv Cell Count:           17538
+  Buf Cell Count:                 166
+  Inv Cell Count:               17372
+  CT Buf/Inv Cell Count:            0
+  Combinational Cell Count:    132172
+  Sequential Cell Count:        14951
+  Macro Count:                      0
+  -----------------------------------
+
+
+  Area
+  -----------------------------------
+  Combinational Area:   124866.670817
+  Noncombinational Area: 37802.855716
+  Buf/Inv Area:           5991.215924
+  Total Buffer Area:           103.82
+  Total Inverter Area:        5887.39
+  Macro/Black Box Area:      0.000000
+  Net Area:                  0.000000
+  -----------------------------------
+  Cell Area:            162669.526533
+  Design Area:          162669.526533
+
+
+  Design Rules
+  -----------------------------------
+  Total Number of Nets:        162091
+  Nets With Violations:             0
+  Max Trans Violations:             0
+  Max Cap Violations:               0
+  -----------------------------------
+
+
+  Hostname: ercesi413
+
+  Compile CPU Statistics
+  -----------------------------------------
+  Resource Sharing:                   42.30
+  Logic Optimization:               1000.14
+  Mapping Optimization:              456.79
+  -----------------------------------------
+  Overall Compile Time:             2036.40
+  Overall Compile Wall Clock Time:  2057.61
+
+  --------------------------------------------------------------------
+
+  Design  WNS: 0.00  TNS: 0.00  Number of Violating Paths: 0
+
+
+  Design (Hold)  WNS: 0.06  TNS: 628.95  Number of Violating Paths: 14860
+
+  --------------------------------------------------------------------
+
+
+1

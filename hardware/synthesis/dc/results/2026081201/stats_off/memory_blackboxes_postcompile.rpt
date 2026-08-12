@@ -1,0 +1,6 @@
+BRISK-KV post-compile SRAM black-box audit
+queryMemory_128x18 instances=1
+logitMemory_64x709 instances=1
+exponentMemory_64x277 instances=1
+memory_8192x288 instances=1
+weightMemory_64x256 instances=1

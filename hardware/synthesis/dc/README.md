@@ -31,13 +31,25 @@ dc_shell -f hardware/synthesis/dc/run_dc_logic.tcl
 ```
 
 For a matched performance-counter area ablation, first generate both RTL
-variants and then synthesize them with identical libraries and constraints:
+variants. The DC server does not need the complete repository, but it must
+receive both complete `dc_logic` directories, `run_stats_ablation.sh`, and
+`run_dc_logic.tcl`. For an arbitrary server-side layout, pass absolute paths:
 
 ```bash
-bash hardware/scripts/generate_stats_ablation_rtl.sh
 export TARGET_LIBRARY=/absolute/path/to/standard_cells.db
-bash hardware/synthesis/dc/run_stats_ablation.sh
+export STATS_ON_RTL_DIR=/absolute/path/to/stats_on/dc_logic
+export STATS_OFF_RTL_DIR=/absolute/path/to/stats_off/dc_logic
+export DC_TCL=/absolute/path/to/run_dc_logic.tcl
+export REPORT_ROOT=/absolute/path/to/output_reports
+export CLOCK_PERIOD=2.0
+bash /absolute/path/to/run_stats_ablation.sh
 ```
+
+If the generated `stats_on/dc_logic` and `stats_off/dc_logic` hierarchy was
+preserved, `ABLATION_RTL_ROOT=/path/to/parent` can replace the two explicit RTL
+variables. The shell script no longer derives any path from the repository
+layout and validates both manifests and memory black-box lists before invoking
+DC.
 
 The two report directories are `stats_on` and `stats_off`. Compare total and
 hierarchical area from `area_hier.rpt`; also compare `qor.rpt` and

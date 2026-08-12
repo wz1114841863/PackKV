@@ -1,0 +1,1547 @@
+ 
+****************************************
+Report : timing
+        -path full
+        -delay min
+        -nets
+        -max_paths 20
+        -transition_time
+Design : BriskKvAttentionTop
+Version: O-2018.06-SP1
+Date   : Tue Aug 11 22:30:22 2026
+****************************************
+
+ # A fanout number of 1000 was used for high fanout net computations.
+
+Operating Conditions: ssg0p81v125c   Library: tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+Wire Load Model Mode: segmented
+
+  Startpoint: decompressionQk/qk/accumulator/keyWaitCycles_reg[63]
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: decompressionQk/qk/accumulator/keyWaitCycles_reg[63]
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: clk
+  Path Type: min
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  AttentionFeaturePacketizer_0
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QkDotProductAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QueryReplayBuffer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionFeaturePacketizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DualKvDecompressionController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  SoftmaxVAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  StreamingSoftmax   ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionScaleUnit ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AvOutputQuantizer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BriskKvAttentionTop
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+
+  Point                                       Fanout     Trans      Incr       Path
+  ------------------------------------------------------------------------------------
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  decompressionQk/qk/accumulator/keyWaitCycles_reg[63]/CP (DFQD1BWP12T30P140LVT)
+                                                          0.00      0.00 #     0.00 r
+  decompressionQk/qk/accumulator/keyWaitCycles_reg[63]/Q (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.03       0.03 r
+  decompressionQk/qk/accumulator/io_stats_keyWaitCycles[63] (net)
+                                                2                   0.00       0.03 r
+  decompressionQk/qk/accumulator/U14008/ZN (MUX2ND0BWP12T30P140LVT)
+                                                          0.01      0.01       0.04 f
+  decompressionQk/qk/accumulator/n2472 (net)
+                                                1                   0.00       0.04 f
+  decompressionQk/qk/accumulator/keyWaitCycles_reg[63]/D (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.00       0.04 f
+  data arrival time                                                            0.04
+
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  clock uncertainty                                                 0.10       0.10
+  decompressionQk/qk/accumulator/keyWaitCycles_reg[63]/CP (DFQD1BWP12T30P140LVT)
+                                                                    0.00       0.10 r
+  library hold time                                                 0.00       0.10
+  data required time                                                           0.10
+  ------------------------------------------------------------------------------------
+  data required time                                                           0.10
+  data arrival time                                                           -0.04
+  ------------------------------------------------------------------------------------
+  slack (VIOLATED)                                                            -0.06
+
+
+  Startpoint: scaleSoftmax/scaler/downstreamStallCycles_reg[63]
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: scaleSoftmax/scaler/downstreamStallCycles_reg[63]
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: clk
+  Path Type: min
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  AttentionFeaturePacketizer_0
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QkDotProductAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QueryReplayBuffer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionFeaturePacketizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DualKvDecompressionController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  SoftmaxVAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  StreamingSoftmax   ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionScaleUnit ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AvOutputQuantizer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BriskKvAttentionTop
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+
+  Point                                       Fanout     Trans      Incr       Path
+  ------------------------------------------------------------------------------------
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  scaleSoftmax/scaler/downstreamStallCycles_reg[63]/CP (DFQD1BWP12T30P140LVT)
+                                                          0.00      0.00 #     0.00 r
+  scaleSoftmax/scaler/downstreamStallCycles_reg[63]/Q (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.03       0.03 r
+  scaleSoftmax/scaler/io_stats_downstreamStallCycles[63] (net)
+                                                2                   0.00       0.03 r
+  scaleSoftmax/scaler/U15561/ZN (MUX2ND0BWP12T30P140LVT)
+                                                          0.01      0.01       0.04 f
+  scaleSoftmax/scaler/n3013 (net)               1                   0.00       0.04 f
+  scaleSoftmax/scaler/downstreamStallCycles_reg[63]/D (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.00       0.04 f
+  data arrival time                                                            0.04
+
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  clock uncertainty                                                 0.10       0.10
+  scaleSoftmax/scaler/downstreamStallCycles_reg[63]/CP (DFQD1BWP12T30P140LVT)
+                                                                    0.00       0.10 r
+  library hold time                                                 0.00       0.10
+  data required time                                                           0.10
+  ------------------------------------------------------------------------------------
+  data required time                                                           0.10
+  data arrival time                                                           -0.04
+  ------------------------------------------------------------------------------------
+  slack (VIOLATED)                                                            -0.06
+
+
+  Startpoint: decompressionQk/compute/decompressor/vController/engine/joiner/descriptorsWithinPack_reg[21]
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: decompressionQk/compute/decompressor/vController/engine/joiner/descriptorsWithinPack_reg[21]
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: clk
+  Path Type: min
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  AttentionFeaturePacketizer_0
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QkDotProductAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QueryReplayBuffer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionFeaturePacketizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DualKvDecompressionController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  SoftmaxVAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  StreamingSoftmax   ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionScaleUnit ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AvOutputQuantizer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BriskKvAttentionTop
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+
+  Point                                       Fanout     Trans      Incr       Path
+  ------------------------------------------------------------------------------------
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  decompressionQk/compute/decompressor/vController/engine/joiner/descriptorsWithinPack_reg[21]/CP (DFQD1BWP12T30P140LVT)
+                                                          0.00      0.00 #     0.00 r
+  decompressionQk/compute/decompressor/vController/engine/joiner/descriptorsWithinPack_reg[21]/Q (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.03       0.03 r
+  decompressionQk/compute/decompressor/vController/engine/joiner/descriptorsWithinPack[21] (net)
+                                                3                   0.00       0.03 r
+  decompressionQk/compute/decompressor/vController/engine/joiner/U3162/ZN (AOI22D1BWP12T30P140LVT)
+                                                          0.01      0.01       0.04 f
+  decompressionQk/compute/decompressor/vController/engine/joiner/n1572 (net)
+                                                1                   0.00       0.04 f
+  decompressionQk/compute/decompressor/vController/engine/joiner/descriptorsWithinPack_reg[21]/D (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.00       0.04 f
+  data arrival time                                                            0.04
+
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  clock uncertainty                                                 0.10       0.10
+  decompressionQk/compute/decompressor/vController/engine/joiner/descriptorsWithinPack_reg[21]/CP (DFQD1BWP12T30P140LVT)
+                                                                    0.00       0.10 r
+  library hold time                                                 0.00       0.10
+  data required time                                                           0.10
+  ------------------------------------------------------------------------------------
+  data required time                                                           0.10
+  data arrival time                                                           -0.04
+  ------------------------------------------------------------------------------------
+  slack (VIOLATED)                                                            -0.06
+
+
+  Startpoint: decompressionQk/compute/decompressor/vController/engine/joiner/activeCycles_reg[42]
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: decompressionQk/compute/decompressor/vController/engine/joiner/activeCycles_reg[42]
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: clk
+  Path Type: min
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  AttentionFeaturePacketizer_0
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QkDotProductAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QueryReplayBuffer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionFeaturePacketizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DualKvDecompressionController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  SoftmaxVAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  StreamingSoftmax   ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionScaleUnit ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AvOutputQuantizer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BriskKvAttentionTop
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+
+  Point                                       Fanout     Trans      Incr       Path
+  ------------------------------------------------------------------------------------
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  decompressionQk/compute/decompressor/vController/engine/joiner/activeCycles_reg[42]/CP (DFQD1BWP12T30P140LVT)
+                                                          0.00      0.00 #     0.00 r
+  decompressionQk/compute/decompressor/vController/engine/joiner/activeCycles_reg[42]/Q (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.03       0.03 r
+  decompressionQk/compute/decompressor/vController/engine/joiner/io_stats_activeCycles[42] (net)
+                                                3                   0.00       0.03 r
+  decompressionQk/compute/decompressor/vController/engine/joiner/U3123/ZN (AOI22D1BWP12T30P140LVT)
+                                                          0.01      0.01       0.04 f
+  decompressionQk/compute/decompressor/vController/engine/joiner/n1693 (net)
+                                                1                   0.00       0.04 f
+  decompressionQk/compute/decompressor/vController/engine/joiner/activeCycles_reg[42]/D (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.00       0.04 f
+  data arrival time                                                            0.04
+
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  clock uncertainty                                                 0.10       0.10
+  decompressionQk/compute/decompressor/vController/engine/joiner/activeCycles_reg[42]/CP (DFQD1BWP12T30P140LVT)
+                                                                    0.00       0.10 r
+  library hold time                                                 0.00       0.10
+  data required time                                                           0.10
+  ------------------------------------------------------------------------------------
+  data required time                                                           0.10
+  data arrival time                                                           -0.04
+  ------------------------------------------------------------------------------------
+  slack (VIOLATED)                                                            -0.06
+
+
+  Startpoint: decompressionQk/compute/decompressor/vController/engine/joiner/metadataStallCycles_reg[62]
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: decompressionQk/compute/decompressor/vController/engine/joiner/metadataStallCycles_reg[62]
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: clk
+  Path Type: min
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  AttentionFeaturePacketizer_0
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QkDotProductAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QueryReplayBuffer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionFeaturePacketizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DualKvDecompressionController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  SoftmaxVAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  StreamingSoftmax   ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionScaleUnit ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AvOutputQuantizer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BriskKvAttentionTop
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+
+  Point                                       Fanout     Trans      Incr       Path
+  ------------------------------------------------------------------------------------
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  decompressionQk/compute/decompressor/vController/engine/joiner/metadataStallCycles_reg[62]/CP (DFQD1BWP12T30P140LVT)
+                                                          0.00      0.00 #     0.00 r
+  decompressionQk/compute/decompressor/vController/engine/joiner/metadataStallCycles_reg[62]/Q (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.03       0.03 r
+  decompressionQk/compute/decompressor/vController/engine/joiner/io_stats_metadataStallCycles[62] (net)
+                                                3                   0.00       0.03 r
+  decompressionQk/compute/decompressor/vController/engine/joiner/U3052/ZN (AOI22D1BWP12T30P140LVT)
+                                                          0.01      0.01       0.04 f
+  decompressionQk/compute/decompressor/vController/engine/joiner/n1840 (net)
+                                                1                   0.00       0.04 f
+  decompressionQk/compute/decompressor/vController/engine/joiner/metadataStallCycles_reg[62]/D (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.00       0.04 f
+  data arrival time                                                            0.04
+
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  clock uncertainty                                                 0.10       0.10
+  decompressionQk/compute/decompressor/vController/engine/joiner/metadataStallCycles_reg[62]/CP (DFQD1BWP12T30P140LVT)
+                                                                    0.00       0.10 r
+  library hold time                                                 0.00       0.10
+  data required time                                                           0.10
+  ------------------------------------------------------------------------------------
+  data required time                                                           0.10
+  data arrival time                                                           -0.04
+  ------------------------------------------------------------------------------------
+  slack (VIOLATED)                                                            -0.06
+
+
+  Startpoint: scaleSoftmax/softmax/collectIndex_reg[8]
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: scaleSoftmax/softmax/collectIndex_reg[8]
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: clk
+  Path Type: min
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  AttentionFeaturePacketizer_0
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QkDotProductAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QueryReplayBuffer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionFeaturePacketizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DualKvDecompressionController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  SoftmaxVAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  StreamingSoftmax   ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionScaleUnit ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AvOutputQuantizer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BriskKvAttentionTop
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+
+  Point                                       Fanout     Trans      Incr       Path
+  ------------------------------------------------------------------------------------
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  scaleSoftmax/softmax/collectIndex_reg[8]/CP (DFQD2BWP12T30P140LVT)
+                                                          0.00      0.00 #     0.00 r
+  scaleSoftmax/softmax/collectIndex_reg[8]/Q (DFQD2BWP12T30P140LVT)
+                                                          0.01      0.03       0.03 r
+  scaleSoftmax/softmax/collectIndex[8] (net)
+                                                6                   0.00       0.03 r
+  scaleSoftmax/softmax/U30283/ZN (MUX2ND0BWP12T30P140LVT)
+                                                          0.01      0.01       0.04 f
+  scaleSoftmax/softmax/n5506 (net)              1                   0.00       0.04 f
+  scaleSoftmax/softmax/collectIndex_reg[8]/D (DFQD2BWP12T30P140LVT)
+                                                          0.01      0.00       0.04 f
+  data arrival time                                                            0.04
+
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  clock uncertainty                                                 0.10       0.10
+  scaleSoftmax/softmax/collectIndex_reg[8]/CP (DFQD2BWP12T30P140LVT)
+                                                                    0.00       0.10 r
+  library hold time                                                 0.01       0.11
+  data required time                                                           0.11
+  ------------------------------------------------------------------------------------
+  data required time                                                           0.11
+  data arrival time                                                           -0.04
+  ------------------------------------------------------------------------------------
+  slack (VIOLATED)                                                            -0.06
+
+
+  Startpoint: scaleSoftmax/scaler/activeCycles_reg[9]
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: scaleSoftmax/scaler/activeCycles_reg[9]
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: clk
+  Path Type: min
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  AttentionFeaturePacketizer_0
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QkDotProductAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QueryReplayBuffer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionFeaturePacketizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DualKvDecompressionController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  SoftmaxVAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  StreamingSoftmax   ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionScaleUnit ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AvOutputQuantizer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BriskKvAttentionTop
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+
+  Point                                       Fanout     Trans      Incr       Path
+  ------------------------------------------------------------------------------------
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  scaleSoftmax/scaler/activeCycles_reg[9]/CP (DFQD1BWP12T30P140LVT)
+                                                          0.00      0.00 #     0.00 r
+  scaleSoftmax/scaler/activeCycles_reg[9]/Q (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.03       0.03 r
+  scaleSoftmax/scaler/io_stats_activeCycles[9] (net)
+                                                3                   0.00       0.03 r
+  scaleSoftmax/scaler/U15660/ZN (MUX2ND0BWP12T30P140LVT)
+                                                          0.01      0.01       0.04 f
+  scaleSoftmax/scaler/n2831 (net)               1                   0.00       0.04 f
+  scaleSoftmax/scaler/activeCycles_reg[9]/D (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.00       0.04 f
+  data arrival time                                                            0.04
+
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  clock uncertainty                                                 0.10       0.10
+  scaleSoftmax/scaler/activeCycles_reg[9]/CP (DFQD1BWP12T30P140LVT)
+                                                                    0.00       0.10 r
+  library hold time                                                 0.00       0.10
+  data required time                                                           0.10
+  ------------------------------------------------------------------------------------
+  data required time                                                           0.10
+  data arrival time                                                           -0.04
+  ------------------------------------------------------------------------------------
+  slack (VIOLATED)                                                            -0.06
+
+
+  Startpoint: softmaxV/accumulator/activeCycles_reg[11]
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: softmaxV/accumulator/activeCycles_reg[11]
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: clk
+  Path Type: min
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  AttentionFeaturePacketizer_0
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QkDotProductAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QueryReplayBuffer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionFeaturePacketizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DualKvDecompressionController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  SoftmaxVAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  StreamingSoftmax   ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionScaleUnit ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AvOutputQuantizer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BriskKvAttentionTop
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+
+  Point                                       Fanout     Trans      Incr       Path
+  ------------------------------------------------------------------------------------
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  softmaxV/accumulator/activeCycles_reg[11]/CP (DFQD1BWP12T30P140LVT)
+                                                          0.00      0.00 #     0.00 r
+  softmaxV/accumulator/activeCycles_reg[11]/Q (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.03       0.03 r
+  softmaxV/accumulator/io_stats_activeCycles[11] (net)
+                                                3                   0.00       0.03 r
+  softmaxV/accumulator/U13179/ZN (MUX2ND0BWP12T30P140LVT)
+                                                          0.01      0.01       0.04 f
+  softmaxV/accumulator/n1038 (net)              1                   0.00       0.04 f
+  softmaxV/accumulator/activeCycles_reg[11]/D (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.00       0.04 f
+  data arrival time                                                            0.04
+
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  clock uncertainty                                                 0.10       0.10
+  softmaxV/accumulator/activeCycles_reg[11]/CP (DFQD1BWP12T30P140LVT)
+                                                                    0.00       0.10 r
+  library hold time                                                 0.00       0.10
+  data required time                                                           0.10
+  ------------------------------------------------------------------------------------
+  data required time                                                           0.10
+  data arrival time                                                           -0.04
+  ------------------------------------------------------------------------------------
+  slack (VIOLATED)                                                            -0.06
+
+
+  Startpoint: softmaxV/accumulator/vReadRequests_reg[31]
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: softmaxV/accumulator/vReadRequests_reg[31]
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: clk
+  Path Type: min
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  AttentionFeaturePacketizer_0
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QkDotProductAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QueryReplayBuffer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionFeaturePacketizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DualKvDecompressionController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  SoftmaxVAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  StreamingSoftmax   ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionScaleUnit ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AvOutputQuantizer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BriskKvAttentionTop
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+
+  Point                                       Fanout     Trans      Incr       Path
+  ------------------------------------------------------------------------------------
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  softmaxV/accumulator/vReadRequests_reg[31]/CP (DFQD1BWP12T30P140LVT)
+                                                          0.00      0.00 #     0.00 r
+  softmaxV/accumulator/vReadRequests_reg[31]/Q (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.03       0.03 r
+  softmaxV/accumulator/io_stats_vReadRequests[31] (net)
+                                                3                   0.00       0.03 r
+  softmaxV/accumulator/U13138/ZN (MUX2ND0BWP12T30P140LVT)
+                                                          0.01      0.01       0.04 f
+  softmaxV/accumulator/n1122 (net)              1                   0.00       0.04 f
+  softmaxV/accumulator/vReadRequests_reg[31]/D (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.00       0.04 f
+  data arrival time                                                            0.04
+
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  clock uncertainty                                                 0.10       0.10
+  softmaxV/accumulator/vReadRequests_reg[31]/CP (DFQD1BWP12T30P140LVT)
+                                                                    0.00       0.10 r
+  library hold time                                                 0.00       0.10
+  data required time                                                           0.10
+  ------------------------------------------------------------------------------------
+  data required time                                                           0.10
+  data arrival time                                                           -0.04
+  ------------------------------------------------------------------------------------
+  slack (VIOLATED)                                                            -0.06
+
+
+  Startpoint: softmaxV/accumulator/vReadRequests_reg[3]
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: softmaxV/accumulator/vReadRequests_reg[3]
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: clk
+  Path Type: min
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  AttentionFeaturePacketizer_0
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QkDotProductAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QueryReplayBuffer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionFeaturePacketizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DualKvDecompressionController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  SoftmaxVAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  StreamingSoftmax   ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionScaleUnit ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AvOutputQuantizer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BriskKvAttentionTop
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+
+  Point                                       Fanout     Trans      Incr       Path
+  ------------------------------------------------------------------------------------
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  softmaxV/accumulator/vReadRequests_reg[3]/CP (DFQD1BWP12T30P140LVT)
+                                                          0.00      0.00 #     0.00 r
+  softmaxV/accumulator/vReadRequests_reg[3]/Q (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.03       0.03 r
+  softmaxV/accumulator/io_stats_vReadRequests[3] (net)
+                                                3                   0.00       0.03 r
+  softmaxV/accumulator/U13120/ZN (MUX2ND0BWP12T30P140LVT)
+                                                          0.01      0.01       0.04 f
+  softmaxV/accumulator/n1094 (net)              1                   0.00       0.04 f
+  softmaxV/accumulator/vReadRequests_reg[3]/D (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.00       0.04 f
+  data arrival time                                                            0.04
+
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  clock uncertainty                                                 0.10       0.10
+  softmaxV/accumulator/vReadRequests_reg[3]/CP (DFQD1BWP12T30P140LVT)
+                                                                    0.00       0.10 r
+  library hold time                                                 0.00       0.10
+  data required time                                                           0.10
+  ------------------------------------------------------------------------------------
+  data required time                                                           0.10
+  data arrival time                                                           -0.04
+  ------------------------------------------------------------------------------------
+  slack (VIOLATED)                                                            -0.06
+
+
+  Startpoint: scaleSoftmax/softmax/outputPackets_reg[8]
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: scaleSoftmax/softmax/outputPackets_reg[8]
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: clk
+  Path Type: min
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  AttentionFeaturePacketizer_0
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QkDotProductAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QueryReplayBuffer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionFeaturePacketizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DualKvDecompressionController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  SoftmaxVAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  StreamingSoftmax   ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionScaleUnit ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AvOutputQuantizer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BriskKvAttentionTop
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+
+  Point                                       Fanout     Trans      Incr       Path
+  ------------------------------------------------------------------------------------
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  scaleSoftmax/softmax/outputPackets_reg[8]/CP (DFQD1BWP12T30P140LVT)
+                                                          0.00      0.00 #     0.00 r
+  scaleSoftmax/softmax/outputPackets_reg[8]/Q (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.03       0.03 r
+  scaleSoftmax/softmax/io_stats_outputPackets[8] (net)
+                                                3                   0.00       0.03 r
+  scaleSoftmax/softmax/U30630/ZN (MUX2ND0BWP12T30P140LVT)
+                                                          0.01      0.01       0.04 f
+  scaleSoftmax/softmax/n5867 (net)              1                   0.00       0.04 f
+  scaleSoftmax/softmax/outputPackets_reg[8]/D (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.00       0.04 f
+  data arrival time                                                            0.04
+
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  clock uncertainty                                                 0.10       0.10
+  scaleSoftmax/softmax/outputPackets_reg[8]/CP (DFQD1BWP12T30P140LVT)
+                                                                    0.00       0.10 r
+  library hold time                                                 0.00       0.10
+  data required time                                                           0.10
+  ------------------------------------------------------------------------------------
+  data required time                                                           0.10
+  data arrival time                                                           -0.04
+  ------------------------------------------------------------------------------------
+  slack (VIOLATED)                                                            -0.06
+
+
+  Startpoint: scaleSoftmax/softmax/exponentPackets_reg[6]
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: scaleSoftmax/softmax/exponentPackets_reg[6]
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: clk
+  Path Type: min
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  AttentionFeaturePacketizer_0
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QkDotProductAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QueryReplayBuffer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionFeaturePacketizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DualKvDecompressionController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  SoftmaxVAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  StreamingSoftmax   ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionScaleUnit ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AvOutputQuantizer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BriskKvAttentionTop
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+
+  Point                                       Fanout     Trans      Incr       Path
+  ------------------------------------------------------------------------------------
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  scaleSoftmax/softmax/exponentPackets_reg[6]/CP (DFQD1BWP12T30P140LVT)
+                                                          0.00      0.00 #     0.00 r
+  scaleSoftmax/softmax/exponentPackets_reg[6]/Q (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.03       0.03 r
+  scaleSoftmax/softmax/io_stats_exponentPackets[6] (net)
+                                                3                   0.00       0.03 r
+  scaleSoftmax/softmax/U30662/ZN (MUX2ND0BWP12T30P140LVT)
+                                                          0.01      0.01       0.04 f
+  scaleSoftmax/softmax/n5704 (net)              1                   0.00       0.04 f
+  scaleSoftmax/softmax/exponentPackets_reg[6]/D (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.00       0.04 f
+  data arrival time                                                            0.04
+
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  clock uncertainty                                                 0.10       0.10
+  scaleSoftmax/softmax/exponentPackets_reg[6]/CP (DFQD1BWP12T30P140LVT)
+                                                                    0.00       0.10 r
+  library hold time                                                 0.00       0.10
+  data required time                                                           0.10
+  ------------------------------------------------------------------------------------
+  data required time                                                           0.10
+  data arrival time                                                           -0.04
+  ------------------------------------------------------------------------------------
+  slack (VIOLATED)                                                            -0.06
+
+
+  Startpoint: decompressionQk/qk/accumulator/outputPackets_reg[40]
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: decompressionQk/qk/accumulator/outputPackets_reg[40]
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: clk
+  Path Type: min
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  AttentionFeaturePacketizer_0
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QkDotProductAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QueryReplayBuffer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionFeaturePacketizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DualKvDecompressionController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  SoftmaxVAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  StreamingSoftmax   ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionScaleUnit ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AvOutputQuantizer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BriskKvAttentionTop
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+
+  Point                                       Fanout     Trans      Incr       Path
+  ------------------------------------------------------------------------------------
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  decompressionQk/qk/accumulator/outputPackets_reg[40]/CP (DFQD1BWP12T30P140LVT)
+                                                          0.00      0.00 #     0.00 r
+  decompressionQk/qk/accumulator/outputPackets_reg[40]/Q (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.03       0.03 r
+  decompressionQk/qk/accumulator/io_stats_outputPackets[40] (net)
+                                                3                   0.00       0.03 r
+  decompressionQk/qk/accumulator/U14106/ZN (MUX2ND0BWP12T30P140LVT)
+                                                          0.01      0.01       0.04 f
+  decompressionQk/qk/accumulator/n2257 (net)
+                                                1                   0.00       0.04 f
+  decompressionQk/qk/accumulator/outputPackets_reg[40]/D (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.00       0.04 f
+  data arrival time                                                            0.04
+
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  clock uncertainty                                                 0.10       0.10
+  decompressionQk/qk/accumulator/outputPackets_reg[40]/CP (DFQD1BWP12T30P140LVT)
+                                                                    0.00       0.10 r
+  library hold time                                                 0.00       0.10
+  data required time                                                           0.10
+  ------------------------------------------------------------------------------------
+  data required time                                                           0.10
+  data arrival time                                                           -0.04
+  ------------------------------------------------------------------------------------
+  slack (VIOLATED)                                                            -0.06
+
+
+  Startpoint: scaleSoftmax/scaler/inputPackets_reg[8]
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: scaleSoftmax/scaler/inputPackets_reg[8]
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: clk
+  Path Type: min
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  AttentionFeaturePacketizer_0
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QkDotProductAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QueryReplayBuffer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionFeaturePacketizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DualKvDecompressionController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  SoftmaxVAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  StreamingSoftmax   ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionScaleUnit ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AvOutputQuantizer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BriskKvAttentionTop
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+
+  Point                                       Fanout     Trans      Incr       Path
+  ------------------------------------------------------------------------------------
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  scaleSoftmax/scaler/inputPackets_reg[8]/CP (DFQD1BWP12T30P140LVT)
+                                                          0.00      0.00 #     0.00 r
+  scaleSoftmax/scaler/inputPackets_reg[8]/Q (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.03       0.03 r
+  scaleSoftmax/scaler/io_stats_inputPackets[8] (net)
+                                                3                   0.00       0.03 r
+  scaleSoftmax/scaler/U15632/ZN (MUX2ND0BWP12T30P140LVT)
+                                                          0.01      0.01       0.04 f
+  scaleSoftmax/scaler/n2764 (net)               1                   0.00       0.04 f
+  scaleSoftmax/scaler/inputPackets_reg[8]/D (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.00       0.04 f
+  data arrival time                                                            0.04
+
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  clock uncertainty                                                 0.10       0.10
+  scaleSoftmax/scaler/inputPackets_reg[8]/CP (DFQD1BWP12T30P140LVT)
+                                                                    0.00       0.10 r
+  library hold time                                                 0.00       0.10
+  data required time                                                           0.10
+  ------------------------------------------------------------------------------------
+  data required time                                                           0.10
+  data arrival time                                                           -0.04
+  ------------------------------------------------------------------------------------
+  slack (VIOLATED)                                                            -0.06
+
+
+  Startpoint: softmaxV/accumulator/loadedWeightPackets_reg[9]
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: softmaxV/accumulator/loadedWeightPackets_reg[9]
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: clk
+  Path Type: min
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  AttentionFeaturePacketizer_0
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QkDotProductAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QueryReplayBuffer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionFeaturePacketizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DualKvDecompressionController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  SoftmaxVAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  StreamingSoftmax   ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionScaleUnit ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AvOutputQuantizer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BriskKvAttentionTop
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+
+  Point                                       Fanout     Trans      Incr       Path
+  ------------------------------------------------------------------------------------
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  softmaxV/accumulator/loadedWeightPackets_reg[9]/CP (DFQD1BWP12T30P140LVT)
+                                                          0.00      0.00 #     0.00 r
+  softmaxV/accumulator/loadedWeightPackets_reg[9]/Q (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.03       0.03 r
+  softmaxV/accumulator/io_stats_loadedWeightPackets[9] (net)
+                                                3                   0.00       0.03 r
+  softmaxV/accumulator/U13154/ZN (MUX2ND0BWP12T30P140LVT)
+                                                          0.01      0.01       0.04 f
+  softmaxV/accumulator/n858 (net)               1                   0.00       0.04 f
+  softmaxV/accumulator/loadedWeightPackets_reg[9]/D (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.00       0.04 f
+  data arrival time                                                            0.04
+
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  clock uncertainty                                                 0.10       0.10
+  softmaxV/accumulator/loadedWeightPackets_reg[9]/CP (DFQD1BWP12T30P140LVT)
+                                                                    0.00       0.10 r
+  library hold time                                                 0.00       0.10
+  data required time                                                           0.10
+  ------------------------------------------------------------------------------------
+  data required time                                                           0.10
+  data arrival time                                                           -0.04
+  ------------------------------------------------------------------------------------
+  slack (VIOLATED)                                                            -0.06
+
+
+  Startpoint: scaleSoftmax/softmax/activeCycles_reg[16]
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: scaleSoftmax/softmax/activeCycles_reg[16]
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: clk
+  Path Type: min
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  AttentionFeaturePacketizer_0
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QkDotProductAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QueryReplayBuffer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionFeaturePacketizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DualKvDecompressionController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  SoftmaxVAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  StreamingSoftmax   ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionScaleUnit ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AvOutputQuantizer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BriskKvAttentionTop
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+
+  Point                                       Fanout     Trans      Incr       Path
+  ------------------------------------------------------------------------------------
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  scaleSoftmax/softmax/activeCycles_reg[16]/CP (DFQD1BWP12T30P140LVT)
+                                                          0.00      0.00 #     0.00 r
+  scaleSoftmax/softmax/activeCycles_reg[16]/Q (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.03       0.03 r
+  scaleSoftmax/softmax/io_stats_activeCycles[16] (net)
+                                                3                   0.00       0.03 r
+  scaleSoftmax/softmax/U30731/ZN (MUX2ND0BWP12T30P140LVT)
+                                                          0.01      0.01       0.04 f
+  scaleSoftmax/softmax/n5811 (net)              1                   0.00       0.04 f
+  scaleSoftmax/softmax/activeCycles_reg[16]/D (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.00       0.04 f
+  data arrival time                                                            0.04
+
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  clock uncertainty                                                 0.10       0.10
+  scaleSoftmax/softmax/activeCycles_reg[16]/CP (DFQD1BWP12T30P140LVT)
+                                                                    0.00       0.10 r
+  library hold time                                                 0.00       0.10
+  data required time                                                           0.10
+  ------------------------------------------------------------------------------------
+  data required time                                                           0.10
+  data arrival time                                                           -0.04
+  ------------------------------------------------------------------------------------
+  slack (VIOLATED)                                                            -0.06
+
+
+  Startpoint: decompressionQk/qk/accumulator/inputPackets_reg[4]
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: decompressionQk/qk/accumulator/inputPackets_reg[4]
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: clk
+  Path Type: min
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  AttentionFeaturePacketizer_0
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QkDotProductAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QueryReplayBuffer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionFeaturePacketizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DualKvDecompressionController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  SoftmaxVAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  StreamingSoftmax   ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionScaleUnit ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AvOutputQuantizer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BriskKvAttentionTop
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+
+  Point                                       Fanout     Trans      Incr       Path
+  ------------------------------------------------------------------------------------
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  decompressionQk/qk/accumulator/inputPackets_reg[4]/CP (DFQD1BWP12T30P140LVT)
+                                                          0.00      0.00 #     0.00 r
+  decompressionQk/qk/accumulator/inputPackets_reg[4]/Q (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.03       0.03 r
+  decompressionQk/qk/accumulator/io_stats_inputPackets[4] (net)
+                                                3                   0.00       0.03 r
+  decompressionQk/qk/accumulator/U14109/ZN (MUX2ND0BWP12T30P140LVT)
+                                                          0.01      0.01       0.04 f
+  decompressionQk/qk/accumulator/n2157 (net)
+                                                1                   0.00       0.04 f
+  decompressionQk/qk/accumulator/inputPackets_reg[4]/D (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.00       0.04 f
+  data arrival time                                                            0.04
+
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  clock uncertainty                                                 0.10       0.10
+  decompressionQk/qk/accumulator/inputPackets_reg[4]/CP (DFQD1BWP12T30P140LVT)
+                                                                    0.00       0.10 r
+  library hold time                                                 0.00       0.10
+  data required time                                                           0.10
+  ------------------------------------------------------------------------------------
+  data required time                                                           0.10
+  data arrival time                                                           -0.04
+  ------------------------------------------------------------------------------------
+  slack (VIOLATED)                                                            -0.06
+
+
+  Startpoint: scaleSoftmax/scaler/activeCycles_reg[15]
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: scaleSoftmax/scaler/activeCycles_reg[15]
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: clk
+  Path Type: min
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  AttentionFeaturePacketizer_0
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QkDotProductAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QueryReplayBuffer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionFeaturePacketizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DualKvDecompressionController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  SoftmaxVAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  StreamingSoftmax   ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionScaleUnit ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AvOutputQuantizer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BriskKvAttentionTop
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+
+  Point                                       Fanout     Trans      Incr       Path
+  ------------------------------------------------------------------------------------
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  scaleSoftmax/scaler/activeCycles_reg[15]/CP (DFQD1BWP12T30P140LVT)
+                                                          0.00      0.00 #     0.00 r
+  scaleSoftmax/scaler/activeCycles_reg[15]/Q (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.03       0.03 r
+  scaleSoftmax/scaler/io_stats_activeCycles[15] (net)
+                                                3                   0.00       0.03 r
+  scaleSoftmax/scaler/U15669/ZN (MUX2ND0BWP12T30P140LVT)
+                                                          0.01      0.01       0.04 f
+  scaleSoftmax/scaler/n2837 (net)               1                   0.00       0.04 f
+  scaleSoftmax/scaler/activeCycles_reg[15]/D (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.00       0.04 f
+  data arrival time                                                            0.04
+
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  clock uncertainty                                                 0.10       0.10
+  scaleSoftmax/scaler/activeCycles_reg[15]/CP (DFQD1BWP12T30P140LVT)
+                                                                    0.00       0.10 r
+  library hold time                                                 0.00       0.10
+  data required time                                                           0.10
+  ------------------------------------------------------------------------------------
+  data required time                                                           0.10
+  data arrival time                                                           -0.04
+  ------------------------------------------------------------------------------------
+  slack (VIOLATED)                                                            -0.06
+
+
+  Startpoint: decompressionQk/compute/decompressor/bucketDecoder/byteIndex_reg[0]
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: decompressionQk/compute/decompressor/bucketDecoder/byteIndex_reg[0]
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: clk
+  Path Type: min
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  AttentionFeaturePacketizer_0
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QkDotProductAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QueryReplayBuffer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionFeaturePacketizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DualKvDecompressionController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  SoftmaxVAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  StreamingSoftmax   ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionScaleUnit ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AvOutputQuantizer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BriskKvAttentionTop
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+
+  Point                                       Fanout     Trans      Incr       Path
+  ------------------------------------------------------------------------------------
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  decompressionQk/compute/decompressor/bucketDecoder/byteIndex_reg[0]/CP (DFQD1BWP12T30P140LVT)
+                                                          0.00      0.00 #     0.00 r
+  decompressionQk/compute/decompressor/bucketDecoder/byteIndex_reg[0]/Q (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.03       0.03 r
+  decompressionQk/compute/decompressor/bucketDecoder/byteIndex[0] (net)
+                                                3                   0.00       0.03 r
+  decompressionQk/compute/decompressor/U3829/ZN (AOI22D1BWP12T30P140LVT)
+                                                          0.01      0.01       0.04 f
+  decompressionQk/compute/decompressor/n1353 (net)
+                                                1                   0.00       0.04 f
+  decompressionQk/compute/decompressor/bucketDecoder/byteIndex_reg[0]/D (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.00       0.04 f
+  data arrival time                                                            0.04
+
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  clock uncertainty                                                 0.10       0.10
+  decompressionQk/compute/decompressor/bucketDecoder/byteIndex_reg[0]/CP (DFQD1BWP12T30P140LVT)
+                                                                    0.00       0.10 r
+  library hold time                                                 0.00       0.10
+  data required time                                                           0.10
+  ------------------------------------------------------------------------------------
+  data required time                                                           0.10
+  data arrival time                                                           -0.04
+  ------------------------------------------------------------------------------------
+  slack (VIOLATED)                                                            -0.06
+
+
+  Startpoint: decompressionQk/qk/accumulator/inputPackets_reg[34]
+              (rising edge-triggered flip-flop clocked by clk)
+  Endpoint: decompressionQk/qk/accumulator/inputPackets_reg[34]
+            (rising edge-triggered flip-flop clocked by clk)
+  Path Group: clk
+  Path Type: min
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  AttentionFeaturePacketizer_0
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  PackDescriptorDecoder
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BufferedPackMetadataDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DynamicBitUnpacker ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  KvStreamDequantizer
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DecompressionPipelineController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QkDotProductAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  QueryReplayBuffer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionFeaturePacketizer_1
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  DualKvDecompressionController
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  SoftmaxVAccumulator
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  StreamingSoftmax   ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AttentionScaleUnit ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  AvOutputQuantizer  ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+  BriskKvAttentionTop
+                     ZeroWireload          tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+
+  Point                                       Fanout     Trans      Incr       Path
+  ------------------------------------------------------------------------------------
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  decompressionQk/qk/accumulator/inputPackets_reg[34]/CP (DFQD1BWP12T30P140LVT)
+                                                          0.00      0.00 #     0.00 r
+  decompressionQk/qk/accumulator/inputPackets_reg[34]/Q (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.03       0.03 r
+  decompressionQk/qk/accumulator/io_stats_inputPackets[34] (net)
+                                                3                   0.00       0.03 r
+  decompressionQk/qk/accumulator/U14139/ZN (MUX2ND0BWP12T30P140LVT)
+                                                          0.01      0.01       0.04 f
+  decompressionQk/qk/accumulator/n2187 (net)
+                                                1                   0.00       0.04 f
+  decompressionQk/qk/accumulator/inputPackets_reg[34]/D (DFQD1BWP12T30P140LVT)
+                                                          0.01      0.00       0.04 f
+  data arrival time                                                            0.04
+
+  clock clk (rise edge)                                             0.00       0.00
+  clock network delay (ideal)                                       0.00       0.00
+  clock uncertainty                                                 0.10       0.10
+  decompressionQk/qk/accumulator/inputPackets_reg[34]/CP (DFQD1BWP12T30P140LVT)
+                                                                    0.00       0.10 r
+  library hold time                                                 0.00       0.10
+  data required time                                                           0.10
+  ------------------------------------------------------------------------------------
+  data required time                                                           0.10
+  data arrival time                                                           -0.04
+  ------------------------------------------------------------------------------------
+  slack (VIOLATED)                                                            -0.06
+
+
+1

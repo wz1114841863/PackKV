@@ -138,5 +138,44 @@ class VPacketBufferSpec extends AnyFreeSpec with Matchers with ChiselSim {
         dut.io.busy.expect(false.B)
       }
     }
+
+    "must reject pack-major descriptors with an unexpected feature index" in {
+      simulate(
+        new VPacketBuffer(
+          maximumFeatureDim = 8,
+          maximumTokens = 80
+        )
+      ) { dut =>
+        dut.io.start.poke(false.B)
+        dut.io.finish.poke(false.B)
+        dut.io.featureDim.poke(3.U)
+        dut.io.tokenCount.poke(16.U)
+        dut.io.loadIn.valid.poke(false.B)
+        dut.io.readRequest.valid.poke(false.B)
+        dut.io.readResponse.ready.poke(false.B)
+        dut.clock.step()
+
+        dut.io.start.poke(true.B)
+        dut.clock.step()
+        dut.io.start.poke(false.B)
+
+        dut.io.loadIn.valid.poke(true.B)
+        dut.io.loadIn.bits.descriptorIndex.poke(0.U)
+        dut.io.loadIn.bits.packIndex.poke(0.U)
+        dut.io.loadIn.bits.featureIndex.poke(1.U)
+        dut.io.loadIn.bits.blockIndex.poke(0.U)
+        dut.io.loadIn.bits.packWithinBlock.poke(0.U)
+        dut.io.loadIn.bits.validTokens.poke(16.U)
+        dut.io.loadIn.bits.last.poke(false.B)
+        for (lane <- 0 until 16) {
+          dut.io.loadIn.bits.values(lane).poke(lane.S)
+        }
+        dut.io.loadIn.ready.expect(true.B)
+        dut.clock.step()
+
+        dut.io.error.expect(true.B)
+        dut.io.loaded.expect(false.B)
+      }
+    }
   }
 }
