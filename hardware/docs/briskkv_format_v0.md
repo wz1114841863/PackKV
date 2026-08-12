@@ -443,6 +443,13 @@ feature_index)` read requests. It permits one outstanding synchronous read and
 holds the response under backpressure. Descriptor, pack, feature, block,
 valid-lane, and final markers are checked while loading.
 
+Only the 16 signed Q6 values are stored in the V SRAM (288 bits per entry).
+The validated descriptor, pack, feature, block, valid-lane, and final fields
+are reconstructed from the read request and transaction geometry. Likewise,
+the Softmax weight SRAM stores only 16 Q0.15 weights (256 bits per entry);
+position and boundary fields are validated before the write and derived again
+from the addressed pack during replay.
+
 `SoftmaxVAccumulator` stores the Q0.15 Softmax packets once, then traverses V in
 feature-major/pack-major compute order. For each pack it performs 16 parallel
 products and one adder-tree reduction:

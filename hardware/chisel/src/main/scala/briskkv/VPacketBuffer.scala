@@ -17,6 +17,16 @@ class VPacketBufferStats extends Bundle {
   val responseStallCycles = UInt(64.W)
 }
 
+/** Values-only SRAM payload for one V descriptor.
+  *
+  * Packet metadata is validated before each write and reconstructed from the
+  * read request plus transaction geometry. With the default parameters this
+  * reduces an entry from 424 bits to 16 * 18 = 288 bits.
+  */
+class StoredVValues(valueBits: Int, packTokens: Int) extends Bundle {
+  val values = Vec(packTokens, SInt(valueBits.W))
+}
+
 class VPacketBufferIO(
   valueBits: Int,
   packTokens: Int,
@@ -70,7 +80,7 @@ class VPacketBuffer(
 
   val memory = SyncReadMem(
     maximumDescriptors,
-    new AttentionFeaturePacket(valueBits, packTokens, countBits)
+    new StoredVValues(valueBits, packTokens)
   )
 
   val active = RegInit(false.B)
@@ -84,6 +94,9 @@ class VPacketBuffer(
 
   val readOutstanding = RegInit(false.B)
   val responseValid = RegInit(false.B)
+  val pendingPackIndex = RegInit(0.U(countBits.W))
+  val pendingFeatureIndex = RegInit(0.U(countBits.W))
+  val pendingDescriptorIndex = RegInit(0.U(countBits.W))
   val responsePacket = Reg(
     new AttentionFeaturePacket(valueBits, packTokens, countBits)
   )
@@ -184,7 +197,9 @@ class VPacketBuffer(
       when(!packetValid) {
         errorReg := true.B
       }
-      memory.write(expectedDescriptor(addressBits - 1, 0), io.loadIn.bits)
+      val storedValues = Wire(new StoredVValues(valueBits, packTokens))
+      storedValues.values := io.loadIn.bits.values
+      memory.write(expectedDescriptor(addressBits - 1, 0), storedValues)
       expectedDescriptor := expectedDescriptor + 1.U
       loadedPackets := loadedPackets + 1.U
       when(expectedLast) {
@@ -195,13 +210,29 @@ class VPacketBuffer(
 
     when(readRequestFire) {
       readOutstanding := true.B
+      pendingPackIndex := io.readRequest.bits.packIndex
+      pendingFeatureIndex := io.readRequest.bits.featureIndex
+      pendingDescriptorIndex := requestedAddress
       readRequests := readRequests + 1.U
       when(!requestedPackValid || !requestedFeatureValid) {
         errorReg := true.B
       }
     }
     when(readDataPending) {
-      responsePacket := readData
+      val finalPack = pendingPackIndex === packCountReg - 1.U
+      responsePacket.values := readData.values
+      responsePacket.validTokens := Mux(
+        finalPack,
+        finalValidTokensReg,
+        packTokens.U
+      )
+      responsePacket.descriptorIndex := pendingDescriptorIndex
+      responsePacket.packIndex := pendingPackIndex
+      responsePacket.featureIndex := pendingFeatureIndex
+      responsePacket.blockIndex := pendingPackIndex / packsPerBlock.U
+      responsePacket.packWithinBlock := pendingPackIndex % packsPerBlock.U
+      responsePacket.last := finalPack &&
+        pendingFeatureIndex === featureDimReg - 1.U
       responseValid := true.B
       readOutstanding := false.B
     }

@@ -24,6 +24,13 @@ class SoftmaxVAccumulatorStats extends Bundle {
   val downstreamStallCycles = UInt(64.W)
 }
 
+/** Values-only SRAM payload for one Softmax pack. Positional metadata is
+  * validated on ingress and derived from the read address during replay.
+  */
+class StoredAttentionWeights(weightBits: Int, packTokens: Int) extends Bundle {
+  val weights = Vec(packTokens, UInt(weightBits.W))
+}
+
 class SoftmaxVAccumulatorIO(
   valueBits: Int,
   weightBits: Int,
@@ -95,7 +102,7 @@ class SoftmaxVAccumulator(
 
   val weightMemory = SyncReadMem(
     maximumPacks,
-    new AttentionWeightPacket(weightBits, packTokens, countBits)
+    new StoredAttentionWeights(weightBits, packTokens)
   )
 
   val Seq(
@@ -117,9 +124,7 @@ class SoftmaxVAccumulator(
   val computeFeatureIndex = RegInit(0.U(countBits.W))
   val computePackIndex = RegInit(0.U(countBits.W))
   val featureAccumulator = RegInit(0.S(accumulatorBits.W))
-  val weightPacketReg = Reg(
-    new AttentionWeightPacket(weightBits, packTokens, countBits)
-  )
+  val weightPacketReg = Reg(new StoredAttentionWeights(weightBits, packTokens))
   val outputReg = Reg(new AvFeatureResult(accumulatorBits, countBits))
 
   val activeCycles = RegInit(0.U(64.W))
@@ -222,9 +227,13 @@ class SoftmaxVAccumulator(
           when(!packetValid) {
             errorReg := true.B
           }
+          val storedWeights = Wire(
+            new StoredAttentionWeights(weightBits, packTokens)
+          )
+          storedWeights.weights := io.weightIn.bits.weights
           weightMemory.write(
             weightLoadIndex(packAddressBits - 1, 0),
-            io.weightIn.bits
+            storedWeights
           )
           loadedWeightPackets := loadedWeightPackets + 1.U
           weightLoadIndex := weightLoadIndex + 1.U
@@ -259,10 +268,8 @@ class SoftmaxVAccumulator(
             finalValidTokensReg,
             packTokens.U
           )
-          val aligned = weightPacketReg.packIndex === computePackIndex &&
-            io.vReadResponse.bits.packIndex === computePackIndex &&
+          val aligned = io.vReadResponse.bits.packIndex === computePackIndex &&
             io.vReadResponse.bits.featureIndex === computeFeatureIndex &&
-            weightPacketReg.validTokens === expectedValidTokens &&
             io.vReadResponse.bits.validTokens === expectedValidTokens
           when(!aligned) {
             errorReg := true.B

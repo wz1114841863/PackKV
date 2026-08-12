@@ -120,6 +120,10 @@ V stream in synchronous memory, then serves tagged `(pack, feature)` reads.
 `SoftmaxVAccumulator` stores each Q0.15 weight pack once and replays it for
 every V feature. Each compute step uses 16 signed V multipliers and an adder
 tree; pack partial sums are accumulated into an exact signed Q21 result.
+The SRAM payloads contain values only: 288 bits for a 16-lane V packet and
+256 bits for a 16-lane weight packet. Packet indexes, valid-lane counts, block
+position, and final markers are validated at ingress and reconstructed from
+the address and active geometry at readout.
 `SoftmaxVComputePipeline` joins the buffer and accumulator and retains full
 Decoupled backpressure, partial-pack masking, completion, error, MAC, cycle,
 wait, and stall accounting.

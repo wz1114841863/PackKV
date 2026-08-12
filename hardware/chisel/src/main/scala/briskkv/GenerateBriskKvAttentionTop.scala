@@ -112,12 +112,12 @@ object GenerateBriskKvAttentionTop {
         (s"logitMemory_${packCount}x709", "softmax_logits", packCount, 709),
         (s"exponentMemory_${packCount}x277", "softmax_exponents", packCount, 277),
         (
-          s"memory_${packCount * config.maximumFeatureDim}x424",
+          s"memory_${packCount * config.maximumFeatureDim}x288",
           "dequantized_v_packets",
           packCount * config.maximumFeatureDim,
-          424
+          288
         ),
-        (s"weightMemory_${packCount}x328", "softmax_weights", packCount, 328)
+        (s"weightMemory_${packCount}x256", "softmax_weights", packCount, 256)
       )
       memoryRows.foreach { case (module, _, depth, width) =>
         val modulePath = targetDir.resolve(s"$module.sv")

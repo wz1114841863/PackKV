@@ -8,7 +8,8 @@ from hardware.evaluation.mem.briskkv_memory_eval import load_inventory, split_wi
 class BriskKvMemoryEvalTest(unittest.TestCase):
     def test_parallel_width_slices_preserve_width(self):
         self.assertEqual(split_width(709, 128), [128, 128, 128, 128, 128, 69])
-        self.assertEqual(split_width(424, 128), [128, 128, 128, 40])
+        self.assertEqual(split_width(288, 128), [128, 128, 32])
+        self.assertEqual(split_width(256, 128), [128, 128])
         self.assertEqual(sum(split_width(18, 128)), 18)
 
     def test_inventory_defaults_and_total_validation(self):
