@@ -40,7 +40,8 @@ class SoftmaxVComputePipeline(
   packTokens: Int = BriskKvFormatV0.params.packTokens,
   maximumFeatureDim: Int = 256,
   maximumTokens: Int = 16384,
-  countBits: Int = 32
+  countBits: Int = 32,
+  enableStats: Boolean = true
 ) extends Module {
   val io = IO(
     new SoftmaxVComputePipelineIO(
@@ -58,7 +59,8 @@ class SoftmaxVComputePipeline(
       packTokens = packTokens,
       maximumFeatureDim = maximumFeatureDim,
       maximumTokens = maximumTokens,
-      countBits = countBits
+      countBits = countBits,
+      enableStats = enableStats
     )
   )
   val accumulator = Module(
@@ -69,7 +71,8 @@ class SoftmaxVComputePipeline(
       packTokens = packTokens,
       maximumFeatureDim = maximumFeatureDim,
       maximumTokens = maximumTokens,
-      countBits = countBits
+      countBits = countBits,
+      enableStats = enableStats
     )
   )
 

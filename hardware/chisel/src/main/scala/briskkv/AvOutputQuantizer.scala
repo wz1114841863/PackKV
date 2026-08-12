@@ -44,7 +44,8 @@ class AvOutputQuantizer(
   outputBits: Int = 18,
   outputFractionalBits: Int = 6,
   maximumFeatureDim: Int = 256,
-  countBits: Int = 32
+  countBits: Int = 32,
+  enableStats: Boolean = true
 ) extends Module {
   require(accumulatorBits > outputBits && outputBits >= 2)
   require(inputFractionalBits > outputFractionalBits)
@@ -78,12 +79,12 @@ class AvOutputQuantizer(
   io.busy := active || outputValid
   io.done := doneReg
   io.error := errorReg
-  io.stats.activeCycles := activeCycles
-  io.stats.inputFeatures := inputFeatures
-  io.stats.outputFeatures := outputFeatures
-  io.stats.positiveSaturations := positiveSaturations
-  io.stats.negativeSaturations := negativeSaturations
-  io.stats.downstreamStallCycles := downstreamStallCycles
+  io.stats.activeCycles := Mux(enableStats.B, activeCycles, 0.U)
+  io.stats.inputFeatures := Mux(enableStats.B, inputFeatures, 0.U)
+  io.stats.outputFeatures := Mux(enableStats.B, outputFeatures, 0.U)
+  io.stats.positiveSaturations := Mux(enableStats.B, positiveSaturations, 0.U)
+  io.stats.negativeSaturations := Mux(enableStats.B, negativeSaturations, 0.U)
+  io.stats.downstreamStallCycles := Mux(enableStats.B, downstreamStallCycles, 0.U)
 
   io.in.ready := active && (!outputValid || io.out.ready)
   io.out.valid := outputValid

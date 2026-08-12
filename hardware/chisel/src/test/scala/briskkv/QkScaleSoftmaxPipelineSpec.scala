@@ -144,6 +144,91 @@ class QkScaleSoftmaxPipelineSpec
           dut.io.in.ready.expect(false.B)
       }
     }
+
+    "must preserve signed Q12 logits at the d=1 scale boundary" in {
+      val logits = IndexedSeq.tabulate(PackTokens) { lane =>
+        if ((lane & 1) == 0) (lane + 1).toLong * 4097L
+        else -(lane + 1).toLong * 4097L
+      }
+      simulate(new AttentionScaleUnit(maximumFeatureDim = 8, maximumTokens = 64)) {
+        dut =>
+          initializeScale(dut)
+          dut.clock.step()
+          dut.io.featureDim.poke(1.U)
+          dut.io.tokenCount.poke(PackTokens.U)
+          dut.io.start.poke(true.B)
+          dut.clock.step()
+          dut.io.start.poke(false.B)
+          dut.io.scaleMultiplier.expect((1 << ScaleFractionalBits).U)
+
+          dut.io.in.valid.poke(true.B)
+          dut.io.in.bits.validTokens.poke(PackTokens.U)
+          dut.io.in.bits.packIndex.poke(0.U)
+          dut.io.in.bits.blockIndex.poke(0.U)
+          dut.io.in.bits.packWithinBlock.poke(0.U)
+          dut.io.in.bits.last.poke(true.B)
+          logits.zip(dut.io.in.bits.logits).foreach { case (value, port) =>
+            port.poke(value.S)
+          }
+          dut.io.out.ready.poke(false.B)
+          dut.io.in.ready.expect(true.B)
+          dut.clock.step()
+          dut.io.in.valid.poke(false.B)
+
+          for (_ <- 0 until 4) {
+            dut.io.in.ready.expect(false.B)
+            dut.io.out.valid.expect(false.B)
+            dut.clock.step()
+          }
+          dut.io.out.valid.expect(true.B)
+          logits.zip(dut.io.out.bits.logits).foreach { case (value, port) =>
+            port.expect(value.S)
+          }
+          dut.io.error.expect(false.B)
+          dut.io.out.ready.poke(true.B)
+          dut.clock.step()
+          dut.io.done.expect(true.B)
+        }
+    }
+
+    "must keep function while tying counters to zero when stats are disabled" in {
+      simulate(
+        new AttentionScaleUnit(
+          maximumFeatureDim = 8,
+          maximumTokens = 64,
+          enableStats = false
+        )
+      ) { dut =>
+        initializeScale(dut)
+        dut.clock.step()
+        dut.io.featureDim.poke(4.U)
+        dut.io.tokenCount.poke(PackTokens.U)
+        dut.io.start.poke(true.B)
+        dut.clock.step()
+        dut.io.start.poke(false.B)
+
+        dut.io.in.valid.poke(true.B)
+        dut.io.in.bits.validTokens.poke(PackTokens.U)
+        dut.io.in.bits.packIndex.poke(0.U)
+        dut.io.in.bits.blockIndex.poke(0.U)
+        dut.io.in.bits.packWithinBlock.poke(0.U)
+        dut.io.in.bits.last.poke(true.B)
+        dut.io.in.bits.logits.foreach(_.poke(8192.S))
+        dut.clock.step()
+        dut.io.in.valid.poke(false.B)
+        dut.clock.step(4)
+
+        dut.io.out.valid.expect(true.B)
+        dut.io.out.bits.logits.foreach(_.expect(4096.S))
+        dut.io.stats.activeCycles.expect(0.U)
+        dut.io.stats.inputPackets.expect(0.U)
+        dut.io.stats.outputPackets.expect(0.U)
+        dut.io.stats.downstreamStallCycles.expect(0.U)
+        dut.io.out.ready.poke(true.B)
+        dut.clock.step()
+        dut.io.done.expect(true.B)
+      }
+    }
   }
 
   "Streaming fixed-point softmax" - {
@@ -221,6 +306,7 @@ class QkScaleSoftmaxPipelineSpec
         dut.io.stats.outputPackets.expect(2.U)
       }
     }
+
   }
 
   "QK scale-softmax pipeline" - {

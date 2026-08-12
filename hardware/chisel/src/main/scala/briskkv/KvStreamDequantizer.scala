@@ -36,7 +36,8 @@ class KvStreamDequantizer(
   packTokens: Int = BriskKvFormatV0.params.packTokens,
   outputBits: Int = 18,
   countBits: Int = 32,
-  useBufferedMetadata: Boolean = true
+  useBufferedMetadata: Boolean = true,
+  enableStats: Boolean = true
 ) extends Module {
   private val tokenIndexBits = log2Ceil(packTokens)
 
@@ -58,7 +59,8 @@ class KvStreamDequantizer(
         codeValueBits = codeValueBits,
         zeroPointBits = zeroPointBits,
         packTokens = packTokens,
-        outputBits = outputBits
+        outputBits = outputBits,
+        enableStats = enableStats
       )
     )
   } else {
@@ -67,7 +69,8 @@ class KvStreamDequantizer(
         codeValueBits = codeValueBits,
         zeroPointBits = zeroPointBits,
         packTokens = packTokens,
-        outputBits = outputBits
+        outputBits = outputBits,
+        enableStats = enableStats
       )
     )
   }

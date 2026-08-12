@@ -84,7 +84,8 @@ class PackMetadataDequantizer(
   metadataBits: Int = 8,
   outputBits: Int = 18,
   descriptorIndexBits: Int = 32,
-  countBits: Int = 32
+  countBits: Int = 32,
+  enableStats: Boolean = true
 ) extends PackMetadataDequantizerBase(
       outputBits,
       metadataBits,
@@ -128,10 +129,10 @@ class PackMetadataDequantizer(
   io.busy := active
   io.done := doneReg
   io.error := errorReg
-  io.stats.activeCycles := activeCycles
-  io.stats.outputValues := outputValues
-  io.stats.metadataStallCycles := metadataStallCycles
-  io.stats.downstreamStallCycles := downstreamStallCycles
+  io.stats.activeCycles := Mux(enableStats.B, activeCycles, 0.U)
+  io.stats.outputValues := Mux(enableStats.B, outputValues, 0.U)
+  io.stats.metadataStallCycles := Mux(enableStats.B, metadataStallCycles, 0.U)
+  io.stats.downstreamStallCycles := Mux(enableStats.B, downstreamStallCycles, 0.U)
   doneReg := false.B
 
   val metadataCanLoad = active && !metadataReady

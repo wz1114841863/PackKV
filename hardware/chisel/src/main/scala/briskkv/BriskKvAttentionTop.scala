@@ -52,7 +52,9 @@ class BriskKvAttentionTop(
   tagBits: Int = 16,
   maximumFeatureDim: Int = 256,
   maximumTokens: Int = 16384,
-  useBufferedMetadata: Boolean = true
+  scaleLanes: Int = 4,
+  useBufferedMetadata: Boolean = true,
+  enableStats: Boolean = true
 ) extends Module {
   private val params = BriskKvFormatV0.params
   private val bucketCountBits = log2Ceil(params.blockTokens + 1)
@@ -75,16 +77,19 @@ class BriskKvAttentionTop(
       tagBits = tagBits,
       maximumFeatureDim = maximumFeatureDim,
       maximumTokens = maximumTokens,
-      useBufferedMetadata = useBufferedMetadata
+      useBufferedMetadata = useBufferedMetadata,
+      enableStats = enableStats
     )
   )
   val scaleSoftmax = Module(
     new QkScaleSoftmaxPipeline(
       logitBits = qkAccumulatorBits,
       packTokens = params.packTokens,
+      scaleLanes = scaleLanes,
       maximumFeatureDim = maximumFeatureDim,
       maximumTokens = maximumTokens,
-      countBits = countBits
+      countBits = countBits,
+      enableStats = enableStats
     )
   )
   val softmaxV = Module(
@@ -94,7 +99,8 @@ class BriskKvAttentionTop(
       packTokens = params.packTokens,
       maximumFeatureDim = maximumFeatureDim,
       maximumTokens = maximumTokens,
-      countBits = countBits
+      countBits = countBits,
+      enableStats = enableStats
     )
   )
   val outputQuantizer = Module(
@@ -102,7 +108,8 @@ class BriskKvAttentionTop(
       accumulatorBits = avAccumulatorBits,
       outputBits = outputBits,
       maximumFeatureDim = maximumFeatureDim,
-      countBits = countBits
+      countBits = countBits,
+      enableStats = enableStats
     )
   )
 

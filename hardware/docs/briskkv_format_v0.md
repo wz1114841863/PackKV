@@ -407,6 +407,24 @@ runtime square-root/divider with a small constant ROM. Scaling cannot increase
 the absolute logit magnitude because `d >= 1`, so the signed 44-bit Q12 width
 is preserved.
 
+The implementation reuses four signed `44 x 20` multipliers across the four
+groups of each 16-token packet. The Q18 scale is zero-extended before signed
+multiplication, which preserves the `d = 1` value `2^18`. Scaling therefore
+takes four compute cycles per packet instead of instantiating 16 wide
+multipliers. Including the output handshake, the scaler accepts one packet
+every five cycles. Since QK accumulation consumes `featureDim` feature packets
+before producing one logit packet, this does not reduce steady-state throughput
+at the current 128-feature synthesis point. Configurations with
+`featureDim < 5` can backpressure QK; `scaleLanes` remains elaboration-time
+configurable for that area/throughput trade-off.
+
+All 64-bit performance counters are controlled by the elaboration-time
+`enableStats` parameter. When disabled, functional datapaths, handshakes, and
+the progress-port schema are unchanged, while every statistics output is tied
+to zero so dead-code elimination removes the counter registers and increment
+logic. This option is for matched stats-on/stats-off PPA ablation and does not
+change the BRISK-KV on-wire format.
+
 `StreamingSoftmax` normalizes across the complete token sequence, not within
 each 16-token pack. Its hardware reference state machine has three memory
 passes:
@@ -418,15 +436,18 @@ passes:
 
 The exponential input is rounded to 1/16 steps and clamped to `[-8, 0]`. LUT
 entries use unsigned Q16, including `exp(0) = 65536`. The denominator has
-enough width for 16,384 tokens. One Q32 reciprocal is calculated per sequence;
-the 16 lanes then use parallel multiply-and-shift normalization rather than 16
-parallel dividers. Invalid lanes in the final pack have zero exponent and zero
+enough width for 16,384 tokens. One Q32 reciprocal is calculated per sequence
+with an exact 33-cycle radix-2 restoring divider; the 16 lanes then use
+parallel multiply-and-shift normalization rather than 16 parallel dividers.
+Both the 16-lane signed maximum and exponent sum use balanced four-level
+reduction trees. Invalid lanes in the final pack have zero exponent and zero
 weight. The module stores and checks pack/block/final markers and holds every
 output packet under backpressure.
 
 These choices define the current Chisel reference arithmetic, not a Format v0
-on-wire field. A later synthesis iteration may replace the combinational shared
-reciprocal with an iterative reciprocal unit without changing packet formats.
+on-wire field. The iterative reciprocal increases per-sequence latency while
+removing the wide single-cycle division path; it does not change packet
+formats or numerical results.
 
 ### 7.6 Buffered V replay and 16-lane AV accumulation
 

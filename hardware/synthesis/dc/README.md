@@ -30,6 +30,21 @@ export REPORT_DIR=reports_t1024_f128
 dc_shell -f hardware/synthesis/dc/run_dc_logic.tcl
 ```
 
+For a matched performance-counter area ablation, first generate both RTL
+variants and then synthesize them with identical libraries and constraints:
+
+```bash
+bash hardware/scripts/generate_stats_ablation_rtl.sh
+export TARGET_LIBRARY=/absolute/path/to/standard_cells.db
+bash hardware/synthesis/dc/run_stats_ablation.sh
+```
+
+The two report directories are `stats_on` and `stats_off`. Compare total and
+hierarchical area from `area_hier.rpt`; also compare `qor.rpt` and
+`timing_setup.rpt` to ensure the area result is not caused by different timing
+closure. Both manifests retain the same functional geometry and record the
+`performance_stats_enabled` value.
+
 The script creates an isolated per-process WORK library and must produce both
 `memory_blackboxes_precompile.rpt` and `memory_blackboxes_postcompile.rpt`.
 Each report must contain all five memory module names with a non-zero instance

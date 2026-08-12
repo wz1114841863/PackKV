@@ -63,7 +63,8 @@ class VPacketBuffer(
   blockTokens: Int = BriskKvFormatV0.params.blockTokens,
   maximumFeatureDim: Int = 256,
   maximumTokens: Int = 16384,
-  countBits: Int = 32
+  countBits: Int = 32,
+  enableStats: Boolean = true
 ) extends Module {
   require(valueBits >= 2)
   require(packTokens > 0 && isPow2(packTokens))
@@ -113,12 +114,12 @@ class VPacketBuffer(
   io.loadDone := loadDoneReg
   io.busy := active || readOutstanding || responseValid
   io.error := errorReg
-  io.stats.activeCycles := activeCycles
-  io.stats.loadedPackets := loadedPackets
-  io.stats.readRequests := readRequests
-  io.stats.readResponses := readResponses
-  io.stats.loadStallCycles := loadStallCycles
-  io.stats.responseStallCycles := responseStallCycles
+  io.stats.activeCycles := Mux(enableStats.B, activeCycles, 0.U)
+  io.stats.loadedPackets := Mux(enableStats.B, loadedPackets, 0.U)
+  io.stats.readRequests := Mux(enableStats.B, readRequests, 0.U)
+  io.stats.readResponses := Mux(enableStats.B, readResponses, 0.U)
+  io.stats.loadStallCycles := Mux(enableStats.B, loadStallCycles, 0.U)
+  io.stats.responseStallCycles := Mux(enableStats.B, responseStallCycles, 0.U)
 
   io.loadIn.ready := active && !loadedReg
   io.readRequest.ready := loadedReg && !readOutstanding && !responseValid

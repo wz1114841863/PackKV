@@ -68,7 +68,8 @@ class DualKvDecompressionController(
   outputBits: Int = 18,
   countBits: Int = 32,
   tagBits: Int = 16,
-  useBufferedMetadata: Boolean = true
+  useBufferedMetadata: Boolean = true,
+  enableStats: Boolean = true
 ) extends Module {
   private val params = BriskKvFormatV0.params
   private val tokenIndexBits = log2Ceil(params.packTokens)
@@ -93,7 +94,8 @@ class DualKvDecompressionController(
       outputBits = outputBits,
       countBits = countBits,
       tagBits = tagBits,
-      useBufferedMetadata = useBufferedMetadata
+      useBufferedMetadata = useBufferedMetadata,
+      enableStats = enableStats
     )
   )
   val vController = Module(
@@ -103,7 +105,8 @@ class DualKvDecompressionController(
       outputBits = outputBits,
       countBits = countBits,
       tagBits = tagBits,
-      useBufferedMetadata = useBufferedMetadata
+      useBufferedMetadata = useBufferedMetadata,
+      enableStats = enableStats
     )
   )
   val bucketDecoder = Module(new BucketCountDecoder(blockIndexBits = countBits))
@@ -177,8 +180,13 @@ class DualKvDecompressionController(
   io.result.bits.blockCount := blockCountReg
   io.result.bits.descriptorCount := commandReg.descriptorCount
   io.result.bits.bucketRecords := bucketRecords
-  io.result.bits.kStats := kResultReg.stats
-  io.result.bits.vStats := vResultReg.stats
+  if (enableStats) {
+    io.result.bits.kStats := kResultReg.stats
+    io.result.bits.vStats := vResultReg.stats
+  } else {
+    io.result.bits.kStats := 0.U.asTypeOf(new DequantizerPerformanceStats)
+    io.result.bits.vStats := 0.U.asTypeOf(new DequantizerPerformanceStats)
+  }
 
   val commandFire = io.command.valid && io.command.ready
 

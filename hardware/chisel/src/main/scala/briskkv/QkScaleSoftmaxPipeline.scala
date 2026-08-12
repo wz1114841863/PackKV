@@ -31,9 +31,11 @@ class QkScaleSoftmaxPipeline(
   logitBits: Int = 44,
   weightBits: Int = 16,
   packTokens: Int = BriskKvFormatV0.params.packTokens,
+  scaleLanes: Int = 4,
   maximumFeatureDim: Int = 256,
   maximumTokens: Int = 16384,
-  countBits: Int = 32
+  countBits: Int = 32,
+  enableStats: Boolean = true
 ) extends Module {
   val io = IO(
     new QkScaleSoftmaxPipelineIO(
@@ -49,9 +51,11 @@ class QkScaleSoftmaxPipeline(
       inputBits = logitBits,
       outputBits = logitBits,
       packTokens = packTokens,
+      scaleLanes = scaleLanes,
       maximumFeatureDim = maximumFeatureDim,
       maximumTokens = maximumTokens,
-      countBits = countBits
+      countBits = countBits,
+      enableStats = enableStats
     )
   )
   val softmax = Module(
@@ -60,7 +64,8 @@ class QkScaleSoftmaxPipeline(
       weightBits = weightBits,
       packTokens = packTokens,
       maximumTokens = maximumTokens,
-      countBits = countBits
+      countBits = countBits,
+      enableStats = enableStats
     )
   )
 

@@ -10,6 +10,8 @@ object GenerateBriskKvAttentionTop {
     targetDir: Path = Paths.get("generated/briskkv_attention_t1024_f128/full"),
     maximumTokens: Int = 1024,
     maximumFeatureDim: Int = 128,
+    scaleLanes: Int = 4,
+    enableStats: Boolean = true,
     mode: String = "full"
   )
 
@@ -18,6 +20,8 @@ object GenerateBriskKvAttentionTop {
       |  --target-dir <path>          output directory
       |  --maximum-tokens <int>       maximum context tokens (default: 1024)
       |  --maximum-feature-dim <int>  maximum head dimension (default: 128)
+      |  --scale-lanes <int>          physical attention-scale lanes (default: 4)
+      |  --enable-stats <true|false>  elaborate performance counters (default: true)
       |  --mode <full|dc_logic>       retain inferred memories or externalize them
       |""".stripMargin
 
@@ -52,6 +56,11 @@ object GenerateBriskKvAttentionTop {
         parse(tail, config.copy(maximumTokens = value.toInt))
       case "--maximum-feature-dim" :: value :: tail =>
         parse(tail, config.copy(maximumFeatureDim = value.toInt))
+      case "--scale-lanes" :: value :: tail =>
+        parse(tail, config.copy(scaleLanes = value.toInt))
+      case "--enable-stats" :: value :: tail =>
+        require(Set("true", "false").contains(value))
+        parse(tail, config.copy(enableStats = value.toBoolean))
       case "--mode" :: value :: tail =>
         parse(tail, config.copy(mode = value))
       case "--help" :: _ =>
@@ -66,6 +75,12 @@ object GenerateBriskKvAttentionTop {
     require(config.maximumTokens >= BriskKvFormatV0.params.packTokens)
     require(config.maximumTokens % BriskKvFormatV0.params.packTokens == 0)
     require(config.maximumFeatureDim > 0 && config.maximumFeatureDim <= 256)
+    require(
+      config.scaleLanes > 0 &&
+        config.scaleLanes <= BriskKvFormatV0.params.packTokens &&
+        (config.scaleLanes & (config.scaleLanes - 1)) == 0 &&
+        BriskKvFormatV0.params.packTokens % config.scaleLanes == 0
+    )
     require(Set("full", "dc_logic").contains(config.mode))
 
     val targetDir = config.targetDir.toAbsolutePath.normalize
@@ -76,7 +91,9 @@ object GenerateBriskKvAttentionTop {
     ChiselStage.emitSystemVerilogFile(
       new BriskKvAttentionTop(
         maximumTokens = config.maximumTokens,
-        maximumFeatureDim = config.maximumFeatureDim
+        maximumFeatureDim = config.maximumFeatureDim,
+        scaleLanes = config.scaleLanes,
+        enableStats = config.enableStats
       ),
       args = Array("--target-dir", targetDir.toString),
       firtoolOpts = firtoolOptions
@@ -90,6 +107,8 @@ object GenerateBriskKvAttentionTop {
          |  "mode": "${config.mode}",
          |  "maximum_tokens": ${config.maximumTokens},
          |  "maximum_feature_dim": ${config.maximumFeatureDim},
+         |  "attention_scale_lanes": ${config.scaleLanes},
+         |  "performance_stats_enabled": ${config.enableStats},
          |  "pack_tokens": ${BriskKvFormatV0.params.packTokens},
          |  "block_tokens": ${BriskKvFormatV0.params.blockTokens},
          |  "value_format": "signed Q6 / 18 bits",

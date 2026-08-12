@@ -67,7 +67,8 @@ class QkDotProductAccumulator(
   packTokens: Int = BriskKvFormatV0.params.packTokens,
   blockTokens: Int = BriskKvFormatV0.params.blockTokens,
   maximumFeatureDim: Int = 256,
-  countBits: Int = 32
+  countBits: Int = 32,
+  enableStats: Boolean = true
 ) extends Module {
   require(valueBits >= 2)
   require(maximumFeatureDim > 0)
@@ -120,13 +121,13 @@ class QkDotProductAccumulator(
   io.busy := active || outputValid
   io.done := doneReg
   io.error := errorReg
-  io.stats.activeCycles := activeCycles
-  io.stats.inputPackets := inputPackets
-  io.stats.outputPackets := outputPackets
-  io.stats.macOperations := macOperations
-  io.stats.queryWaitCycles := queryWaitCycles
-  io.stats.keyWaitCycles := keyWaitCycles
-  io.stats.downstreamStallCycles := downstreamStallCycles
+  io.stats.activeCycles := Mux(enableStats.B, activeCycles, 0.U)
+  io.stats.inputPackets := Mux(enableStats.B, inputPackets, 0.U)
+  io.stats.outputPackets := Mux(enableStats.B, outputPackets, 0.U)
+  io.stats.macOperations := Mux(enableStats.B, macOperations, 0.U)
+  io.stats.queryWaitCycles := Mux(enableStats.B, queryWaitCycles, 0.U)
+  io.stats.keyWaitCycles := Mux(enableStats.B, keyWaitCycles, 0.U)
+  io.stats.downstreamStallCycles := Mux(enableStats.B, downstreamStallCycles, 0.U)
   doneReg := false.B
 
   io.out.valid := outputValid

@@ -38,7 +38,8 @@ class QueryReplayBuffer(
   valueBits: Int = 18,
   maximumFeatureDim: Int = 256,
   countBits: Int = 32,
-  responseQueueDepth: Int = 2
+  responseQueueDepth: Int = 2,
+  enableStats: Boolean = true
 ) extends Module {
   require(valueBits >= 2)
   require(maximumFeatureDim > 0)
@@ -78,12 +79,12 @@ class QueryReplayBuffer(
   io.done := doneReg
   io.error := errorReg
   io.loaded := loadedReg
-  io.stats.activeCycles := activeCycles
-  io.stats.loadedValues := loadedValues
-  io.stats.readRequests := readRequests
-  io.stats.replayedValues := replayedValues
-  io.stats.loadWaitCycles := loadWaitCycles
-  io.stats.downstreamStallCycles := downstreamStallCycles
+  io.stats.activeCycles := Mux(enableStats.B, activeCycles, 0.U)
+  io.stats.loadedValues := Mux(enableStats.B, loadedValues, 0.U)
+  io.stats.readRequests := Mux(enableStats.B, readRequests, 0.U)
+  io.stats.replayedValues := Mux(enableStats.B, replayedValues, 0.U)
+  io.stats.loadWaitCycles := Mux(enableStats.B, loadWaitCycles, 0.U)
+  io.stats.downstreamStallCycles := Mux(enableStats.B, downstreamStallCycles, 0.U)
   doneReg := false.B
 
   io.loadIn.ready := loading

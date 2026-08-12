@@ -36,7 +36,8 @@ class QkComputePipeline(
   packTokens: Int = BriskKvFormatV0.params.packTokens,
   blockTokens: Int = BriskKvFormatV0.params.blockTokens,
   maximumFeatureDim: Int = 256,
-  countBits: Int = 32
+  countBits: Int = 32,
+  enableStats: Boolean = true
 ) extends Module {
   val io = IO(
     new QkComputePipelineIO(
@@ -51,7 +52,8 @@ class QkComputePipeline(
     new QueryReplayBuffer(
       valueBits = valueBits,
       maximumFeatureDim = maximumFeatureDim,
-      countBits = countBits
+      countBits = countBits,
+      enableStats = enableStats
     )
   )
   val accumulator = Module(
@@ -61,7 +63,8 @@ class QkComputePipeline(
       packTokens = packTokens,
       blockTokens = blockTokens,
       maximumFeatureDim = maximumFeatureDim,
-      countBits = countBits
+      countBits = countBits,
+      enableStats = enableStats
     )
   )
 

@@ -50,7 +50,8 @@ class BriskKvComputeInterface(
   outputBits: Int = 18,
   countBits: Int = 32,
   tagBits: Int = 16,
-  useBufferedMetadata: Boolean = true
+  useBufferedMetadata: Boolean = true,
+  enableStats: Boolean = true
 ) extends Module {
   private val params = BriskKvFormatV0.params
   private val bucketCountBits = log2Ceil(params.blockTokens + 1)
@@ -69,14 +70,23 @@ class BriskKvComputeInterface(
       outputBits = outputBits,
       countBits = countBits,
       tagBits = tagBits,
-      useBufferedMetadata = useBufferedMetadata
+      useBufferedMetadata = useBufferedMetadata,
+      enableStats = enableStats
     )
   )
   val kPacketizer = Module(
-    new AttentionFeaturePacketizer(outputBits, countBits = countBits)
+    new AttentionFeaturePacketizer(
+      outputBits,
+      countBits = countBits,
+      enableStats = enableStats
+    )
   )
   val vPacketizer = Module(
-    new AttentionFeaturePacketizer(outputBits, countBits = countBits)
+    new AttentionFeaturePacketizer(
+      outputBits,
+      countBits = countBits,
+      enableStats = enableStats
+    )
   )
 
   decompressor.io.command <> io.command

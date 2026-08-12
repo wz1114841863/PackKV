@@ -112,7 +112,10 @@ softmax rather than normalizing each 16-token pack independently. It buffers
 scaled logits in synchronous memory, finds the global maximum, evaluates a
 Q16 `exp(x-max)` LUT at 1/16 steps over `[-8, 0]`, accumulates one denominator,
 and normalizes through one shared Q32 reciprocal followed by 16 parallel
-multipliers. The output is an independently backpressured Q0.15 weight packet.
+multipliers. Maximum and exponent-sum reductions are balanced four-level
+trees; the exact reciprocal uses a 33-cycle radix-2 divider instead of a wide
+single-cycle `/` path. The output is an independently backpressured Q0.15
+weight packet.
 `QkScaleSoftmaxPipeline` composes the scaler and softmax stages.
 
 `VPacketBuffer` validates and stores the incoming pack-major/feature-major Q6
@@ -173,8 +176,18 @@ and a DC logic-only variant:
 bash ../scripts/generate_attention_rtl.sh
 ```
 
-The default point is `maximumTokens=1024`, `maximumFeatureDim=128`. Override it
-with `MAXIMUM_TOKENS` and `MAXIMUM_FEATURE_DIM`. In `dc_logic`, the five
+The default point is `maximumTokens=1024`, `maximumFeatureDim=128`, with four
+physical attention-scale lanes. Override these with `MAXIMUM_TOKENS`,
+`MAXIMUM_FEATURE_DIM`, `SCALE_LANES`, and `ENABLE_STATS`. `ENABLE_STATS=false`
+keeps the progress ports but ties them to zero, allowing synthesis to remove
+the counter registers and increment logic. Generate matched stats-on/off RTL
+for area ablation with:
+
+```bash
+bash ../scripts/generate_stats_ablation_rtl.sh
+```
+
+Each variant has its own manifest and output directory. In `dc_logic`, the five
 architectural synchronous memories are replaced by port-compatible, bodyless
 SystemVerilog stubs marked `syn_black_box`; no `reg Memory[...]` implementation
 is retained. `memory_modules.tcl` provides the mandatory DC instance audit and

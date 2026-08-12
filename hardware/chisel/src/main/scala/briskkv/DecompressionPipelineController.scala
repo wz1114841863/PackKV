@@ -59,7 +59,8 @@ class DecompressionPipelineController(
   outputBits: Int = 18,
   countBits: Int = 32,
   tagBits: Int = 16,
-  useBufferedMetadata: Boolean = true
+  useBufferedMetadata: Boolean = true,
+  enableStats: Boolean = true
 ) extends Module {
   require(packTokens > 0 && isPow2(packTokens))
   require(blockTokens >= packTokens && isPow2(blockTokens))
@@ -89,7 +90,8 @@ class DecompressionPipelineController(
       packTokens = packTokens,
       outputBits = outputBits,
       countBits = countBits,
-      useBufferedMetadata = useBufferedMetadata
+      useBufferedMetadata = useBufferedMetadata,
+      enableStats = enableStats
     )
   )
 
@@ -134,7 +136,11 @@ class DecompressionPipelineController(
   io.result.bits.packCount := packCountReg
   io.result.bits.blockCount := blockCountReg
   io.result.bits.descriptorCount := commandReg.descriptorCount
-  io.result.bits.stats := resultStats
+  if (enableStats) {
+    io.result.bits.stats := resultStats
+  } else {
+    io.result.bits.stats := 0.U.asTypeOf(new DequantizerPerformanceStats)
+  }
 
   val commandFire = io.command.valid && io.command.ready
   val outputFire = io.out.valid && io.out.ready
@@ -173,7 +179,9 @@ class DecompressionPipelineController(
         completedPacks := 0.U
         completedBlocks := 0.U
         resultError := !commandValid
-        resultStats := 0.U.asTypeOf(new DequantizerPerformanceStats)
+        if (enableStats) {
+          resultStats := 0.U.asTypeOf(new DequantizerPerformanceStats)
+        }
         state := Mux(
           commandValid,
           ControllerState.launch,
@@ -217,7 +225,9 @@ class DecompressionPipelineController(
         resultError := engine.io.error ||
           completedValues =/= commandReg.tokenCount * commandReg.featureDim ||
           completedPacks =/= packCountReg || completedBlocks =/= blockCountReg
-        resultStats := engine.io.stats
+        if (enableStats) {
+          resultStats := engine.io.stats
+        }
         state := ControllerState.response
       }
     }

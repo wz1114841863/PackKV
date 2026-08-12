@@ -58,7 +58,8 @@ class BriskKvDecompressQkTop(
   tagBits: Int = 16,
   maximumFeatureDim: Int = 256,
   maximumTokens: Int = 16384,
-  useBufferedMetadata: Boolean = true
+  useBufferedMetadata: Boolean = true,
+  enableStats: Boolean = true
 ) extends Module {
   require(maximumTokens >= BriskKvFormatV0.params.packTokens)
   private val params = BriskKvFormatV0.params
@@ -80,7 +81,8 @@ class BriskKvDecompressQkTop(
       outputBits = outputBits,
       countBits = countBits,
       tagBits = tagBits,
-      useBufferedMetadata = useBufferedMetadata
+      useBufferedMetadata = useBufferedMetadata,
+      enableStats = enableStats
     )
   )
   val qk = Module(
@@ -90,7 +92,8 @@ class BriskKvDecompressQkTop(
       packTokens = params.packTokens,
       blockTokens = params.blockTokens,
       maximumFeatureDim = maximumFeatureDim,
-      countBits = countBits
+      countBits = countBits,
+      enableStats = enableStats
     )
   )
 

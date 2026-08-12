@@ -53,7 +53,8 @@ class AttentionFeaturePacketizer(
   valueBits: Int = 18,
   packTokens: Int = BriskKvFormatV0.params.packTokens,
   blockTokens: Int = BriskKvFormatV0.params.blockTokens,
-  countBits: Int = 32
+  countBits: Int = 32,
+  enableStats: Boolean = true
 ) extends Module {
   require(packTokens > 0 && isPow2(packTokens))
   require(blockTokens >= packTokens && blockTokens % packTokens == 0)
@@ -103,9 +104,9 @@ class AttentionFeaturePacketizer(
   io.busy := active || packetValid
   io.done := doneReg
   io.error := errorReg
-  io.stats.inputValues := inputValues
-  io.stats.outputPackets := outputPackets
-  io.stats.downstreamStallCycles := downstreamStallCycles
+  io.stats.inputValues := Mux(enableStats.B, inputValues, 0.U)
+  io.stats.outputPackets := Mux(enableStats.B, outputPackets, 0.U)
+  io.stats.downstreamStallCycles := Mux(enableStats.B, downstreamStallCycles, 0.U)
   doneReg := false.B
 
   io.out.valid := packetValid

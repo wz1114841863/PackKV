@@ -72,7 +72,8 @@ class SoftmaxVAccumulator(
   blockTokens: Int = BriskKvFormatV0.params.blockTokens,
   maximumFeatureDim: Int = 256,
   maximumTokens: Int = 16384,
-  countBits: Int = 32
+  countBits: Int = 32,
+  enableStats: Boolean = true
 ) extends Module {
   require(valueBits >= 2 && weightBits > weightFractionalBits)
   require(valueFractionalBits > 0 && weightFractionalBits > 0)
@@ -141,15 +142,15 @@ class SoftmaxVAccumulator(
   io.busy := state =/= sIdle
   io.done := doneReg
   io.error := errorReg
-  io.stats.activeCycles := activeCycles
-  io.stats.loadedWeightPackets := loadedWeightPackets
-  io.stats.vReadRequests := vReadRequests
-  io.stats.vReadResponses := vReadResponses
-  io.stats.outputFeatures := outputFeatures
-  io.stats.macOperations := macOperations
-  io.stats.vLoadWaitCycles := vLoadWaitCycles
-  io.stats.vResponseWaitCycles := vResponseWaitCycles
-  io.stats.downstreamStallCycles := downstreamStallCycles
+  io.stats.activeCycles := Mux(enableStats.B, activeCycles, 0.U)
+  io.stats.loadedWeightPackets := Mux(enableStats.B, loadedWeightPackets, 0.U)
+  io.stats.vReadRequests := Mux(enableStats.B, vReadRequests, 0.U)
+  io.stats.vReadResponses := Mux(enableStats.B, vReadResponses, 0.U)
+  io.stats.outputFeatures := Mux(enableStats.B, outputFeatures, 0.U)
+  io.stats.macOperations := Mux(enableStats.B, macOperations, 0.U)
+  io.stats.vLoadWaitCycles := Mux(enableStats.B, vLoadWaitCycles, 0.U)
+  io.stats.vResponseWaitCycles := Mux(enableStats.B, vResponseWaitCycles, 0.U)
+  io.stats.downstreamStallCycles := Mux(enableStats.B, downstreamStallCycles, 0.U)
 
   io.weightIn.ready := state === sLoadWeights
   io.vReadRequest.valid := state === sReadRequest

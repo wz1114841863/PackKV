@@ -75,7 +75,8 @@ class StreamingSoftmax(
   packTokens: Int = BriskKvFormatV0.params.packTokens,
   blockTokens: Int = BriskKvFormatV0.params.blockTokens,
   maximumTokens: Int = 16384,
-  countBits: Int = 32
+  countBits: Int = 32,
+  enableStats: Boolean = true
 ) extends Module {
   require(logitBits >= 2 && logitFractionalBits > expStepFractionalBits)
   require(weightBits > weightFractionalBits)
@@ -95,6 +96,31 @@ class StreamingSoftmax(
   private val expBits = exponentFractionalBits + 1
   private val sumBits = exponentFractionalBits + log2Ceil(maximumTokens + 1) + 1
   private val normalizationShift = reciprocalFractionalBits - weightFractionalBits
+  private val reciprocalBits = reciprocalFractionalBits + 1
+
+  private def balancedMaximum(values: Seq[SInt]): SInt = {
+    require(values.nonEmpty)
+    if (values.length == 1) values.head
+    else {
+      val nextLevel = values.grouped(2).map {
+        case Seq(left, right) => Mux(left > right, left, right)
+        case Seq(single) => single
+      }.toSeq
+      balancedMaximum(nextLevel)
+    }
+  }
+
+  private def balancedSum(values: Seq[UInt]): UInt = {
+    require(values.nonEmpty)
+    if (values.length == 1) values.head
+    else {
+      val nextLevel = values.grouped(2).map {
+        case Seq(left, right) => left +& right
+        case Seq(single) => single
+      }.toSeq
+      balancedSum(nextLevel)
+    }
+  }
 
   val io = IO(
     new StreamingSoftmaxIO(
@@ -122,17 +148,21 @@ class StreamingSoftmax(
     maximumPacks,
     new StoredExponentPacket(expBits, packTokens)
   )
+  val reciprocalDivider = Module(
+    new IterativeUnsignedDivider(reciprocalBits, sumBits)
+  )
 
   val Seq(
     sIdle,
     sCollect,
     sExpRead,
     sExpCompute,
-    sReciprocal,
+    sReciprocalStart,
+    sReciprocalWait,
     sOutputRead,
     sOutputCompute,
     sOutputHold
-  ) = Enum(8)
+  ) = Enum(9)
   val state = RegInit(sIdle)
   val doneReg = RegInit(false.B)
   val errorReg = RegInit(false.B)
@@ -142,7 +172,7 @@ class StreamingSoftmax(
   val passIndex = RegInit(0.U(countBits.W))
   val globalMaximum = RegInit((-(BigInt(1) << (logitBits - 1))).S(logitBits.W))
   val exponentSum = RegInit(0.U(sumBits.W))
-  val reciprocal = RegInit(0.U((reciprocalFractionalBits + 1).W))
+  val reciprocal = RegInit(0.U(reciprocalBits.W))
   val outputPacket = Reg(
     new AttentionWeightPacket(weightBits, packTokens, countBits)
   )
@@ -160,12 +190,12 @@ class StreamingSoftmax(
   io.error := errorReg
   io.maximum := globalMaximum
   io.exponentSum := exponentSum
-  io.stats.activeCycles := activeCycles
-  io.stats.inputPackets := inputPackets
-  io.stats.exponentPackets := exponentPackets
-  io.stats.outputPackets := outputPackets
-  io.stats.downstreamStallCycles := downstreamStallCycles
-  io.stats.maximumUpdates := maximumUpdates
+  io.stats.activeCycles := Mux(enableStats.B, activeCycles, 0.U)
+  io.stats.inputPackets := Mux(enableStats.B, inputPackets, 0.U)
+  io.stats.exponentPackets := Mux(enableStats.B, exponentPackets, 0.U)
+  io.stats.outputPackets := Mux(enableStats.B, outputPackets, 0.U)
+  io.stats.downstreamStallCycles := Mux(enableStats.B, downstreamStallCycles, 0.U)
+  io.stats.maximumUpdates := Mux(enableStats.B, maximumUpdates, 0.U)
 
   io.in.ready := state === sCollect
   io.out.valid := state === sOutputHold
@@ -184,6 +214,12 @@ class StreamingSoftmax(
 
   val inputFire = io.in.valid && io.in.ready
   val outputFire = io.out.valid && io.out.ready
+  val reciprocalNumerator = Wire(UInt(reciprocalBits.W))
+  reciprocalNumerator :=
+    (BigInt(1) << reciprocalFractionalBits).U + (exponentSum >> 1)
+  reciprocalDivider.io.start := state === sReciprocalStart
+  reciprocalDivider.io.numerator := reciprocalNumerator
+  reciprocalDivider.io.denominator := exponentSum
 
   when(io.start && state === sIdle) {
     val parametersValid = io.tokenCount =/= 0.U &&
@@ -250,9 +286,7 @@ class StreamingSoftmax(
               (-(BigInt(1) << (logitBits - 1))).S(logitBits.W)
             )
           }
-          val packetMaximum = candidates.reduce { (left, right) =>
-            Mux(left > right, left, right)
-          }
+          val packetMaximum = balancedMaximum(candidates.toSeq)
           when(packetMaximum > globalMaximum) {
             globalMaximum := packetMaximum
             maximumUpdates := maximumUpdates + 1.U
@@ -293,28 +327,30 @@ class StreamingSoftmax(
         expPacket.values := laneValues
         expPacket.validTokens := logitReadData.validTokens
         exponentMemory.write(passIndex(packAddressBits - 1, 0), expPacket)
-        val packetSum = laneValues.reduce(_ +& _)
+        val packetSum = balancedSum(laneValues.toSeq)
         exponentSum := exponentSum + packetSum
         exponentPackets := exponentPackets + 1.U
         when(passIndex === packCountReg - 1.U) {
-          state := sReciprocal
+          state := sReciprocalStart
         }.otherwise {
           passIndex := passIndex + 1.U
           state := sExpRead
         }
       }
 
-      is(sReciprocal) {
-        val numerator = (BigInt(1) << reciprocalFractionalBits).U
-        val roundedNumerator = numerator + (exponentSum >> 1)
-        when(exponentSum === 0.U) {
-          reciprocal := 0.U
-          errorReg := true.B
-        }.otherwise {
-          reciprocal := roundedNumerator / exponentSum
+      is(sReciprocalStart) {
+        state := sReciprocalWait
+      }
+
+      is(sReciprocalWait) {
+        when(reciprocalDivider.io.done) {
+          reciprocal := reciprocalDivider.io.quotient
+          when(reciprocalDivider.io.error) {
+            errorReg := true.B
+          }
+          passIndex := 0.U
+          state := sOutputRead
         }
-        passIndex := 0.U
-        state := sOutputRead
       }
 
       is(sOutputRead) {
