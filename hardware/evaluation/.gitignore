@@ -1,0 +1,4 @@
+results/
+mem/self_gen/
+mem/__pycache__/
+synthesis/__pycache__/

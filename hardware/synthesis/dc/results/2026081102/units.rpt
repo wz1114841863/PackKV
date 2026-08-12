@@ -1,0 +1,16 @@
+************************************
+Report : units
+Design : BriskKvAttentionTop
+Version: O-2018.06-SP1
+Date   : Tue Aug 11 12:18:38 2026
+
+************************************
+Units
+------------------------------------
+Time_unit            : 1.0e-09 Second(ns)
+Capacitive_load_unit : 1.0e-12 Farad(pF)
+Resistance_unit      : 1000 Ohm(kOhm)
+Voltage_unit         : 1 Volt
+Power_unit           : N/A
+Current_unit         : 1.0e-03 Amp(mA)
+1

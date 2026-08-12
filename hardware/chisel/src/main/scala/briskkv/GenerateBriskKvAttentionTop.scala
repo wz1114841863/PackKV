@@ -21,6 +21,28 @@ object GenerateBriskKvAttentionTop {
       |  --mode <full|dc_logic>       retain inferred memories or externalize them
       |""".stripMargin
 
+  private def addressBits(depth: Int): Int =
+    math.max(1, 32 - Integer.numberOfLeadingZeros(depth - 1))
+
+  private def memoryBlackBoxStub(module: String, depth: Int, width: Int): String = {
+    val addrWidth = addressBits(depth)
+    s"""// BRISK-KV DC logic-only SRAM stub.
+       |// The behavioral SyncReadMem implementation is intentionally absent.
+       |(* black_box = 1, syn_black_box = 1 *)
+       |module $module(
+       |  input  [${addrWidth - 1}:0] R0_addr,
+       |  input                  R0_en,
+       |                         R0_clk,
+       |  output [${width - 1}:0] R0_data,
+       |  input  [${addrWidth - 1}:0] W0_addr,
+       |  input                  W0_en,
+       |                         W0_clk,
+       |  input  [${width - 1}:0] W0_data
+       |);
+       |endmodule
+       |""".stripMargin
+  }
+
   private def parse(args: List[String], config: Config = Config()): Config =
     args match {
       case Nil => config
@@ -60,6 +82,8 @@ object GenerateBriskKvAttentionTop {
       firtoolOpts = firtoolOptions
     )
 
+    val memoryImplementation =
+      if (config.mode == "dc_logic") "bodyless_blackbox_stubs" else "behavioral_sync_read_mem"
     val manifest =
       s"""{
          |  "top": "BriskKvAttentionTop",
@@ -72,7 +96,8 @@ object GenerateBriskKvAttentionTop {
          |  "qk_format": "signed Q12 / 44 bits",
          |  "softmax_format": "unsigned Q0.15 / 16 bits",
          |  "av_format": "signed Q21 / 50 bits",
-         |  "output_format": "signed Q6 / 18 bits"
+         |  "output_format": "signed Q6 / 18 bits",
+         |  "memory_implementation": "$memoryImplementation"
          |}
          |""".stripMargin
     Files.writeString(
@@ -94,10 +119,22 @@ object GenerateBriskKvAttentionTop {
         ),
         (s"weightMemory_${packCount}x328", "softmax_weights", packCount, 328)
       )
+      memoryRows.foreach { case (module, _, depth, width) =>
+        val modulePath = targetDir.resolve(s"$module.sv")
+        require(
+          Files.isRegularFile(modulePath),
+          s"Expected split memory module was not generated: $modulePath"
+        )
+        Files.writeString(
+          modulePath,
+          memoryBlackBoxStub(module, depth, width),
+          StandardCharsets.UTF_8
+        )
+      }
       val memoryCsv =
-        "module,purpose,depth,width_bits,instances,total_bits\n" +
+        "module,purpose,depth,width_bits,instances,total_bits,read_ports,write_ports,readwrite_ports,access_mode\n" +
           memoryRows.map { case (module, purpose, depth, width) =>
-            s"$module,$purpose,$depth,$width,1,${depth.toLong * width}"
+            s"$module,$purpose,$depth,$width,1,${depth.toLong * width},1,1,0,parallel_width"
           }.mkString("\n") + "\n"
       Files.writeString(
         targetDir.resolve("memories.csv"),

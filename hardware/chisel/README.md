@@ -141,6 +141,13 @@ result cannot complete until the final Q6 attention feature and bucket record
 have drained. Commands beyond the shared feature/token capacity are rejected
 without consuming query or compressed streams.
 
+The unified-top regression runs the non-identity directed vector, the all-zero
+dynamic-width vector, and the two-block deterministic random vector with
+randomized backpressure. It checks the final Q6 result and audits exact
+packet/MAC counts at every compute stage. The zero-width case has empty payload
+streams while retaining the fixed Format v0 pack-minimum widths (K=6, V=4), so
+it guards against both dual-stream stalls and stream/profile width mismatches.
+
 ## Source layout
 
 ```text
@@ -164,7 +171,9 @@ bash ../scripts/generate_attention_rtl.sh
 
 The default point is `maximumTokens=1024`, `maximumFeatureDim=128`. Override it
 with `MAXIMUM_TOKENS` and `MAXIMUM_FEATURE_DIM`. In `dc_logic`, the five
-architectural synchronous memories remain separate modules and
-`memory_modules.tcl` marks them as black boxes for DC. `memories.csv` records
-their depth, width, instance count, and total bits for CACTI. The 2-entry Query
-response queue is deliberately retained as synthesized control logic.
+architectural synchronous memories are replaced by port-compatible, bodyless
+SystemVerilog stubs marked `syn_black_box`; no `reg Memory[...]` implementation
+is retained. `memory_modules.tcl` provides the mandatory DC instance audit and
+`memories.csv` records depth, width, ports, access mode, instance count, and
+total bits for CACTI. The 2-entry Query response queue is deliberately retained
+as synthesized control logic. Use `full`, not `dc_logic`, for RTL simulation.

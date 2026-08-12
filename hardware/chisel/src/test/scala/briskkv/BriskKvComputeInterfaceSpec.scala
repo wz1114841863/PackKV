@@ -13,7 +13,7 @@ class BriskKvComputeInterfaceSpec
     with ChiselSim {
   "BRISK-KV compute interface" - {
     "must expose aligned K/V feature packets and delay completion until drained" in {
-      val caseName = "directed_nonidentity"
+      IndexedSeq("directed_nonidentity", "directed_width0").foreach { caseName =>
       val tokenCount = 64
       val featureDim = 4
       val packTokens = 16
@@ -184,6 +184,7 @@ class BriskKvComputeInterfaceSpec
         vPackets mustBe descriptorCount
         bucketRecords mustBe 1
         streams.indices.foreach { index => indices(index) mustBe streams(index).length }
+      }
       }
     }
   }

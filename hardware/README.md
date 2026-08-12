@@ -85,3 +85,29 @@ memory inventory. Design Compiler must not be assumed to ignore inferred
 storage automatically: the supplied DC script explicitly black-boxes the five
 architectural SRAM modules before elaborating the top. Logic PPA and CACTI
 memory PPA must be reported separately and then combined with a stated method.
+
+Evaluate that exact inventory with the bundled CACTI wrapper:
+
+```bash
+bash hardware/scripts/evaluate_cacti.sh
+```
+
+The evaluator width-banks wide RTL words, preserves CACTI padding, and reports
+area, leakage, per-access energy, latency, and initiation interval. See
+[`evaluation/mem/README.md`](evaluation/mem/README.md) for assumptions and
+parameter overrides. Dynamic workload energy still requires read/write access
+counts; summing the per-access numbers alone is not an end-to-end energy result.
+
+Before accepting a remote DC run as the logic baseline, validate its completion
+marker, mandatory reports, and pre/post-compile SRAM instance counts with:
+
+```bash
+python3 hardware/evaluation/synthesis/dc_baseline_report.py \
+  --report-dir <run>/outputs \
+  --dc-log <run>/dc.log \
+  --memory-modules hardware/rtl/generated/briskkv_attention_t1024_f128/dc_logic/memory_modules.tcl \
+  --output <run>/dc_baseline.json
+```
+
+The checker exits non-zero for an invalid baseline and leaves report metrics as
+`null` when the installed DC version uses an unrecognized label.

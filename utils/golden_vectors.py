@@ -34,6 +34,8 @@ DEFAULT_BUCKET_COUNT = 4
 K_ZERO_POINT_BITS = 7
 V_ZERO_POINT_BITS = 5
 EXPONENT_BITS = 4
+K_CODE_VALUE_BITS = 6
+V_CODE_VALUE_BITS = 4
 
 
 @dataclass(frozen=True)
@@ -195,7 +197,14 @@ def build_case_artifacts(case: GoldenVectorCase) -> Tuple[dict, Dict[str, bytes]
     repacked_blocks = torch.cat(
         [_tensor_to_blocks(k_q_storage), _tensor_to_blocks(v_q_storage)], dim=2
     )
-    k_stream, v_stream = bit_pack_encode(repacked_blocks, DEFAULT_PACK_SIZE)
+    # Format v0 hardware has fixed K/V minimum-field widths.  Do not shrink
+    # these fields for low-dynamic-range cases such as an all-constant pack.
+    k_stream, v_stream = bit_pack_encode(
+        repacked_blocks,
+        DEFAULT_PACK_SIZE,
+        k_code_value_bits=K_CODE_VALUE_BITS,
+        v_code_value_bits=V_CODE_VALUE_BITS,
+    )
     bucket_stream = encode_bucket_metadata(bucket_metadata)
     k_metadata_stream = verify_compact_quant_metadata_roundtrip(
         k_zero_storage,

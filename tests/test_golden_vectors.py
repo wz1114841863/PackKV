@@ -21,6 +21,22 @@ class GoldenVectorExportTest(unittest.TestCase):
         width0_descriptor, width0_files = artifacts["directed_width0"]
         self.assertEqual(width0_files["k_payload.bin"], b"")
         self.assertEqual(width0_files["v_payload.bin"], b"")
+        self.assertEqual(
+            width0_descriptor["bitpack"]["k"]["code_value_bits"], 6
+        )
+        self.assertEqual(
+            width0_descriptor["bitpack"]["v"]["code_value_bits"], 4
+        )
+        self.assertEqual(
+            width0_descriptor["bitpack"]["k"]["encode_length_field_bits"], 3
+        )
+        self.assertEqual(
+            width0_descriptor["bitpack"]["v"]["encode_length_field_bits"], 3
+        )
+        self.assertEqual(len(width0_files["k_pack_mins.bin"]), 12)
+        self.assertEqual(len(width0_files["v_pack_mins.bin"]), 8)
+        self.assertEqual(len(width0_files["k_encode_lengths.bin"]), 6)
+        self.assertEqual(len(width0_files["v_encode_lengths.bin"]), 6)
         self.assertTrue(
             width0_descriptor["validation"][
                 "joint_q_metadata_dequant_roundtrip"

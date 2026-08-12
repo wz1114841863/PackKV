@@ -1,0 +1,81 @@
+ 
+****************************************
+Report : power
+        -analysis_effort low
+Design : BriskKvAttentionTop
+Version: O-2018.06-SP1
+Date   : Tue Aug 11 12:18:51 2026
+****************************************
+
+
+Library(s) Used:
+
+    tcbn28hpcplusbwp12t30p140lvtssg0p81v125c (File: /home/yaz80/wz_project/dc_project/pdk/TSMC28/tcbn28hpcplusbwp12t30p140lvtssg0p81v125c.db)
+
+
+Operating Conditions: ssg0p81v125c   Library: tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+Wire Load Model Mode: segmented
+
+Design        Wire Load Model            Library
+------------------------------------------------
+BriskKvAttentionTop    ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+AvOutputQuantizer      ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+AttentionScaleUnit     ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+StreamingSoftmax       ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+SoftmaxVAccumulator    ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+DualKvDecompressionController
+                       ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+AttentionFeaturePacketizer_1
+                       ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+QueryReplayBuffer      ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+QkDotProductAccumulator
+                       ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+DecompressionPipelineController
+                       ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+DecompressionPipelineController_1
+                       ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+KvStreamDequantizer    ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+KvStreamDequantizer_1  ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+DynamicBitUnpacker     ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+BufferedPackMetadataDequantizer
+                       ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+DynamicBitUnpacker_1   ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+BufferedPackMetadataDequantizer_1
+                       ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+PackDescriptorDecoder  ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+PackDescriptorDecoder_1
+                       ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+AttentionFeaturePacketizer_0
+                       ZeroWireload      tcbn28hpcplusbwp12t30p140lvtssg0p81v125c
+
+
+Global Operating Voltage = 0.81 
+Power-specific unit information :
+    Voltage Units = 1V
+    Capacitance Units = 1.000000pf
+    Time Units = 1ns
+    Dynamic Power Units = 1mW    (derived from V,C,T units)
+    Leakage Power Units = 1nW
+
+
+  Cell Internal Power  =  26.6806 mW   (96%)
+  Net Switching Power  =   1.0107 mW    (4%)
+                         ---------
+Total Dynamic Power    =  27.6913 mW  (100%)
+
+Cell Leakage Power     =  66.6554 mW
+
+
+                 Internal         Switching           Leakage            Total
+Power Group      Power            Power               Power              Power   (   %    )  Attrs
+--------------------------------------------------------------------------------------------------
+io_pad             0.0000            0.0000            0.0000            0.0000  (   0.00%)
+memory             0.0000            0.0000            0.0000            0.0000  (   0.00%)
+black_box          0.0000        4.9791e-02            0.0000        4.9791e-02  (   0.05%)
+clock_network      0.6765            0.5714        6.8066e+06            8.0545  (   8.54%)
+register          25.3664        1.3048e-03        1.2882e+07           38.2501  (  40.54%)
+sequential         0.0000            0.0000            0.0000            0.0000  (   0.00%)
+combinational      0.6412            0.3882        4.6966e+07           47.9958  (  50.87%)
+--------------------------------------------------------------------------------------------------
+Total             26.6841 mW         1.0107 mW     6.6655e+07 nW        94.3502 mW
+1

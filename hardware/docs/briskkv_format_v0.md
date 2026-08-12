@@ -167,8 +167,10 @@ Each cache produces three independently byte-aligned components:
 ### 6.1 `pack_mins`
 
 Iteration order is pack-major then feature-major. Every minimum uses the
-stream-local `code_value_bits` descriptor. Values are unsigned when
-`signed_values=false`; otherwise they use two's complement.
+Format v0 profile width: K uses 6 bits and V uses 4 bits. The field width must
+not shrink when the values in a particular layer or test vector happen to fit
+in fewer bits. Values are unsigned when `signed_values=false`; otherwise they
+use two's complement.
 
 ### 6.2 `encode_lengths`
 
@@ -228,7 +230,7 @@ token_count
 feature_dim
 pack_len = 16
 padded_token_count
-code_value_bits for K and V
+code_value_bits for K and V (fixed to 6 and 4 by the Format v0 profile)
 encode_length_field_bits for K and V
 signed_values for K and V
 byte length of every named component stream
@@ -597,8 +599,8 @@ Completed in the Python reference model:
   internal QK/Softmax/AV streams, bucket audit output, and a final tagged
   completion/error barrier.
 - parameterized split-SystemVerilog generation for the unified top, including
-  a 1024-token/128-feature baseline, explicit architectural-SRAM black-box list,
-  and CACTI-oriented depth/width/bit inventory.
+  a 1024-token/128-feature baseline, bodyless architectural-SRAM stubs with
+  pre/post-DC black-box audits, and a CACTI-oriented depth/width/port inventory.
 
 Not yet completed:
 

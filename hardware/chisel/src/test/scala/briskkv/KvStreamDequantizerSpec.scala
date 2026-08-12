@@ -208,6 +208,11 @@ class KvStreamDequantizerSpec extends AnyFreeSpec with Matchers with ChiselSim {
       runGolden("random_seed_20260809", "v", randomBackpressure = true)
     }
 
+    "must reconstruct zero-width K/V vectors under independent backpressure" in {
+      runGolden("directed_width0", "k", randomBackpressure = true)
+      runGolden("directed_width0", "v", randomBackpressure = true)
+    }
+
     "must discard repeated padding tokens from a partial final pack" in {
       simulate(
         new PackMetadataDequantizer(codeValueBits = 6, zeroPointBits = 7)

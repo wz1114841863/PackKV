@@ -1,0 +1,7 @@
+BRISK-KV architectural SRAM black-box audit
+queryMemory_128x18 instances=1 source=syn_black_box
+logitMemory_64x709 instances=1 source=syn_black_box
+exponentMemory_64x277 instances=1 source=syn_black_box
+memory_8192x424 instances=1 source=syn_black_box
+weightMemory_64x328 instances=1 source=syn_black_box
+total_instances=5

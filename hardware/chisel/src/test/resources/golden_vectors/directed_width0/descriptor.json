@@ -1,7 +1,7 @@
 {
   "bitpack": {
     "k": {
-      "code_value_bits": 5,
+      "code_value_bits": 6,
       "encode_length_field_bits": 3,
       "feature_dim": 4,
       "pack_len": 16,
@@ -10,8 +10,8 @@
       "token_count": 64
     },
     "v": {
-      "code_value_bits": 3,
-      "encode_length_field_bits": 2,
+      "code_value_bits": 4,
+      "encode_length_field_bits": 3,
       "feature_dim": 4,
       "pack_len": 16,
       "padded_token_count": 0,
@@ -154,10 +154,10 @@
       "sha256": "4d12332c7f14cdaafa2b617b50feec749250000a8d75662c72c8931374176fca"
     },
     "k_pack_mins.bin": {
-      "bytes": 10,
+      "bytes": 12,
       "file": "k_pack_mins.bin",
       "role": "decoder_input",
-      "sha256": "3b7a826da4d8a9d279ce4249821edefd934765c25e13187e0aeed5ddec264fe4"
+      "sha256": "7f6d3a7a715cfd5b9485a7b21b188b00e934194b5ec87ca43bcf67860da6a88e"
     },
     "k_payload.bin": {
       "bytes": 0,
@@ -178,10 +178,10 @@
       "sha256": "92936bbc1e5393c0a09bd3d700831d8440acbe9f483a8ee0422794ac42178e6c"
     },
     "v_encode_lengths.bin": {
-      "bytes": 4,
+      "bytes": 6,
       "file": "v_encode_lengths.bin",
       "role": "decoder_input",
-      "sha256": "df3f619804a92fdb4057192dc43dd748ea778adc52bc498ce80524c014b81119"
+      "sha256": "b0f66adc83641586656866813fd9dd0b8ebb63796075661ba45d1aa8089e1d44"
     },
     "v_exponents.bin": {
       "bytes": 32,
@@ -190,10 +190,10 @@
       "sha256": "af9613760f72635fbdb44a5a0a63c39f12af30f950a6ee5c971be188e89c4051"
     },
     "v_pack_mins.bin": {
-      "bytes": 6,
+      "bytes": 8,
       "file": "v_pack_mins.bin",
       "role": "decoder_input",
-      "sha256": "0678dc7cce2eb2cf65e9b382874d8a9eb9933f4e27d37e6676995162ac6570df"
+      "sha256": "a44ba123189855990795e3260a64b34cdae6b29bf1c941818a34cba8bbc45575"
     },
     "v_payload.bin": {
       "bytes": 0,

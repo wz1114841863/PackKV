@@ -1685,6 +1685,7 @@ def _encode_single_cache_bitstream(
     values: torch.Tensor,
     pack_len: int,
     padded_token_count: int,
+    code_value_bits: Optional[int] = None,
 ) -> BitPackedCacheStream:
     """真实编码一个 [token, feature] 整数量化 Cache."""
     if values.ndim != 2 or values.shape[0] % pack_len != 0:
@@ -1702,7 +1703,14 @@ def _encode_single_cache_bitstream(
 
     global_min = int(integer_values.min().item())
     global_max = int(integer_values.max().item())
-    code_value_bits = _integer_storage_bits(global_min, global_max)
+    required_code_value_bits = _integer_storage_bits(global_min, global_max)
+    if code_value_bits is None:
+        code_value_bits = required_code_value_bits
+    elif code_value_bits < required_code_value_bits:
+        raise ValueError(
+            "configured code_value_bits is too small: "
+            f"requires {required_code_value_bits}, got {code_value_bits}"
+        )
     encode_length_field_bits = max(
         1, math.ceil(math.log2(code_value_bits + 1))
     )
@@ -1747,12 +1755,17 @@ def _encode_single_cache_bitstream(
 
 
 def bit_pack_encode(
-    blocks: torch.Tensor, pack_len: int
+    blocks: torch.Tensor,
+    pack_len: int,
+    k_code_value_bits: Optional[int] = None,
+    v_code_value_bits: Optional[int] = None,
 ) -> Tuple[BitPackedCacheStream, BitPackedCacheStream]:
     """把 [block, token, K+V feature] 真正编码为 K/V 字节流.
 
     padding 与 ``bit_pack_stats`` 相同：连续展平基础 block 后，仅在流末尾
-    重复最后一个 token，使 token 数可被 pack_len 整除。
+    重复最后一个 token，使 token 数可被 pack_len 整除。可选的 K/V
+    ``code_value_bits`` 用于固定硬件格式字段宽度；省略时保持软件参考模型
+    原有的按当前流整数范围取最小位宽行为。
     """
     if pack_len <= 0:
         raise ValueError("pack_len must be positive")
@@ -1770,10 +1783,16 @@ def bit_pack_encode(
         )
     return (
         _encode_single_cache_bitstream(
-            flattened[:, :half_vec_len], pack_len, padded_token_count
+            flattened[:, :half_vec_len],
+            pack_len,
+            padded_token_count,
+            k_code_value_bits,
         ),
         _encode_single_cache_bitstream(
-            flattened[:, half_vec_len:], pack_len, padded_token_count
+            flattened[:, half_vec_len:],
+            pack_len,
+            padded_token_count,
+            v_code_value_bits,
         ),
     )
 

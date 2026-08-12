@@ -1,0 +1,75 @@
+ 
+****************************************
+Report : area
+Design : BriskKvAttentionTop
+Version: O-2018.06-SP1
+Date   : Tue Aug 11 12:18:46 2026
+****************************************
+
+Library(s) Used:
+
+    tcbn28hpcplusbwp12t30p140lvtssg0p81v125c (File: /home/yaz80/wz_project/dc_project/pdk/TSMC28/tcbn28hpcplusbwp12t30p140lvtssg0p81v125c.db)
+
+Number of ports:                        19421
+Number of nets:                        231155
+Number of cells:                       195114
+Number of combinational cells:         180311
+Number of sequential cells:             14784
+Number of macros/black boxes:               0
+Number of buf/inv:                      25316
+Number of references:                     208
+
+Combinational area:             176800.846432
+Buf/Inv area:                     9007.319894
+Noncombinational area:           37716.839730
+Macro/Black Box area:                0.000000
+Net Interconnect area:      undefined  (Wire load has zero net area)
+
+Total cell area:                214517.686162
+Total area:                 undefined
+
+Hierarchical area distribution
+------------------------------
+
+                                  Global cell area              Local cell area
+                                  --------------------  ------------------------------- 
+Hierarchical cell                 Absolute     Percent  Combi-       Noncombi-   Black-
+                                  Total        Total    national     national    boxes   Design
+--------------------------------  -----------  -------  -----------  ----------  ------  ---------------------------------
+BriskKvAttentionTop               214517.6862    100.0   11879.1119   2300.2560  0.0000  BriskKvAttentionTop
+decompressionQk/compute/decompressor
+                                   39987.0237     18.6    4162.8720   2504.8800  0.0000  DualKvDecompressionController
+decompressionQk/compute/decompressor/kController
+                                   16692.8159      7.8    5979.4560   1733.7600  0.0000  DecompressionPipelineController
+decompressionQk/compute/decompressor/kController/engine
+                                    8979.5999      4.2     709.9680    433.4400  0.0000  KvStreamDequantizer
+decompressionQk/compute/decompressor/kController/engine/joiner
+                                    4802.6160      2.2    2305.2960   2497.3200  0.0000  BufferedPackMetadataDequantizer
+decompressionQk/compute/decompressor/kController/engine/qDecoder
+                                    3033.5760      1.4     841.8480    597.2400  0.0000  DynamicBitUnpacker
+decompressionQk/compute/decompressor/kController/engine/qDecoder/descriptorDecoder
+                                    1594.4880      0.7     994.7280    599.7600  0.0000  PackDescriptorDecoder
+decompressionQk/compute/decompressor/vController
+                                   16626.4559      7.8    5960.6400   1734.7680  0.0000  DecompressionPipelineController_1
+decompressionQk/compute/decompressor/vController/engine
+                                    8931.0479      4.2     767.9280    433.4400  0.0000  KvStreamDequantizer_1
+decompressionQk/compute/decompressor/vController/engine/joiner
+                                    4746.1680      2.2    2248.8480   2497.3200  0.0000  BufferedPackMetadataDequantizer_1
+decompressionQk/compute/decompressor/vController/engine/qDecoder
+                                    2983.5120      1.4     833.6160    592.2000  0.0000  DynamicBitUnpacker_1
+decompressionQk/compute/decompressor/vController/engine/qDecoder/descriptorDecoder
+                                    1557.6960      0.7     960.4560    597.2400  0.0000  PackDescriptorDecoder_1
+decompressionQk/compute/kPacketizer
+                                    4095.6720      1.9    1941.0720   2154.6000  0.0000  AttentionFeaturePacketizer_1
+decompressionQk/compute/vPacketizer
+                                    4095.6720      1.9    1941.0720   2154.6000  0.0000  AttentionFeaturePacketizer_0
+decompressionQk/qk/accumulator     23203.8238     10.8   18000.0238   5203.8000  0.0000  QkDotProductAccumulator
+decompressionQk/qk/queryReplay      4116.5040      1.9    2148.2160   1968.2880  0.0000  QueryReplayBuffer
+outputQuantizer                     2973.7680      1.4    1706.2080   1267.5600  0.0000  AvOutputQuantizer
+scaleSoftmax/scaler                56686.3914     26.4   53879.1114   2807.2800  0.0000  AttentionScaleUnit
+scaleSoftmax/softmax               46263.6716     21.6   43592.3036   2671.3680  0.0000  StreamingSoftmax
+softmaxV/accumulator               18915.7919      8.8   15948.0719   2967.7200  0.0000  SoftmaxVAccumulator
+--------------------------------  -----------  -------  -----------  ----------  ------  ---------------------------------
+Total                                                   176800.8464  37716.8397  0.0000
+
+1

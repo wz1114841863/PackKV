@@ -105,11 +105,21 @@ class BriskKvAttentionTopSpec
   }
 
   "Unified BRISK-KV attention top" - {
-    "must match compressed-byte-to-Q6 attention output under backpressure" in {
-      val caseName = "directed_nonidentity"
-      val tokenCount = 64
+    "must match every compressed Golden Vector through Q6 output under backpressure" in {
+      val normalCases = IndexedSeq(
+        "directed_nonidentity",
+        "directed_width0",
+        "random_seed_20260809"
+      )
+      normalCases.foreach { caseName =>
+      val tokenCount = GoldenVectorLoader.bitpackInt(
+        caseName,
+        "k",
+        "token_count"
+      )
       val featureDim = 4
       val packCount = tokenCount / PackTokens
+      val blockCount = (tokenCount + 63) / 64
       val descriptorCount = packCount * featureDim
       val query = GoldenVectorLoader.int32LittleEndian(
         caseName,
@@ -143,12 +153,12 @@ class BriskKvAttentionTopSpec
         GoldenVectorLoader.unsigned(caseName, "v_exponents.bin"),
         GoldenVectorLoader.unsigned(caseName, "bucket_counts.bin")
       )
-      val random = new Random(0x4154544e544f50L)
+      val random = new Random(0x4154544e544f50L ^ caseName.hashCode.toLong)
 
       simulate(
         new BriskKvAttentionTop(
           maximumFeatureDim = 8,
-          maximumTokens = 64
+          maximumTokens = tokenCount
         )
       ) { dut =>
         dut.io.command.valid.poke(false.B)
@@ -217,7 +227,8 @@ class BriskKvAttentionTopSpec
         var outputFeature = 0
         var resultSeen = false
         var cycles = 0
-        while (!resultSeen && cycles < 250000) {
+        val cycleLimit = 20000
+        while (!resultSeen && cycles < cycleLimit) {
           val offerQuery = queryIndex < query.length && random.nextBoolean()
           dut.io.queryLoadIn.valid.poke(offerQuery.B)
           dut.io.queryLoadIn.bits.poke(
@@ -268,11 +279,37 @@ class BriskKvAttentionTopSpec
 
           if (dut.io.result.valid.peek().litToBoolean) {
             outputFeature mustBe featureDim
-            bucketRecords mustBe 1
+            bucketRecords mustBe blockCount
             dut.io.result.bits.tag.expect(73.U)
             dut.io.result.bits.error.expect(false.B)
             dut.io.progress.scaleSoftmax.softmax.outputPackets.expect(packCount.U)
+            dut.io.progress.decompressionQk.qk.queryReplay.loadedValues.expect(
+              featureDim.U
+            )
+            dut.io.progress.decompressionQk.qk.queryReplay.replayedValues.expect(
+              descriptorCount.U
+            )
+            dut.io.progress.decompressionQk.qk.accumulator.inputPackets.expect(
+              descriptorCount.U
+            )
+            dut.io.progress.decompressionQk.qk.accumulator.outputPackets.expect(
+              packCount.U
+            )
+            dut.io.progress.decompressionQk.qk.accumulator.macOperations.expect(
+              (tokenCount * featureDim).U
+            )
+            dut.io.progress.scaleSoftmax.scaling.inputPackets.expect(packCount.U)
+            dut.io.progress.scaleSoftmax.scaling.outputPackets.expect(packCount.U)
+            dut.io.progress.scaleSoftmax.softmax.inputPackets.expect(packCount.U)
+            dut.io.progress.scaleSoftmax.softmax.exponentPackets.expect(packCount.U)
+            dut.io.progress.softmaxV.vBuffer.loadedPackets.expect(descriptorCount.U)
+            dut.io.progress.softmaxV.vBuffer.readRequests.expect(descriptorCount.U)
+            dut.io.progress.softmaxV.vBuffer.readResponses.expect(descriptorCount.U)
+            dut.io.progress.softmaxV.accumulator.loadedWeightPackets.expect(packCount.U)
+            dut.io.progress.softmaxV.accumulator.vReadRequests.expect(descriptorCount.U)
+            dut.io.progress.softmaxV.accumulator.vReadResponses.expect(descriptorCount.U)
             dut.io.progress.softmaxV.accumulator.outputFeatures.expect(featureDim.U)
+            dut.io.progress.outputQuantizer.inputFeatures.expect(featureDim.U)
             dut.io.progress.outputQuantizer.outputFeatures.expect(featureDim.U)
             dut.io.result.ready.poke(true.B)
             dut.clock.step()
@@ -281,15 +318,43 @@ class BriskKvAttentionTopSpec
           cycles += 1
         }
 
-        resultSeen mustBe true
-        queryIndex mustBe featureDim
-        outputFeature mustBe featureDim
+        val completionState =
+          s"cycles=$cycles busy=${dut.io.busy.peek().litToBoolean} " +
+            s"queryLoaded=${dut.io.queryLoaded.peek().litToBoolean} " +
+            s"vLoaded=${dut.io.vLoaded.peek().litToBoolean} " +
+            s"buckets=$bucketRecords outputs=$outputFeature " +
+            s"streams=${streamIndices.mkString("[", ",", "]")} " +
+            s"kDeqValues=${dut.io.progress.decompressionQk.compute.decompression.k.completedValues.peek().litValue} " +
+            s"vDeqValues=${dut.io.progress.decompressionQk.compute.decompression.v.completedValues.peek().litValue} " +
+            s"kDeqDesc=${dut.io.progress.decompressionQk.compute.decompression.k.completedDescriptors.peek().litValue} " +
+            s"vDeqDesc=${dut.io.progress.decompressionQk.compute.decompression.v.completedDescriptors.peek().litValue} " +
+            s"kPktIn=${dut.io.progress.decompressionQk.compute.kPacketizer.inputValues.peek().litValue} " +
+            s"vPktIn=${dut.io.progress.decompressionQk.compute.vPacketizer.inputValues.peek().litValue} " +
+            s"kPktOut=${dut.io.progress.decompressionQk.compute.kPacketizer.outputPackets.peek().litValue} " +
+            s"vPktOut=${dut.io.progress.decompressionQk.compute.vPacketizer.outputPackets.peek().litValue} " +
+            s"qkOut=${dut.io.progress.decompressionQk.qk.accumulator.outputPackets.peek().litValue} " +
+            s"softmaxIn=${dut.io.progress.scaleSoftmax.softmax.inputPackets.peek().litValue} " +
+            s"softmaxOut=${dut.io.progress.scaleSoftmax.softmax.outputPackets.peek().litValue} " +
+            s"vPackets=${dut.io.progress.softmaxV.vBuffer.loadedPackets.peek().litValue} " +
+            s"avOut=${dut.io.progress.softmaxV.accumulator.outputFeatures.peek().litValue}"
+        withClue(s"$caseName completion ($completionState): ") {
+          resultSeen mustBe true
+        }
+        withClue(s"$caseName query input: ") {
+          queryIndex mustBe featureDim
+        }
+        withClue(s"$caseName output features: ") {
+          outputFeature mustBe featureDim
+        }
         streams.indices.foreach { index =>
-          streamIndices(index) mustBe streams(index).length
+          withClue(s"$caseName stream[$index]: ") {
+            streamIndices(index) mustBe streams(index).length
+          }
         }
         dut.io.progress.softmaxV.accumulator.macOperations.expect(
           (tokenCount * featureDim).U
         )
+      }
       }
     }
 
