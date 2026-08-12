@@ -222,9 +222,16 @@ class DecompressionPipelineController(
       }
 
       when(engine.io.done) {
+        // The engine validates every descriptor/token index and only asserts
+        // done after the final descriptor.  Reuse those structural counters
+        // here instead of rebuilding tokenCount * featureDim on the result
+        // error path.  tokensRemaining also covers a partial final pack.
+        val completionMismatch =
+          completedDescriptors =/= commandReg.descriptorCount ||
+            tokensRemaining =/= 0.U || completedPacks =/= packCountReg ||
+            completedBlocks =/= blockCountReg
         resultError := engine.io.error ||
-          completedValues =/= commandReg.tokenCount * commandReg.featureDim ||
-          completedPacks =/= packCountReg || completedBlocks =/= blockCountReg
+          completionMismatch
         if (enableStats) {
           resultStats := engine.io.stats
         }

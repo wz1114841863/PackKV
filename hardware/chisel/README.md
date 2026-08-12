@@ -43,6 +43,16 @@ decode, dynamic q unpack, metadata reuse, padding removal, and fixed-point
 dequantization. Its tests compare the final output directly with the Python
 float32 golden vectors.
 
+`KvWriteQuantizer` is the buffered write-side inverse of this contract. It
+accepts one Q12 fixed-point K or V token vector, finds the token-wise range, selects
+the nearest power-of-two scale with constant comparison thresholds, and emits
+integer-zero-point metadata followed by the q vector. K uses relative scale
+`3/100`; V uses `1/10`. Signed division uses round-to-nearest-even so fixed-point
+inputs match the PyTorch reference at exact ties. Tokens whose exponent, zero
+point, or q values exceed Format v0 are rejected before either output stream is
+made valid. The module is intentionally standalone: bucket routing and dynamic
+bit-packing remain separate write-side stages.
+
 `BufferedPackMetadataDequantizer` is the default metadata joiner in
 `KvStreamDequantizer`. It uses two 16-entry zero/exponent banks so one pack can
 be consumed while the next is prefetched. Both the single- and double-buffered
@@ -124,6 +134,9 @@ Its load-order checker advances explicit pack and feature counters instead of
 dividing the descriptor index by the runtime feature dimension. Block and
 within-block fields use shifts and bit slices because Format v0 fixes four
 packs per 64-token block; no divider or modulo operator remains in this module.
+`DecompressionPipelineController` similarly checks transaction completion from
+the validated descriptor, pack, block, and remaining-token counters. It does
+not rebuild `tokenCount * featureDim` on the result-error path.
 `SoftmaxVAccumulator` stores each Q0.15 weight pack once and replays it for
 every V feature. Each compute step uses 16 signed V multipliers and an adder
 tree; pack partial sums are accumulated into an exact signed Q21 result.

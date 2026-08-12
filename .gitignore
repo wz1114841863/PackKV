@@ -16,3 +16,5 @@ docs/
 !hardware/docs/
 !hardware/docs/**
 AGENTS.md
+
+hardware/synthesis/dc/results/*

@@ -106,6 +106,37 @@ GREEDY and MEDIAN repacking are also outside Format v0 because their current
 software paths do not expose a token permutation that can be applied to the
 per-token quantization metadata.
 
+### 4.1 Write-side fixed-point quantizer contract
+
+The synthesizable reference `KvWriteQuantizer` accepts one complete token
+vector in signed Q12 fixed-point form. Its input width is an elaboration
+parameter; the twelve fractional bits describe the upstream compute interface
+and are not a serialized field. For fixed-point input `x`, it implements the integer
+zero-point branch of `utils/compute.py:quant_ints()`:
+
+```text
+range = maximum(x) - minimum(x)
+raw_scale = range * relative_scale
+exponent = round_to_nearest_even(log2(raw_scale))
+zero_point = round_to_nearest_even(minimum(x) / 2^exponent)
+q = round_to_nearest_even(x / 2^exponent) - zero_point
+```
+
+K fixes `relative_scale = 3/100`; V fixes `relative_scale = 1/10`. The hardware
+does not synthesize a logarithm or divider: constant FP32-qualified Q12
+threshold comparators select the exponent, and power-of-two division is a
+right shift with tie-to-even rounding. Metadata is emitted before q, and both streams carry
+the same token tag. If exponent, zero point, or q does not fit the frozen field
+limits, the token is rejected and neither stream is emitted. In particular, a
+constant or sufficiently narrow fixed-point token normally selects an exponent
+below -6 and is rejected by Format v0 rather than silently clamped.
+
+This contract only proves equivalence for values already represented in Q12.
+Conversion from a model producer's
+BF16/FP16 output into that input format is outside Format v0 and requires a
+separate numerical-accuracy qualification before a complete write path can be
+claimed.
+
 ## 5. Stable four-bucket repacking
 
 K and V for one token are concatenated before repacking, so both caches always
