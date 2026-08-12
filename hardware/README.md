@@ -121,6 +121,12 @@ validation as three parameter states. `v2` adds two cycles per token while
 preserving the Format v0 quantization and byte-stream contracts; it is an
 ablation rather than the default design.
 
+`v3` starts from the v1 single-stage schedule and replaces only the exponent
+priority chain with a leading-one candidate plus one exact adjacent-threshold
+correction. It therefore has zero extra parameter cycles relative to v1. Use
+`QUANT_ARCHITECTURE=v3` to generate this optimization candidate; v1 remains
+the default until matched DC results demonstrate a PPA benefit.
+
 The write export contains `full` simulation RTL and `dc_logic` RTL with an
 automatically discovered SRAM inventory and bodyless DC black-box stubs.
 

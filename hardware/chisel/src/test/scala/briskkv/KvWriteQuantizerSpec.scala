@@ -104,6 +104,82 @@ class KvWriteQuantizerSpec
     }
   }
 
+  private def runV3BoundarySweep(
+    isKey: Boolean,
+    thresholds: IndexedSeq[Long]
+  ): Unit = {
+    val minimumExponent = -6
+    val maximumExponent = 4
+    val ranges =
+      (IndexedSeq(0L, 1L) ++ thresholds.flatMap { threshold =>
+        IndexedSeq(threshold - 1L, threshold, threshold + 1L)
+      }).distinct.sorted
+
+    simulate(
+      new KvWriteQuantizer(
+        isKey = isKey,
+        inputFractionalBits = FractionalBits,
+        maximumFeatureDim = 4,
+        enableStats = false,
+        parameterArchitecture = QuantParameterArchitecture.V3LeadingOne
+      )
+    ) { dut =>
+      dut.io.start.poke(false.B)
+      dut.io.featureDim.poke(2.U)
+      dut.io.tokenTag.poke(0.U)
+      dut.io.in.valid.poke(false.B)
+      dut.io.in.bits.fixedRaw.poke(0.S)
+      dut.io.in.bits.featureIndex.poke(0.U)
+      dut.io.in.bits.last.poke(false.B)
+      dut.io.metadataOut.ready.poke(true.B)
+      dut.io.qOut.ready.poke(true.B)
+
+      for ((range, transaction) <- ranges.zipWithIndex) {
+        val selectedExponent = thresholds.lastIndexWhere(range >= _) match {
+          case -1    => minimumExponent - 1
+          case index => minimumExponent + index
+        }
+        val validExponent = selectedExponent >= minimumExponent &&
+          selectedExponent <= maximumExponent
+
+        dut.io.featureDim.poke(2.U)
+        dut.io.tokenTag.poke(transaction.U)
+        dut.io.start.poke(true.B)
+        dut.clock.step()
+        dut.io.start.poke(false.B)
+
+        for ((value, index) <- IndexedSeq(0L, range).zipWithIndex) {
+          dut.io.in.valid.poke(true.B)
+          dut.io.in.bits.fixedRaw.poke(value.S)
+          dut.io.in.bits.featureIndex.poke(index.U)
+          dut.io.in.bits.last.poke((index == 1).B)
+          while (!dut.io.in.ready.peek().litToBoolean) dut.clock.step()
+          dut.clock.step()
+        }
+        dut.io.in.valid.poke(false.B)
+
+        var metadataCount = 0
+        var outputCount = 0
+        var cycles = 0
+        while (!dut.io.done.peek().litToBoolean && cycles < 30) {
+          if (dut.io.metadataOut.valid.peek().litToBoolean) {
+            dut.io.metadataOut.bits.exponent.expect(selectedExponent.S)
+            dut.io.metadataOut.bits.zeroPoint.expect(0.S)
+            metadataCount += 1
+          }
+          if (dut.io.qOut.valid.peek().litToBoolean) outputCount += 1
+          dut.clock.step()
+          cycles += 1
+        }
+        dut.io.done.expect(true.B)
+        dut.io.error.expect((!validExponent).B)
+        metadataCount mustBe (if (validExponent) 1 else 0)
+        outputCount mustBe (if (validExponent) 2 else 0)
+        dut.clock.step()
+      }
+    }
+  }
+
   "Format v0 write-side token quantizer" - {
     "must register exponent, zero point, and range validation in separate cycles" in {
       simulate(
@@ -187,6 +263,26 @@ class KvWriteQuantizerSpec
         expectedQ = IndexedSeq(0, 6, 8, 8, 10, 16, 24),
         randomBackpressure = true,
         parameterArchitecture = QuantParameterArchitecture.V2ThreeStage
+      )
+    }
+
+    "v3 must preserve every K exponent threshold boundary" in {
+      runV3BoundarySweep(
+        isKey = true,
+        thresholds = IndexedSeq(
+          1509, 3017, 6034, 12068, 24136, 48272,
+          96544, 193088, 386175, 772350, 1544699, 3089398
+        )
+      )
+    }
+
+    "v3 must preserve every V exponent threshold boundary" in {
+      runV3BoundarySweep(
+        isKey = false,
+        thresholds = IndexedSeq(
+          453, 906, 1811, 3621, 7241, 14482,
+          28964, 57927, 115853, 231705, 463410, 926820
+        )
       )
     }
 

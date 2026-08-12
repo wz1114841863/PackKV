@@ -34,7 +34,7 @@ object GenerateBriskKvWriteEncoderTop {
       |  --maximum-tokens <int>       maximum full-block transaction tokens (default: 1024)
       |  --input-bits <int>           signed Q12 input width (default: 24)
       |  --enable-stats <true|false>  elaborate performance counters (default: true)
-      |  --quant-architecture <v1|v2> quantizer parameter microarchitecture (default: v1)
+      |  --quant-architecture <v1|v2|v3> quantizer parameter microarchitecture (default: v1)
       |  --mode <full|dc_logic>       retain inferred memories or externalize them
       |""".stripMargin
 
@@ -181,7 +181,9 @@ object GenerateBriskKvWriteEncoderTop {
     val microarchitectureRevision =
       if (quantArchitecture == QuantParameterArchitecture.V1SingleStage)
         "write-v1-narrow-counters-router-pipeline"
-      else "write-v2-quant-parameter-pipeline"
+      else if (quantArchitecture == QuantParameterArchitecture.V2ThreeStage)
+        "write-v2-quant-parameter-pipeline"
+      else "write-v3-leading-one-exponent-selector"
     val manifest =
       s"""{
          |  "top": "BriskKvWriteEncoderTop",

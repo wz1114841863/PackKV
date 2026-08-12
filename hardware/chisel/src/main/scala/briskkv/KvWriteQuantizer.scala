@@ -22,8 +22,15 @@ object QuantParameterArchitecture {
     override val extraParameterCyclesPerToken = 2
   }
 
+  case object V3LeadingOne extends QuantParameterArchitecture {
+    override val cliName = "v3"
+    override val manifestName =
+      "leading-one-adjacent-threshold-combined-zero-range"
+    override val extraParameterCyclesPerToken = 0
+  }
+
   val supported: Seq[QuantParameterArchitecture] =
-    Seq(V1SingleStage, V2ThreeStage)
+    Seq(V1SingleStage, V2ThreeStage, V3LeadingOne)
 
   def fromCliName(name: String): QuantParameterArchitecture =
     supported.find(_.cliName == name).getOrElse(
@@ -152,28 +159,23 @@ class KvWriteQuantizer(
   // Keep the v1 state encoding identical to the 2026081205 DC baseline. v2
   // inserts two states, so its metadata and emit encodings are intentionally
   // different and remain isolated in its own generated RTL directory.
-  private val parameterStates = Enum(
-    if (parameterArchitecture == QuantParameterArchitecture.V1SingleStage) 5
-    else 7
-  )
+  private val singleStageParameters =
+    parameterArchitecture != QuantParameterArchitecture.V2ThreeStage
+  private val parameterStates = Enum(if (singleStageParameters) 5 else 7)
   private val sIdle = parameterStates(0)
   private val sCollect = parameterStates(1)
   private val sSelectExponent = parameterStates(2)
   private val sComputeZero =
-    if (parameterArchitecture == QuantParameterArchitecture.V1SingleStage)
-      parameterStates(2)
+    if (singleStageParameters) parameterStates(2)
     else parameterStates(3)
   private val sValidateRange =
-    if (parameterArchitecture == QuantParameterArchitecture.V1SingleStage)
-      parameterStates(2)
+    if (singleStageParameters) parameterStates(2)
     else parameterStates(4)
   private val sMetadata =
-    if (parameterArchitecture == QuantParameterArchitecture.V1SingleStage)
-      parameterStates(3)
+    if (singleStageParameters) parameterStates(3)
     else parameterStates(5)
   private val sEmit =
-    if (parameterArchitecture == QuantParameterArchitecture.V1SingleStage)
-      parameterStates(4)
+    if (singleStageParameters) parameterStates(4)
     else parameterStates(6)
   val state = RegInit(sIdle)
   val valueMemory = SyncReadMem(maximumFeatureDim, SInt(inputBits.W))
@@ -288,7 +290,9 @@ class KvWriteQuantizer(
         selectedExponentWide := exponent.S
       }
     }
-  } else {
+  } else if (
+    parameterArchitecture == QuantParameterArchitecture.V2ThreeStage
+  ) {
     // v2 timing experiment: parallel threshold comparisons followed by a
     // population count. Later states register zero point and range checks.
     val thresholdMatches = VecInit(
@@ -298,6 +302,58 @@ class KvWriteQuantizer(
     )
     selectedExponentWide :=
       PopCount(thresholdMatches).zext + (minimumExponent - 1).S
+  } else {
+    // v3 exploits the near-doubling of consecutive entry thresholds. The
+    // leading-one position identifies the only exponent boundary that can lie
+    // in the current power-of-two interval; one exact table lookup and one
+    // comparison then corrects the adjacent candidate. Values outside the
+    // frozen exponent table deliberately map to the same invalid sentinels as
+    // v1, preserving reject behavior at both ends.
+    val rangeWidth = rangeRaw.getWidth
+    val leadingZeroCount = PriorityEncoder(Reverse(rangeRaw))
+    val leadingOneIndex =
+      (rangeWidth - 1).U - leadingZeroCount
+    val exponentOffset = if (isKey) 16 else 14
+    val baseExponent = Wire(SInt((metadataBits + 1).W))
+    baseExponent := leadingOneIndex.zext - exponentOffset.S
+
+    val minimumTableExponent = minimumExponent
+    val maximumTableExponent = maximumExponent + 1
+    val clampedBaseExponent = Mux(
+      baseExponent < minimumTableExponent.S,
+      minimumTableExponent.S,
+      Mux(
+        baseExponent > maximumTableExponent.S,
+        maximumTableExponent.S,
+        baseExponent
+      )
+    )
+    val thresholdIndexWide =
+      (clampedBaseExponent - minimumTableExponent.S).asUInt
+    val thresholdIndexBits = log2Ceil(
+      maximumTableExponent - minimumTableExponent + 1
+    )
+    val thresholdIndex = thresholdIndexWide(thresholdIndexBits - 1, 0)
+    val thresholdTable = VecInit(
+      (minimumTableExponent to maximumTableExponent).map { exponent =>
+        entryThresholdRaw(exponent).U(rangeWidth.W)
+      }
+    )
+    val correctedExponent = Mux(
+      rangeRaw >= thresholdTable(thresholdIndex),
+      baseExponent,
+      baseExponent - 1.S
+    )
+
+    selectedExponentWide := Mux(
+      !rangeRaw.orR || baseExponent < minimumTableExponent.S,
+      (minimumExponent - 1).S,
+      Mux(
+        baseExponent > maximumTableExponent.S,
+        maximumTableExponent.S,
+        correctedExponent
+      )
+    )
   }
   val selectedExponentValid = selectedExponentWide >= minimumExponent.S &&
     selectedExponentWide <= maximumExponent.S
@@ -417,7 +473,7 @@ class KvWriteQuantizer(
       }
     }
 
-    if (parameterArchitecture == QuantParameterArchitecture.V1SingleStage) {
+    if (singleStageParameters) {
       when(state === sSelectExponent) {
         when(errorReg || !singleStageParametersValid) {
           errorReg := true.B

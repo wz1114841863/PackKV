@@ -80,12 +80,22 @@ class BriskKvEncodeDecodeRoundTripSpec
     )
 
   "Real write encoder to decompressor round trip" - {
-    "must preserve routed K/V values and bucket metadata with nonzero payloads" in {
+    for (
+      parameterArchitecture <- IndexedSeq(
+        QuantParameterArchitecture.V1SingleStage,
+        QuantParameterArchitecture.V3LeadingOne
+      )
+    ) {
+      s"${parameterArchitecture.cliName} must preserve routed K/V values and bucket metadata" in {
       val encoded = IndexedSeq.fill(11)(ArrayBuffer.empty[Int])
       val encodeRandom = new Random(0x454e435254L)
 
       simulate(
-        new BriskKvWriteEncoderTop(maximumFeatureDim = 8, enableStats = false)
+        new BriskKvWriteEncoderTop(
+          maximumFeatureDim = 8,
+          enableStats = false,
+          quantParameterArchitecture = parameterArchitecture
+        )
       ) { dut =>
         dut.io.start.poke(false.B)
         dut.io.featureDim.poke(FeatureDim.U)
@@ -334,6 +344,7 @@ class BriskKvEncodeDecodeRoundTripSpec
           indices(index) mustBe encoded(index).length
         }
       }
+    }
     }
   }
 }

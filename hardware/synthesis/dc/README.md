@@ -64,6 +64,11 @@ To reproduce the v2 quantizer-pipeline ablation instead, generate it with
 extra parameter cycles are recorded in `manifest.json`, so v1/v2 reports must
 not share one report directory.
 
+The v3 leading-one selector is generated with `QUANT_ARCHITECTURE=v3` into
+`briskkv_write_v3_t1024_f128_i24/dc_logic`. It retains the v1 single-stage
+schedule and is the next optimization candidate. Keep its DC report root
+separate from both v1 and v2.
+
 The wrapper fixes `TOP=BriskKvWriteEncoderTop`, validates the manifest and
 black-box list, and creates one report directory per requested period.
 
