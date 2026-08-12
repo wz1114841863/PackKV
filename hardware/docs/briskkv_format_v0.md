@@ -210,6 +210,15 @@ decoded values equal `minimum`.
 
 Each cache produces three independently byte-aligned components:
 
+The write-side `KvPackTransposeBuffer` collects 16 routed token vectors and
+emits one 16-lane vector per feature, thereby converting router token-major
+order into the descriptor order below. Its banks are not part of the serialized
+format. `DynamicBitPackEncoder` then computes minimum, maximum, width, and delta
+for each descriptor. K and V use separate encoder instances and separate bit
+reservoirs, so backpressure or width differences on one cache cannot change the
+other cache's byte stream. `KvPackTransposeBitPackEncoder` is the combined
+reference top for these six byte streams.
+
 ### 6.1 `pack_mins`
 
 Iteration order is pack-major then feature-major. Every minimum uses the
@@ -641,6 +650,9 @@ Completed in the Python reference model:
 - Chisel write-side K/V token join and stable `k_sum` four-bucket router,
   including independent backpressure, exact metadata association, bucket-count
   validation, and whole-block rejection on a K/V tag mismatch.
+- Chisel 16-token K/V pack transpose and dual dynamic bit-pack encoder, checked
+  byte-for-byte against an independent software-format model under six-stream
+  backpressure and with zero-width descriptors that emit empty payloads.
 - Chisel pack-descriptor decoder and runtime-width payload unpacker;
 - integrated Chisel dynamic bit unpacker verified value-for-value against all
   committed directed/random K and V vectors, including zero-width packs and

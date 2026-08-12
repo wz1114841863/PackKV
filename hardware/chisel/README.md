@@ -62,6 +62,16 @@ stored permutation. Routed K q, V q, K/V metadata, and the token tag remain one
 record. A mismatched tag, feature order, marker, or metadata field rejects the
 whole block before any bucket header or routed value becomes valid.
 
+`KvPackTransposeBuffer` converts the routed token-major q stream into one
+16-lane `(pack, feature)` descriptor. Sixteen narrow token banks provide the
+parallel lane read without a multiported SRAM. `DynamicBitPackEncoder` computes
+the descriptor minimum and width with balanced reduction trees, emits deltas in
+token order, and maintains independent LSB-first minimum, width, and payload
+reservoirs. `KvPackTransposeBitPackEncoder` applies the encoder independently to
+fixed K(6-bit) and V(4-bit) profiles and exposes all six Format v0 byte streams.
+Its backpressured tests compare every byte with an independent software-format
+model and verify that `width=0` descriptors consume no payload bytes.
+
 `BufferedPackMetadataDequantizer` is the default metadata joiner in
 `KvStreamDequantizer`. It uses two 16-entry zero/exponent banks so one pack can
 be consumed while the next is prefetched. Both the single- and double-buffered
