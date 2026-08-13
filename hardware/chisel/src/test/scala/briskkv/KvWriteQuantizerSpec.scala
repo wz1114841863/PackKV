@@ -104,9 +104,10 @@ class KvWriteQuantizerSpec
     }
   }
 
-  private def runV3BoundarySweep(
+  private def runBoundarySweep(
     isKey: Boolean,
-    thresholds: IndexedSeq[Long]
+    thresholds: IndexedSeq[Long],
+    parameterArchitecture: QuantParameterArchitecture
   ): Unit = {
     val minimumExponent = -6
     val maximumExponent = 4
@@ -121,7 +122,7 @@ class KvWriteQuantizerSpec
         inputFractionalBits = FractionalBits,
         maximumFeatureDim = 4,
         enableStats = false,
-        parameterArchitecture = QuantParameterArchitecture.V3LeadingOne
+        parameterArchitecture = parameterArchitecture
       )
     ) { dut =>
       dut.io.start.poke(false.B)
@@ -267,22 +268,46 @@ class KvWriteQuantizerSpec
     }
 
     "v3 must preserve every K exponent threshold boundary" in {
-      runV3BoundarySweep(
+      runBoundarySweep(
         isKey = true,
         thresholds = IndexedSeq(
           1509, 3017, 6034, 12068, 24136, 48272,
           96544, 193088, 386175, 772350, 1544699, 3089398
-        )
+        ),
+        parameterArchitecture = QuantParameterArchitecture.V3LeadingOne
       )
     }
 
     "v3 must preserve every V exponent threshold boundary" in {
-      runV3BoundarySweep(
+      runBoundarySweep(
         isKey = false,
         thresholds = IndexedSeq(
           453, 906, 1811, 3621, 7241, 14482,
           28964, 57927, 115853, 231705, 463410, 926820
-        )
+        ),
+        parameterArchitecture = QuantParameterArchitecture.V3LeadingOne
+      )
+    }
+
+    "v4 must preserve every K exponent threshold boundary" in {
+      runBoundarySweep(
+        isKey = true,
+        thresholds = IndexedSeq(
+          1509, 3017, 6034, 12068, 24136, 48272,
+          96544, 193088, 386175, 772350, 1544699, 3089398
+        ),
+        parameterArchitecture = QuantParameterArchitecture.V4BalancedTree
+      )
+    }
+
+    "v4 must preserve every V exponent threshold boundary" in {
+      runBoundarySweep(
+        isKey = false,
+        thresholds = IndexedSeq(
+          453, 906, 1811, 3621, 7241, 14482,
+          28964, 57927, 115853, 231705, 463410, 926820
+        ),
+        parameterArchitecture = QuantParameterArchitecture.V4BalancedTree
       )
     }
 

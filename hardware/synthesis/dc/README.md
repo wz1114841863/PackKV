@@ -69,6 +69,12 @@ The v3 leading-one selector is generated with `QUANT_ARCHITECTURE=v3` into
 schedule and is the next optimization candidate. Keep its DC report root
 separate from both v1 and v2.
 
+The v4 balanced static threshold tree is generated with
+`QUANT_ARCHITECTURE=v4` into
+`briskkv_write_v4_t1024_f128_i24/dc_logic`. It retains the v1 schedule and
+exact threshold boundary behavior with zero extra parameter cycles. Keep its
+DC report root separate from v1, v2, and v3.
+
 The wrapper fixes `TOP=BriskKvWriteEncoderTop`, validates the manifest and
 black-box list, and creates one report directory per requested period.
 

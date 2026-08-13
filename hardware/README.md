@@ -127,6 +127,13 @@ correction. It therefore has zero extra parameter cycles relative to v1. Use
 `QUANT_ARCHITECTURE=v3` to generate this optimization candidate; v1 remains
 the default until matched DC results demonstrate a PPA benefit.
 
+`v4` also retains the v1 single-stage schedule, but replaces the linear
+priority chain with a static balanced binary search over the same twelve exact
+Q12/FP32 thresholds. A root-to-leaf selection crosses at most four threshold
+comparisons and adds zero parameter cycles. Generate it with
+`QUANT_ARCHITECTURE=v4`; v1 remains the default until matched DC synthesis
+demonstrates that the balanced tree improves PPA.
+
 The write export contains `full` simulation RTL and `dc_logic` RTL with an
 automatically discovered SRAM inventory and bodyless DC black-box stubs.
 

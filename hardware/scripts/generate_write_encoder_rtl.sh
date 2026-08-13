@@ -12,8 +12,9 @@ enable_stats="${ENABLE_STATS:-false}"
 quant_architecture="${QUANT_ARCHITECTURE:-v1}"
 if [[ "$quant_architecture" != "v1" && \
       "$quant_architecture" != "v2" && \
-      "$quant_architecture" != "v3" ]]; then
-  printf 'QUANT_ARCHITECTURE must be v1, v2, or v3, got: %s\n' \
+      "$quant_architecture" != "v3" && \
+      "$quant_architecture" != "v4" ]]; then
+  printf 'QUANT_ARCHITECTURE must be v1, v2, v3, or v4, got: %s\n' \
     "$quant_architecture" >&2
   exit 1
 fi

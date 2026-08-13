@@ -29,8 +29,15 @@ object QuantParameterArchitecture {
     override val extraParameterCyclesPerToken = 0
   }
 
+  case object V4BalancedTree extends QuantParameterArchitecture {
+    override val cliName = "v4"
+    override val manifestName =
+      "balanced-static-threshold-tree-combined-zero-range"
+    override val extraParameterCyclesPerToken = 0
+  }
+
   val supported: Seq[QuantParameterArchitecture] =
-    Seq(V1SingleStage, V2ThreeStage, V3LeadingOne)
+    Seq(V1SingleStage, V2ThreeStage, V3LeadingOne, V4BalancedTree)
 
   def fromCliName(name: String): QuantParameterArchitecture =
     supported.find(_.cliName == name).getOrElse(
@@ -302,7 +309,9 @@ class KvWriteQuantizer(
     )
     selectedExponentWide :=
       PopCount(thresholdMatches).zext + (minimumExponent - 1).S
-  } else {
+  } else if (
+    parameterArchitecture == QuantParameterArchitecture.V3LeadingOne
+  ) {
     // v3 exploits the near-doubling of consecutive entry thresholds. The
     // leading-one position identifies the only exponent boundary that can lie
     // in the current power-of-two interval; one exact table lookup and one
@@ -354,6 +363,30 @@ class KvWriteQuantizer(
         correctedExponent
       )
     )
+  } else {
+    // v4 keeps v1's one-cycle parameter schedule and exact frozen thresholds,
+    // but expresses predecessor search as a static balanced binary tree. Each
+    // root-to-leaf path contains at most four threshold comparisons for the
+    // twelve-entry Format v0 table. Unlike v3, there is no leading-one network,
+    // dynamic Vec lookup, candidate clamp, or adjacent correction datapath.
+    val thresholds = if (isKey) kEntryThresholds else vEntryThresholds
+    val exponentWidth = metadataBits + 1
+
+    def balancedThresholdSelect(low: Int, high: Int): SInt = {
+      if (low > high) {
+        (minimumExponent + low - 1).S(exponentWidth.W)
+      } else {
+        val middle = (low + high) / 2
+        Mux(
+          rangeRaw >= thresholds(middle).U(rangeRaw.getWidth.W),
+          balancedThresholdSelect(middle + 1, high),
+          balancedThresholdSelect(low, middle - 1)
+        )
+      }
+    }
+
+    selectedExponentWide :=
+      balancedThresholdSelect(0, thresholds.length - 1)
   }
   val selectedExponentValid = selectedExponentWide >= minimumExponent.S &&
     selectedExponentWide <= maximumExponent.S

@@ -18,3 +18,4 @@ docs/
 AGENTS.md
 
 hardware/synthesis/dc/results/*
+.metals/*

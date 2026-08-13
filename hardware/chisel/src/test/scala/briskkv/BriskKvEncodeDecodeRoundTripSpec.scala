@@ -83,7 +83,8 @@ class BriskKvEncodeDecodeRoundTripSpec
     for (
       parameterArchitecture <- IndexedSeq(
         QuantParameterArchitecture.V1SingleStage,
-        QuantParameterArchitecture.V3LeadingOne
+        QuantParameterArchitecture.V3LeadingOne,
+        QuantParameterArchitecture.V4BalancedTree
       )
     ) {
       s"${parameterArchitecture.cliName} must preserve routed K/V values and bucket metadata" in {
