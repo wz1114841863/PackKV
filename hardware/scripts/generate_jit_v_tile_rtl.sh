@@ -11,7 +11,7 @@ input_bits="${INPUT_BITS:-24}"
 scale_lanes="${SCALE_LANES:-4}"
 enable_stats="${ENABLE_STATS:-false}"
 quant_architecture="${QUANT_ARCHITECTURE:-v1}"
-config_name="briskkv_single_head_tile_${quant_architecture}_t${maximum_tokens}_f${maximum_feature_dim}"
+config_name="briskkv_jit_v_dual_${quant_architecture}_t${maximum_tokens}_f${maximum_feature_dim}"
 output_root="${OUTPUT_ROOT:-$hardware_dir/rtl/generated/$config_name}"
 
 generate_variant() {
@@ -27,7 +27,7 @@ generate_variant() {
       --scale-lanes $scale_lanes \
       --enable-stats $enable_stats \
       --quant-architecture $quant_architecture \
-      --attention-architecture full_v \
+      --attention-architecture jit_v_dual \
       --mode $mode"
   )
 }

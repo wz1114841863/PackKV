@@ -12,6 +12,12 @@ import scala.util.matching.Regex
   * black-box list and CACTI inventory cannot silently drift from elaboration.
   */
 object GenerateBriskKvSingleHeadTileTop {
+  // Arrays shallower than this are intentionally synthesized as registers.
+  // CACTI cannot form a meaningful SRAM organization for the two-entry query
+  // queue, and black-boxing it would omit its implementation cost from both
+  // the DC logic report and the CACTI memory report.
+  private val MinimumExternalSramDepth = 16
+
   private final case class Config(
     targetDir: Path = Paths.get("generated/briskkv_single_head_tile/full"),
     maximumFeatureDim: Int = 128,
@@ -20,6 +26,7 @@ object GenerateBriskKvSingleHeadTileTop {
     scaleLanes: Int = 4,
     enableStats: Boolean = false,
     quantArchitecture: String = "v1",
+    attentionArchitecture: String = "full_v",
     mode: String = "full"
   )
 
@@ -48,6 +55,8 @@ object GenerateBriskKvSingleHeadTileTop {
         parse(tail, config.copy(enableStats = value.toBoolean))
       case "--quant-architecture" :: value :: tail =>
         parse(tail, config.copy(quantArchitecture = value))
+      case "--attention-architecture" :: value :: tail =>
+        parse(tail, config.copy(attentionArchitecture = value))
       case "--mode" :: value :: tail =>
         parse(tail, config.copy(mode = value))
       case option :: _ =>
@@ -73,11 +82,48 @@ object GenerateBriskKvSingleHeadTileTop {
     finally stream.close()
   }
 
-  private def discoverMemories(targetDir: Path): IndexedSeq[MemoryRow] = {
+  private def discoverMemories(
+    targetDir: Path,
+    topModule: String
+  ): IndexedSeq[MemoryRow] = {
     val texts = systemVerilogFiles(targetDir).map { path =>
       path -> Files.readString(path, StandardCharsets.UTF_8)
     }
-    val allText = texts.map(_._2).mkString("\n")
+    val sourcesByModule = texts.flatMap { case (_, source) =>
+      modulePattern.findFirstMatchIn(source).map(_.group(1) -> source)
+    }.toMap
+    require(sourcesByModule.contains(topModule), s"Missing generated top $topModule")
+
+    // CIRCT reuses one wrapper module when two streams have equal geometry.
+    // Count module instances through the complete hierarchy instead of merely
+    // counting textual memory instantiations. Otherwise, for example, the K/V
+    // width streams would be reported as one SRAM although the top contains
+    // two instances of their shared ReplayByteStreamBuffer wrapper.
+    val moduleNames = sourcesByModule.keySet
+    val childCounts = sourcesByModule.map { case (parent, source) =>
+      val children = moduleNames.toIndexedSeq.flatMap { child =>
+        val instancePattern =
+          ("(?m)^\\s*" + Regex.quote(child) +
+            "\\s+[A-Za-z_][A-Za-z0-9_$]*\\s*\\(").r
+        val count = instancePattern.findAllMatchIn(source).length
+        Option.when(count > 0)(child -> count)
+      }.toMap
+      parent -> children
+    }
+    val hierarchyInstances = scala.collection.mutable.Map(topModule -> 1L)
+    val pending = scala.collection.mutable.Queue(topModule -> 1L)
+    while (pending.nonEmpty) {
+      val (parent, parentDelta) = pending.dequeue()
+      childCounts.getOrElse(parent, Map.empty).foreach { case (child, count) =>
+        val childDelta = parentDelta * count
+        hierarchyInstances.update(
+          child,
+          hierarchyInstances.getOrElse(child, 0L) + childDelta
+        )
+        pending.enqueue(child -> childDelta)
+      }
+    }
+
     texts.flatMap { case (_, source) =>
       for {
         moduleMatch <- modulePattern.findFirstMatchIn(source)
@@ -86,12 +132,10 @@ object GenerateBriskKvSingleHeadTileTop {
         val module = moduleMatch.group(1)
         val width = memoryMatch.group(1).toInt + 1
         val depth = memoryMatch.group(2).toInt + 1
-        val instancePattern =
-          ("(?m)^\\s*" + Regex.quote(module) +
-            "\\s+[A-Za-z_][A-Za-z0-9_$]*\\s*\\(").r
-        val instances = instancePattern.findAllMatchIn(allText).length
-        require(instances > 0, s"No instance found for generated memory $module")
-        MemoryRow(module, depth, width, instances)
+        val instances = hierarchyInstances.getOrElse(module, 0L)
+        require(instances > 0, s"No reachable instance found for generated memory $module")
+        require(instances <= Int.MaxValue, s"Memory instance count overflow: $module")
+        MemoryRow(module, depth, width, instances.toInt)
       }
     }.sortBy(_.module)
   }
@@ -123,26 +167,66 @@ object GenerateBriskKvSingleHeadTileTop {
     require(config.inputBits >= 3)
     require(config.scaleLanes > 0)
     require(Set("full", "dc_logic").contains(config.mode))
+    require(
+      Set("full_v", "jit_v_dual", "jit_v_shared")
+        .contains(config.attentionArchitecture),
+      s"Unsupported attention architecture: ${config.attentionArchitecture}"
+    )
     val quantArchitecture =
       QuantParameterArchitecture.fromCliName(config.quantArchitecture)
     val targetDir = config.targetDir.toAbsolutePath.normalize
     Files.createDirectories(targetDir)
 
+    val topName = config.attentionArchitecture match {
+      case "full_v"     => "BriskKvSingleHeadTileTop"
+      case "jit_v_dual" => "BriskKvJitVSingleHeadTileTop"
+      case "jit_v_shared" => "BriskKvSharedJitVSingleHeadTileTop"
+    }
+    // Keep this as a method: ChiselStage evaluates its generator by name inside
+    // Builder context. Constructing a Module in a strict local val is illegal.
+    def top = config.attentionArchitecture match {
+      case "full_v" =>
+        new BriskKvSingleHeadTileTop(
+          inputBits = config.inputBits,
+          maximumFeatureDim = config.maximumFeatureDim,
+          maximumTokens = config.maximumTokens,
+          scaleLanes = config.scaleLanes,
+          enableStats = config.enableStats,
+          quantParameterArchitecture = quantArchitecture
+        )
+      case "jit_v_dual" =>
+        new BriskKvJitVSingleHeadTileTop(
+          inputBits = config.inputBits,
+          maximumFeatureDim = config.maximumFeatureDim,
+          maximumTokens = config.maximumTokens,
+          scaleLanes = config.scaleLanes,
+          enableStats = config.enableStats,
+          quantParameterArchitecture = quantArchitecture
+        )
+      case "jit_v_shared" =>
+        new BriskKvSharedJitVSingleHeadTileTop(
+          inputBits = config.inputBits,
+          maximumFeatureDim = config.maximumFeatureDim,
+          maximumTokens = config.maximumTokens,
+          scaleLanes = config.scaleLanes,
+          enableStats = config.enableStats,
+          quantParameterArchitecture = quantArchitecture
+        )
+    }
     ChiselStage.emitSystemVerilogFile(
-      new BriskKvSingleHeadTileTop(
-        inputBits = config.inputBits,
-        maximumFeatureDim = config.maximumFeatureDim,
-        maximumTokens = config.maximumTokens,
-        scaleLanes = config.scaleLanes,
-        enableStats = config.enableStats,
-        quantParameterArchitecture = quantArchitecture
-      ),
+      top,
       args = Array("--target-dir", targetDir.toString),
       firtoolOpts = Array("--disable-all-randomization", "--strip-debug-info")
     )
 
-    val memories = discoverMemories(targetDir)
-    require(memories.nonEmpty, "No unified-tile architectural memories discovered")
+    val discoveredMemories = discoverMemories(
+      targetDir,
+      topName
+    )
+    val (memories, logicMemories) = discoveredMemories.partition(
+      _.depth >= MinimumExternalSramDepth
+    )
+    require(memories.nonEmpty, "No unified-tile architectural SRAMs discovered")
     if (config.mode == "dc_logic") {
       memories.foreach { memory =>
         Files.writeString(
@@ -156,11 +240,16 @@ object GenerateBriskKvSingleHeadTileTop {
     val memoryBits = memories.map { memory =>
       memory.depth.toLong * memory.width * memory.instances
     }.sum
+    val logicMemoryBits = logicMemories.map { memory =>
+      memory.depth.toLong * memory.width * memory.instances
+    }.sum
     val manifest =
       s"""{
-         |  "top": "BriskKvSingleHeadTileTop",
+         |  "top": "$topName",
          |  "mode": "${config.mode}",
-         |  "architecture": "phase-separated-write-store-read-attention",
+         |  "architecture": "${config.attentionArchitecture}",
+         |  "v_materialization": "${if (config.attentionArchitecture == "full_v") "full_token_feature_buffer" else "two_packet_jit_buffer_plus_feature_partial_sums"}",
+         |  "decompression_datapaths": ${if (config.attentionArchitecture == "jit_v_shared") 1 else 2},
          |  "stored_transactions": 1,
          |  "repeat_attention_on_resident_transaction": true,
          |  "stored_component_streams": 11,
@@ -174,7 +263,11 @@ object GenerateBriskKvSingleHeadTileTop {
          |  "memory_module_types": ${memories.length},
          |  "memory_instances": ${memories.map(_.instances).sum},
          |  "total_inferred_memory_bits": $memoryBits,
-         |  "memory_implementation": "${if (config.mode == "dc_logic") "bodyless_blackbox_stubs" else "behavioral_sync_read_mem"}"
+         |  "logic_memory_module_types": ${logicMemories.length},
+         |  "logic_memory_instances": ${logicMemories.map(_.instances).sum},
+         |  "logic_memory_bits": $logicMemoryBits,
+         |  "minimum_external_sram_depth": $MinimumExternalSramDepth,
+         |  "memory_implementation": "${if (config.mode == "dc_logic") "external_sram_blackboxes_plus_small_logic_arrays" else "behavioral_sync_read_mem"}"
          |}
          |""".stripMargin
     Files.writeString(
@@ -191,7 +284,11 @@ object GenerateBriskKvSingleHeadTileTop {
             else "attention_or_write_pipeline_sram"
           val totalBits = memory.depth.toLong * memory.width * memory.instances
           s"${memory.module},$purpose,${memory.depth},${memory.width}," +
-            s"${memory.instances},$totalBits,1,1,0,phase_separated"
+            // `access_mode` describes how width slices form one logical SRAM
+            // access, not whether tile reads and writes overlap in time. Every
+            // slice of a wide word is active in parallel; the phase-separated
+            // tile schedule is recorded independently in manifest.json.
+            s"${memory.instances},$totalBits,1,1,0,parallel_width"
         }.mkString("\n") + "\n"
     Files.writeString(targetDir.resolve("memories.csv"), csv, StandardCharsets.UTF_8)
 
@@ -212,6 +309,10 @@ object GenerateBriskKvSingleHeadTileTop {
     println(
       s"Discovered ${memories.length} memory modules / " +
         s"${memories.map(_.instances).sum} instances / $memoryBits bits"
+    )
+    println(
+      s"Retained ${logicMemories.length} shallow memory modules / " +
+        s"${logicMemories.map(_.instances).sum} instances / $logicMemoryBits bits as logic"
     )
   }
 }
