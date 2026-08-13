@@ -50,6 +50,12 @@ artifacts or simulator dependencies.
   signed Q6 while counting positive/negative clipping. The unified Attention
   top connects every compressed K/V byte stream through QK, stable Softmax,
   buffered AV, and Q6 output with one tagged completion/error barrier.
+- A phase-separated single-head tile now connects the write encoder to eleven
+  dedicated byte-stream SRAMs and replays the stored Format v0 transaction into
+  the Attention top. Its raw-K/V-to-Q6-Attention ChiselSim test checks the full
+  write, storage, read, decompression, and compute path under backpressure. The
+  sealed transaction remains resident for repeated decode-query commands until
+  a new write command explicitly replaces it.
 
 ## Layout
 
@@ -98,6 +104,18 @@ point with:
 MAXIMUM_TOKENS=1024 MAXIMUM_FEATURE_DIM=128 ENABLE_STATS=false \
   bash hardware/scripts/generate_write_encoder_rtl.sh
 ```
+
+Generate the complete single-head write/store/read/Attention tile with:
+
+```bash
+MAXIMUM_TOKENS=1024 MAXIMUM_FEATURE_DIM=128 ENABLE_STATS=false \
+  bash hardware/scripts/generate_single_head_tile_rtl.sh
+```
+
+This export also creates `full` behavioral-memory RTL and `dc_logic` RTL with
+an automatically discovered inventory covering both the eleven compressed
+component-stream stores and the internal write/Attention memories. Logic-only
+DC PPA and CACTI memory PPA must remain separate reports.
 
 The default is the `v1` write quantizer used by the 2026081205 DC baseline.
 Set `QUANT_ARCHITECTURE=v2` only when regenerating the three-stage
