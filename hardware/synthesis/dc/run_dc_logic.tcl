@@ -13,7 +13,21 @@ proc briskkv_dc_main {} {
   }
 
   set rtl_dir [file normalize $::env(RTL_DIR)]
-  set top [expr {[info exists ::env(TOP)] ? $::env(TOP) : "BriskKvAttentionTop"}]
+  set manifest_file [file join $rtl_dir manifest.json]
+  if {![file exists $manifest_file]} {
+    error "Missing RTL manifest: $manifest_file"
+  }
+  set manifest_channel [open $manifest_file r]
+  set manifest_text [read $manifest_channel]
+  close $manifest_channel
+  if {![regexp {"top"[[:space:]]*:[[:space:]]*"([^"]+)"} \
+      $manifest_text manifest_match manifest_top]} {
+    error "Cannot read top from RTL manifest: $manifest_file"
+  }
+  if {[info exists ::env(TOP)] && $::env(TOP) ne $manifest_top} {
+    error "TOP/manifest mismatch: TOP=$::env(TOP), manifest top=$manifest_top, RTL_DIR=$rtl_dir"
+  }
+  set top $manifest_top
   set clock_period [expr {
     [info exists ::env(CLOCK_PERIOD)] ? $::env(CLOCK_PERIOD) : 2.0
   }]
@@ -74,6 +88,10 @@ proc briskkv_dc_main {} {
 
   analyze -format sverilog $sv_files
   elaborate $top
+  set elaborated_top [get_designs -quiet $top]
+  if {[sizeof_collection $elaborated_top] == 0} {
+    error "Top design was not elaborated from RTL_DIR=$rtl_dir: $top"
+  }
   current_design $top
   link
 
