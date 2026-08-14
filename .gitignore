@@ -19,3 +19,4 @@ AGENTS.md
 
 hardware/synthesis/dc/results/*
 .metals/*
+hardware/simulation/results/*

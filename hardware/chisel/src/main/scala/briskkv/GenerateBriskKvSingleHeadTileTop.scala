@@ -27,6 +27,7 @@ object GenerateBriskKvSingleHeadTileTop {
     enableStats: Boolean = false,
     quantArchitecture: String = "v1",
     attentionArchitecture: String = "full_v",
+    vcsCompatibility: Boolean = false,
     mode: String = "full"
   )
 
@@ -57,6 +58,9 @@ object GenerateBriskKvSingleHeadTileTop {
         parse(tail, config.copy(quantArchitecture = value))
       case "--attention-architecture" :: value :: tail =>
         parse(tail, config.copy(attentionArchitecture = value))
+      case "--vcs-compatibility" :: value :: tail =>
+        require(Set("true", "false").contains(value))
+        parse(tail, config.copy(vcsCompatibility = value.toBoolean))
       case "--mode" :: value :: tail =>
         parse(tail, config.copy(mode = value))
       case option :: _ =>
@@ -213,10 +217,15 @@ object GenerateBriskKvSingleHeadTileTop {
           quantParameterArchitecture = quantArchitecture
         )
     }
+    val firtoolOptions =
+      Array("--disable-all-randomization", "--strip-debug-info") ++
+        Option.when(config.vcsCompatibility)(
+          "--lowering-options=disallowLocalVariables"
+        )
     ChiselStage.emitSystemVerilogFile(
       top,
       args = Array("--target-dir", targetDir.toString),
-      firtoolOpts = Array("--disable-all-randomization", "--strip-debug-info")
+      firtoolOpts = firtoolOptions
     )
 
     val discoveredMemories = discoverMemories(
@@ -260,6 +269,7 @@ object GenerateBriskKvSingleHeadTileTop {
          |  "scale_lanes": ${config.scaleLanes},
          |  "quant_parameter_architecture": "${quantArchitecture.cliName}",
          |  "performance_stats_enabled": ${config.enableStats},
+         |  "vcs_compatibility": ${config.vcsCompatibility},
          |  "memory_module_types": ${memories.length},
          |  "memory_instances": ${memories.map(_.instances).sum},
          |  "total_inferred_memory_bits": $memoryBits,

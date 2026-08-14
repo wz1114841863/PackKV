@@ -11,8 +11,22 @@ input_bits="${INPUT_BITS:-24}"
 scale_lanes="${SCALE_LANES:-4}"
 enable_stats="${ENABLE_STATS:-false}"
 quant_architecture="${QUANT_ARCHITECTURE:-v1}"
+vcs_compatibility="${VCS_COMPATIBILITY:-false}"
 config_name="briskkv_jit_v_dual_${quant_architecture}_t${maximum_tokens}_f${maximum_feature_dim}"
 output_root="${OUTPUT_ROOT:-$hardware_dir/rtl/generated/$config_name}"
+
+case "$vcs_compatibility" in
+  true|false) ;;
+  *)
+    printf 'VCS_COMPATIBILITY must be true or false, got: %s\n' \
+      "$vcs_compatibility" >&2
+    exit 1
+    ;;
+esac
+
+if [[ "$output_root" != /* ]]; then
+  output_root="$(realpath -m "$output_root")"
+fi
 
 generate_variant() {
   local mode="$1"
@@ -28,6 +42,7 @@ generate_variant() {
       --enable-stats $enable_stats \
       --quant-architecture $quant_architecture \
       --attention-architecture jit_v_dual \
+      --vcs-compatibility $vcs_compatibility \
       --mode $mode"
   )
 }

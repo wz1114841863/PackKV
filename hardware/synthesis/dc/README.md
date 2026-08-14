@@ -45,6 +45,42 @@ export REPORT_DIR=reports_t1024_f128
 dc_shell -f hardware/synthesis/dc/run_dc_logic.tcl
 ```
 
+To annotate logic power with simulation activity, convert the validated VCD to
+SAIF, then pass the SAIF file and the DUT hierarchy recorded inside it:
+
+```bash
+vcd2saif \
+  -input /absolute/path/to/jit_v_overlap_64t.vcd \
+  -output /absolute/path/to/jit_v_overlap_64t.saif
+
+export RTL_DIR=/absolute/path/to/vcs-compatible/dc_logic
+export TARGET_LIBRARY=/absolute/path/to/standard_cells.db
+export SAIF_FILE=/absolute/path/to/jit_v_overlap_64t.saif
+export SAIF_INSTANCE=tb_briskkv_jit_v/dut
+export REPORT_ROOT=/absolute/path/to/saif_power_results
+export CLOCK_PERIODS="2.0"
+bash hardware/synthesis/dc/run_tile_dc.sh
+```
+
+`SAIF_FILE` is optional. Without it, the flow retains the existing DC default
+switching activity. With it, `SAIF_INSTANCE` selects the simulated hierarchy
+that corresponds to the current DC top; its default is
+`tb_briskkv_jit_v/dut`. Each period directory records:
+
+- `power_activity_source.rpt`: whether SAIF or default activity was used;
+- `saif_read.rpt`: `read_saif -verbose` output and mapping diagnostics;
+- `saif_annotation_precompile.rpt`: hierarchical annotation before mapping;
+- `saif_annotation_postcompile.rpt`: retained annotation after mapping;
+- `power.rpt`: logic-only power using the resulting activity.
+
+Inspect the annotation reports before accepting `power.rpt`. A successfully
+parsed SAIF with poor hierarchy/name mapping can otherwise leave most objects
+on default activity. Architectural SRAMs remain black boxes, so their dynamic
+energy still requires access counts plus CACTI or memory-compiler energy.
+The 64-token/four-feature VCS trace is suitable for bringing up this flow, but
+the final workload-power result should use the planned representative
+1024-token trace in a separate report directory.
+
 For the write encoder, upload the complete generated `dc_logic` directory,
 `run_dc_logic.tcl`, and `run_write_encoder_dc.sh`. Absolute paths make the flow
 independent of the server repository layout:

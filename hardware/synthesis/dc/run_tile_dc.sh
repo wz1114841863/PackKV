@@ -12,6 +12,24 @@ manifest="$RTL_DIR/manifest.json"
 memory_list="$RTL_DIR/memory_modules.tcl"
 report_root="${REPORT_ROOT:-$PWD/briskkv_tile_dc_results}"
 clock_periods="${CLOCK_PERIODS:-2.0}"
+saif_file="${SAIF_FILE:-}"
+saif_instance="${SAIF_INSTANCE:-tb_briskkv_jit_v/dut}"
+
+if [[ -n "$saif_file" ]]; then
+  if [[ ! -f "$saif_file" ]]; then
+    printf 'Missing SAIF_FILE: %s\n' "$saif_file" >&2
+    exit 1
+  fi
+  if ! grep -m 1 -Eq '^[[:space:]]*\(SAIFILE' "$saif_file"; then
+    printf 'SAIF_FILE does not contain a SAIFILE header: %s\n' "$saif_file" >&2
+    exit 1
+  fi
+  saif_file="$(realpath "$saif_file")"
+  if [[ -z "$saif_instance" ]]; then
+    printf 'SAIF_INSTANCE must not be empty when SAIF_FILE is set\n' >&2
+    exit 1
+  fi
+fi
 
 if [[ ! -f "$dc_tcl" ]]; then
   printf 'Missing DC Tcl flow: %s\n' "$dc_tcl" >&2
@@ -63,12 +81,20 @@ for period in $clock_periods; do
   mkdir -p "$report_dir"
   printf 'Running unified-tile DC: top=%s period=%s ns RTL=%s REPORT=%s\n' \
     "$manifest_top" "$period" "$RTL_DIR" "$report_dir"
+  if [[ -n "$saif_file" ]]; then
+    printf 'Annotating workload activity: SAIF=%s INSTANCE=%s\n' \
+      "$saif_file" "$saif_instance"
+  else
+    printf 'No SAIF_FILE set; using DC default switching activity\n'
+  fi
   RTL_DIR="$RTL_DIR" \
   TOP="$manifest_top" \
   REPORT_DIR="$report_dir" \
   CLOCK_PERIOD="$period" \
   TARGET_LIBRARY="$TARGET_LIBRARY" \
   LINK_LIBRARY="${LINK_LIBRARY:-$TARGET_LIBRARY}" \
+  SAIF_FILE="$saif_file" \
+  SAIF_INSTANCE="$saif_instance" \
     "$dc_shell_bin" -f "$dc_tcl" | tee "$report_dir/dc.log"
 done
 

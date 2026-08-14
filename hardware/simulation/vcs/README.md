@@ -6,11 +6,20 @@ implementations. It must not be compiled against the DC `dc_logic/` export.
 Export the current overlap RTL, then run on a machine with VCS:
 
 ```bash
-export RTL_DIR=/absolute/path/to/briskkv_jit_v_dual_overlap_v1/full
+OUTPUT_ROOT=hardware/rtl/generated/briskkv_jit_v_dual_overlap_v1_vcs2018 \
+VCS_COMPATIBILITY=true \
+ENABLE_STATS=false \
+bash hardware/scripts/generate_jit_v_tile_rtl.sh
+
+export RTL_DIR=/absolute/path/to/briskkv_jit_v_dual_overlap_v1_vcs2018/full
 export OUTPUT_DIR=$PWD/hardware/simulation/vcs/outputs
 export WAVE_MODE=vcd
 bash hardware/simulation/vcs/run_vcs.sh
 ```
+
+`VCS_COMPATIBILITY=true` asks CIRCT not to emit block-local `automatic logic`
+variables that are mis-simulated by the VCS O-2018.09 toolchain. Keep this
+export separate from the RTL used for the recorded DC PPA results.
 
 `WAVE_MODE` accepts:
 

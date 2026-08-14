@@ -2,7 +2,7 @@
 # Required environment:
 #   RTL_DIR, TARGET_LIBRARY
 # Optional:
-#   TOP, CLOCK_PERIOD, REPORT_DIR, LINK_LIBRARY
+#   TOP, CLOCK_PERIOD, REPORT_DIR, LINK_LIBRARY, SAIF_FILE, SAIF_INSTANCE
 
 proc briskkv_dc_main {} {
   if {![info exists ::env(RTL_DIR)]} {
@@ -95,6 +95,51 @@ proc briskkv_dc_main {} {
   current_design $top
   link
 
+  # Optional workload activity annotation. SAIF_INSTANCE is the hierarchy of
+  # the synthesized top inside the simulation SAIF, not a DC design name.
+  # Keeping this optional preserves the existing default-activity PPA flow.
+  set saif_enabled false
+  set saif_file ""
+  set saif_instance ""
+  if {[info exists ::env(SAIF_FILE)] &&
+      [string trim $::env(SAIF_FILE)] ne ""} {
+    set saif_file [file normalize $::env(SAIF_FILE)]
+    if {![file exists $saif_file]} {
+      error "SAIF_FILE does not exist: $saif_file"
+    }
+    set saif_instance "tb_briskkv_jit_v/dut"
+    if {[info exists ::env(SAIF_INSTANCE)] &&
+        [string trim $::env(SAIF_INSTANCE)] ne ""} {
+      set saif_instance [string trim $::env(SAIF_INSTANCE)]
+    }
+    read_saif -input $saif_file -instance_name $saif_instance -verbose \
+      > "$report_dir/saif_read.rpt"
+    set saif_enabled true
+  }
+
+  set activity_file [file join $report_dir "power_activity_source.rpt"]
+  set activity_channel [open $activity_file w]
+  if {$saif_enabled} {
+    puts $activity_channel "source=saif"
+    puts $activity_channel "saif_file=$saif_file"
+    puts $activity_channel "saif_instance=$saif_instance"
+  } else {
+    puts $activity_channel "source=dc_default_activity"
+  }
+  close $activity_channel
+
+  if {$saif_enabled} {
+    if {[llength [info commands report_saif]] > 0} {
+      report_saif -hierarchy > "$report_dir/saif_annotation_precompile.rpt"
+    } else {
+      set coverage_channel [open \
+        [file join $report_dir "saif_annotation_precompile.rpt"] w]
+      puts $coverage_channel \
+        "report_saif is unavailable; inspect saif_read.rpt for annotation coverage."
+      close $coverage_channel
+    }
+  }
+
   # Audit and preserve every elaborated SRAM instance. Matching zero is a
   # fatal export/hierarchy error, not a reason to continue with invalid PPA.
   set total_memory_instances 0
@@ -135,6 +180,18 @@ proc briskkv_dc_main {} {
   check_design > "$report_dir/check_design.rpt"
   check_timing > "$report_dir/check_timing.rpt"
   compile_ultra
+
+  if {$saif_enabled} {
+    if {[llength [info commands report_saif]] > 0} {
+      report_saif -hierarchy > "$report_dir/saif_annotation_postcompile.rpt"
+    } else {
+      set coverage_channel [open \
+        [file join $report_dir "saif_annotation_postcompile.rpt"] w]
+      puts $coverage_channel \
+        "report_saif is unavailable; inspect saif_read.rpt for annotation coverage."
+      close $coverage_channel
+    }
+  }
 
   # The dont_touch instances must still be present after compile.
   set post_audit_file [file join $report_dir memory_blackboxes_postcompile.rpt]

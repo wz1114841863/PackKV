@@ -46,12 +46,15 @@ esac
 
 mkdir -p "$output_dir"
 simv="$output_dir/simv"
+compile_dir="$output_dir/csrc"
 
 (
   cd "$RTL_DIR"
   "$vcs_bin" -full64 -sverilog -timescale=1ns/1ps \
     +define+BRISKKV_VCS \
     -debug_access+all -kdb \
+    -Mdir="$compile_dir" \
+    -LDFLAGS "-Wl,--no-as-needed" \
     -f filelist.f "$testbench" \
     -top tb_briskkv_jit_v \
     -o "$simv" \
