@@ -7,9 +7,13 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 manifest="$RTL_DIR/manifest.json"
 filelist="$RTL_DIR/filelist.f"
 testbench="${TESTBENCH:-$script_dir/tb_briskkv_jit_v.sv}"
+testbench_top="${TESTBENCH_TOP:-tb_briskkv_jit_v}"
 output_dir="${OUTPUT_DIR:-$script_dir/outputs}"
 vcs_bin="${VCS:-vcs}"
 wave_mode="${WAVE_MODE:-vcd}"
+wave_basename="${WAVE_BASENAME:-jit_v_overlap_64t}"
+activity_phase="${ACTIVITY_PHASE:-combined}"
+pass_pattern="${PASS_PATTERN:-BRISK-KV VCS PASS}"
 
 if [[ ! -f "$manifest" || ! -f "$filelist" ]]; then
   printf 'Incomplete full RTL directory: %s\n' "$RTL_DIR" >&2
@@ -36,8 +40,8 @@ if [[ ! -f "$testbench" ]]; then
 fi
 case "$wave_mode" in
   none) wave_arg=() ;;
-  vcd)  wave_arg=(+VCD "+WAVE_FILE=$output_dir/jit_v_overlap_64t") ;;
-  vpd)  wave_arg=(+VPD "+WAVE_FILE=$output_dir/jit_v_overlap_64t") ;;
+  vcd)  wave_arg=(+VCD "+WAVE_FILE=$output_dir/$wave_basename") ;;
+  vpd)  wave_arg=(+VPD "+WAVE_FILE=$output_dir/$wave_basename") ;;
   *)
     printf 'Unsupported WAVE_MODE=%s; use none, vcd, or vpd\n' "$wave_mode" >&2
     exit 1
@@ -56,17 +60,18 @@ compile_dir="$output_dir/csrc"
     -Mdir="$compile_dir" \
     -LDFLAGS "-Wl,--no-as-needed" \
     -f filelist.f "$testbench" \
-    -top tb_briskkv_jit_v \
+    -top "$testbench_top" \
     -o "$simv" \
     -l "$output_dir/compile.log"
 )
 
 (
   cd "$script_dir"
-  "$simv" "${wave_arg[@]}" -l "$output_dir/simulation.log"
+  "$simv" "+ACTIVITY_PHASE=$activity_phase" "${wave_arg[@]}" \
+    -l "$output_dir/simulation.log"
 )
 
-if ! grep -q 'BRISK-KV VCS PASS' "$output_dir/simulation.log"; then
+if ! grep -Fq "$pass_pattern" "$output_dir/simulation.log"; then
   printf 'VCS run did not report PASS; inspect %s\n' \
     "$output_dir/simulation.log" >&2
   exit 1

@@ -422,3 +422,17 @@ hardware/docs/JIT_V_ABLATION.md，并检查当前 git status。本轮继续 BRIS
 的综合报告并与 2026081303 基线做同周期比较，不要覆盖旧结果，也不要修改算法
 或继续做多 lane 优化，直到确认当前 PPA 边界。
 ```
+
+## 13. 2026-08-15 continuation
+
+The remote VCS/SAIF/DC items described as pending in this snapshot have since
+been completed. The accepted 1024-token x 128-feature attention-only activity
+and 2.0 ns DC power boundary are archived in:
+
+```text
+hardware/docs/PROJECT_STATUS_20260815.md
+```
+
+Use that continuation for current power numbers, annotation coverage, evidence
+paths and the next-step gate. The earlier pending statements above remain as a
+historical 2026-08-14 snapshot.
