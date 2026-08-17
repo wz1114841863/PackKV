@@ -32,6 +32,7 @@ class ReplayByteStreamBuffer(
 
   private val addressBits = math.max(1, log2Ceil(capacityBytes))
   private val lengthBits = math.max(1, log2Ceil(capacityBytes + 1))
+  private val responseQueueDepth = 2
 
   val io = IO(new ReplayByteStreamBufferIO(countBits))
   val memory = SyncReadMem(capacityBytes, UInt(8.W))
@@ -40,30 +41,41 @@ class ReplayByteStreamBuffer(
   val readDelivered = RegInit(0.U(lengthBits.W))
   val sealedReg = RegInit(false.B)
   val readingReg = RegInit(false.B)
-  val readPending = RegInit(false.B)
-  val outputValid = RegInit(false.B)
-  val outputByte = RegInit(0.U(8.W))
   val doneReg = RegInit(false.B)
   val overflowReg = RegInit(false.B)
+  val responseQueue = withReset(reset.asBool || io.clear) {
+    Module(
+      new Queue(
+        UInt(8.W),
+        entries = responseQueueDepth,
+        pipe = true,
+        flow = false
+      )
+    )
+  }
 
   io.writeIn.ready := !sealedReg
-  io.readOut.valid := outputValid
-  io.readOut.bits := outputByte
+  io.readOut <> responseQueue.io.deq
   io.length := writePointer
   io.sealedStream := sealedReg
-  io.reading := readingReg || readPending || outputValid
+  io.reading := readingReg
   io.readDone := doneReg
   io.overflow := overflowReg
   doneReg := false.B
 
   val writeFire = io.writeIn.valid && io.writeIn.ready
-  val issueRead = readingReg && !readPending && !outputValid &&
-    readIssueIndex < writePointer
+  val outputFire = io.readOut.valid && io.readOut.ready
+  val outstandingReads = readIssueIndex - readDelivered
+  val outstandingAfterDelivery = outstandingReads - outputFire.asUInt
+  val issueRead = readingReg && readIssueIndex < writePointer &&
+    outstandingAfterDelivery < responseQueueDepth.U
   val memoryReadByte = memory.read(
     readIssueIndex(addressBits - 1, 0),
     issueRead
   )
   val readResponseValid = RegNext(issueRead, false.B)
+  responseQueue.io.enq.valid := readResponseValid
+  responseQueue.io.enq.bits := memoryReadByte
 
   when(io.clear) {
     writePointer := 0.U
@@ -71,8 +83,6 @@ class ReplayByteStreamBuffer(
     readDelivered := 0.U
     sealedReg := false.B
     readingReg := false.B
-    readPending := false.B
-    outputValid := false.B
     overflowReg := false.B
   }.otherwise {
     when(writeFire) {
@@ -93,8 +103,7 @@ class ReplayByteStreamBuffer(
       sealedReg := true.B
     }
 
-    when(io.readStart && sealedReg && !readingReg && !readPending &&
-      !outputValid) {
+    when(io.readStart && sealedReg && !readingReg && outstandingReads === 0.U) {
       readIssueIndex := 0.U
       readDelivered := 0.U
       when(writePointer === 0.U) {
@@ -105,16 +114,9 @@ class ReplayByteStreamBuffer(
     }
 
     when(issueRead) {
-      readPending := true.B
       readIssueIndex := readIssueIndex + 1.U
     }
-    when(readResponseValid) {
-      outputByte := memoryReadByte
-      outputValid := true.B
-      readPending := false.B
-    }
-    when(io.readOut.valid && io.readOut.ready) {
-      outputValid := false.B
+    when(outputFire) {
       readDelivered := readDelivered + 1.U
       when(readDelivered + 1.U === writePointer) {
         readingReg := false.B

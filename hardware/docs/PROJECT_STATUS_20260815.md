@@ -189,3 +189,18 @@ baseline without changing the compression algorithm or overwriting old
 results. Candidate work should remain focused on the known JIT-V latency and
 decoder/accumulator bottleneck; multi-head scheduling is still outside the
 current tile scope.
+
+## 8. 2026-08-17 continuation
+
+The first bounded post-baseline optimization has now been completed and frozen
+as `JIT-V dual + pipelined byte-stream replay v1`.  Its generated RTL, matched
+1024 x 128 cycle result, attention-only SAIF, 2.0 ns DC PPA and hierarchical
+power evidence are recorded in:
+
+```text
+hardware/docs/PROJECT_STATUS_20260817.md
+```
+
+`2026081502` remains the immutable pre-optimization baseline.  Use the
+2026-08-17 continuation for the retained replay implementation and do not
+overwrite either result set.
