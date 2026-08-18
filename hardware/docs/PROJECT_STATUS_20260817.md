@@ -280,3 +280,132 @@ It does not establish final chip power or end-to-end LLM speedup because:
 the next matched architecture comparisons.  Do not make another replay or
 multi-lane change before completing the same-workload Full-V, JIT-V dual and
 JIT-V shared comparison.
+
+## 9. Frozen matched Full-V / dual / shared comparison
+
+The matched architecture comparison requested above is complete. All three
+points use a 1024-token x 128-feature deterministic single-head workload,
+2.0 ns clock, stats-off PPA RTL, attention-only SAIF, the same TSMC 28 nm
+library/corner and architectural SRAM black boxes.
+
+Cycle evidence:
+
+```text
+hardware/evaluation/results/cycle_breakdown/
+  2026081702_matched_replay_pipe_v1/cycle_benchmark_summary.csv
+```
+
+Power/PPA evidence:
+
+```text
+Full-V DC            hardware/synthesis/dc/results/2026081704/period_2p0ns/
+Full-V hier power    hardware/synthesis/dc/results/2026081706/
+dual hier power      hardware/synthesis/dc/results/2026081701/
+shared DC            hardware/synthesis/dc/results/2026081705/period_2p0ns/
+shared hier power    hardware/synthesis/dc/results/2026081707/
+```
+
+The Full-V and shared VCS passes are user-confirmed terminal evidence; their
+remote `simulation.log` files are not present in the local archive. Their SAIF
+and all listed DC reports are locally available and were checked.
+
+| Metric | Full-V | JIT-V dual | JIT-V shared |
+|---|---:|---:|---:|
+| Attention cycles, periodic | 164447 | 278843 | 278859 |
+| Cell area, um^2 | 145161.574572 | 141438.694767 | 134515.414817 |
+| Dynamic power, mW | 26.1802 | 25.8113 | 23.6411 |
+| Leakage power, mW | 44.0547 | 41.8824 | 39.7520 |
+| Total cell power, mW | 70.2353 | 67.6944 | 63.3933 |
+| Architectural SRAM bits | 4012288 | 1659392 | 1659392 |
+| Setup WNS/TNS | 0.00/0.00 ns | 0.00/0.00 ns | 0.00/0.00 ns |
+| Worst hold | about -0.06 ns | about -0.06 ns | about -0.06 ns |
+| Max-transition violations | 0 | 0 | 0 |
+
+The shared point adds only 16 attention cycles relative to dual while reducing
+cell area by 4.89%, average dynamic power by 8.41% and total cell power by
+6.35%. Hierarchical power attributes about 3.416 mW, or 79.4% of the 4.301 mW
+total reduction, to replacing the dual decoder pair with one decoder plus the
+V metadata adapter. Shared is therefore the retained area/power-first JIT-V
+architecture; dual remains 16 cycles faster and is not claimed to be strictly
+dominated.
+
+Full-V remains the latency and logic-only transaction-energy endpoint but uses
+2.418x the JIT-V SRAM bits. The SRAM black boxes have no modeled internal
+dynamic/leakage power in DC; CACTI 22 nm and DC 28 nm results must remain
+separate and must not be summed as matched chip PPA.
+
+The attention-only hierarchical reports expose a common idle-write hotspot:
+all three variants report about 7.774 mW writer internal power even though
+writer switching is essentially zero. In shared, writer total power is
+15.349 mW, or 24.2% of total logic power. This motivates the next bounded
+phase-level writer clock-gating ablation before any 1/2/4-lane decoder study.
+
+## 10. Shared writer phase-clock-gating candidate
+
+Candidate name:
+
+```text
+shared_writer_cg_v1
+top = BriskKvSharedJitVWriterCgSingleHeadTileTop
+```
+
+This is not yet a frozen PPA result. It is an isolated implementation and
+local functional/cycle candidate awaiting remote VCS, attention-only SAIF and
+matched 2.0 ns DC.
+
+Implementation:
+
+- `BriskKvClockGate` is a technology-independent low-level latch-and-AND
+  glitch-free gate used consistently by Chisel, VCS and DC;
+- writer clock enable is asserted for reset, a valid write launch and the
+  complete `sWriting` phase;
+- the writer clock is held stationary throughout stored/launch/attention
+  phases;
+- the original `BriskKvSharedJitVSingleHeadTileTop` remains ungated;
+- compression, format, decoder, replay, SRAM capacities and attention datapath
+  are unchanged.
+
+Local evidence:
+
+- gated Shared small end-to-end Chisel test: passed;
+- 1024 x 128 cycle benchmark, none and periodic backpressure: passed;
+- write cycles, every attention counter, output count and complete checksum
+  are exactly identical to the ungated shared result;
+- periodic attention cycles remain 278859;
+- exported stats-off full RTL passes Verilator lint.
+
+Cycle CSV:
+
+```text
+hardware/evaluation/results/cycle_breakdown/
+  2026081703_shared_writer_cg/jit_v_shared_writer_cg.csv
+```
+
+Generated RTL, kept separate from the ungated shared baseline:
+
+```text
+hardware/rtl/generated/
+  briskkv_jit_v_shared_v1_t1024_f128_replay_pipe_v1_writer_cg_vcs2018/full/
+hardware/rtl/generated/
+  briskkv_jit_v_shared_v1_t1024_f128_replay_pipe_v1_writer_cg_vcs2018/dc_logic/
+```
+
+Both manifests report one decompression datapath, `writer_clock_gating=true`,
+stats disabled, VCS compatibility enabled, 52 architectural SRAM instances /
+1659392 bits and 13 small logic-memory instances / 1124 bits.
+
+Artifact hashes at this candidate boundary:
+
+```text
+f186d4d233f9c7e47665eac4487377e0659fd5aa9aac66b95db5ce46ed8628bc  BriskKvClockGate.scala
+b2017378048cfdcbdcdbd5af8a5ffd8f0a48b00c5d911c9cb394c06815108ee3  BriskKvJitVSingleHeadTileTop.scala
+7f88542c6032a9ca98c367584b71f712ff0e9e22df873b2809041b205aa30b74  jit_v_shared_writer_cg.csv
+4219fe6c9b914775c3459c19366e95bfc4225ada210dd6c772ae7569060a3493  full RTL tree
+326cdb78bb584804e232718d87090683f334663b30a756b5ed8e2565e5fbc82f  dc_logic RTL tree
+```
+
+The next acceptance gate is a user-confirmed remote VCS PASS followed by an
+attention-only SAIF using hierarchy `tb_briskkv_tile_power_1024/dut`. The SAIF
+must be applied only to the matching writer-CG `dc_logic/` RTL. Compare against
+the ungated shared `2026081705` DC and `2026081707` hierarchical power results;
+do not overwrite either baseline.

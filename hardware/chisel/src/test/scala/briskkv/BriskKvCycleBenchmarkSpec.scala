@@ -68,7 +68,10 @@ class BriskKvCycleBenchmarkHarness(
   countBits: Int = 32,
   tagBits: Int = 16
 ) extends Module {
-  require(Set("full_v", "jit_v_dual", "jit_v_shared").contains(architecture))
+  require(
+    Set("full_v", "jit_v_dual", "jit_v_shared", "jit_v_shared_writer_cg")
+      .contains(architecture)
+  )
   private val params = BriskKvFormatV0.params
   private val tokenIndexBits = log2Ceil(params.blockTokens)
   private val bucketCountBits = log2Ceil(params.blockTokens + 1)
@@ -145,7 +148,8 @@ class BriskKvCycleBenchmarkHarness(
         maximumFeatureDim = maximumFeatureDim,
         maximumTokens = maximumTokens,
         enableStats = true,
-        sharedDecompressor = architecture == "jit_v_shared"
+        sharedDecompressor = architecture.startsWith("jit_v_shared"),
+        gateWriterClock = architecture == "jit_v_shared_writer_cg"
       )
     )
     dut.io.writeStart := io.writeStart

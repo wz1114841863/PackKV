@@ -2,7 +2,7 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-: "${RTL_DIR:?RTL_DIR must point to the generated JIT-V full directory}"
+: "${RTL_DIR:?RTL_DIR must point to a generated unified-tile full directory}"
 
 manifest="$RTL_DIR/manifest.json"
 filelist="$RTL_DIR/filelist.f"
@@ -14,6 +14,18 @@ wave_mode="${WAVE_MODE:-vcd}"
 wave_basename="${WAVE_BASENAME:-jit_v_overlap_64t}"
 activity_phase="${ACTIVITY_PHASE:-combined}"
 pass_pattern="${PASS_PATTERN:-BRISK-KV VCS PASS}"
+expected_top="${EXPECTED_TOP:-BriskKvJitVSingleHeadTileTop}"
+require_overlap_interface="${REQUIRE_OVERLAP_INTERFACE:-true}"
+dut_top_define="${DUT_TOP_DEFINE:-}"
+
+case "$require_overlap_interface" in
+  true|false) ;;
+  *)
+    printf 'REQUIRE_OVERLAP_INTERFACE must be true or false, got: %s\n' \
+      "$require_overlap_interface" >&2
+    exit 1
+    ;;
+esac
 
 if [[ ! -f "$manifest" || ! -f "$filelist" ]]; then
   printf 'Incomplete full RTL directory: %s\n' "$RTL_DIR" >&2
@@ -23,15 +35,20 @@ if ! grep -Eq '"mode"[[:space:]]*:[[:space:]]*"full"' "$manifest"; then
   printf 'VCS requires a full behavioral-memory export: %s\n' "$manifest" >&2
   exit 1
 fi
-if ! grep -Eq '"top"[[:space:]]*:[[:space:]]*"BriskKvJitVSingleHeadTileTop"' \
+if ! grep -Eq '"top"[[:space:]]*:[[:space:]]*"'"$expected_top"'"' \
   "$manifest"; then
-  printf 'Testbench requires the dual JIT-V top: %s\n' "$manifest" >&2
+  printf 'Testbench requires top=%s: %s\n' "$expected_top" "$manifest" >&2
   exit 1
 fi
-if ! grep -q 'io_attentionProgress_vLaunched' \
-  "$RTL_DIR/BriskKvJitVSingleHeadTileTop.sv"; then
+top_file="$RTL_DIR/$expected_top.sv"
+if [[ ! -f "$top_file" ]]; then
+  printf 'Manifest top source is missing: %s\n' "$top_file" >&2
+  exit 1
+fi
+if [[ "$require_overlap_interface" == true ]] && \
+   ! grep -q 'io_attentionProgress_vLaunched' "$top_file"; then
   printf 'RTL predates the JIT-V overlap interface; regenerate overlap-v1: %s\n' \
-    "$RTL_DIR/BriskKvJitVSingleHeadTileTop.sv" >&2
+    "$top_file" >&2
   exit 1
 fi
 if [[ ! -f "$testbench" ]]; then
@@ -51,11 +68,15 @@ esac
 mkdir -p "$output_dir"
 simv="$output_dir/simv"
 compile_dir="$output_dir/csrc"
+vcs_defines=(+define+BRISKKV_VCS)
+if [[ -n "$dut_top_define" ]]; then
+  vcs_defines+=("+define+BRISKKV_DUT_TOP=$dut_top_define")
+fi
 
 (
   cd "$RTL_DIR"
   "$vcs_bin" -full64 -sverilog -timescale=1ns/1ps \
-    +define+BRISKKV_VCS \
+    "${vcs_defines[@]}" \
     -debug_access+all -kdb \
     -Mdir="$compile_dir" \
     -LDFLAGS "-Wl,--no-as-needed" \

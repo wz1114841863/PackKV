@@ -65,12 +65,15 @@ class BriskKvJitVSingleHeadTileTopSpec
     }
 
     val shared = sys.props.get("briskkv.sharedDecompressor").contains("true")
+    val gateWriterClock =
+      sys.props.get("briskkv.writerClockGating").contains("true")
       simulate(
         new BriskKvJitVSingleHeadTileTop(
           maximumFeatureDim = 8,
           maximumTokens = TokenCount,
           enableStats = true,
-          sharedDecompressor = shared
+          sharedDecompressor = shared,
+          gateWriterClock = gateWriterClock
         )
       ) { dut =>
       dut.io.writeStart.poke(false.B)

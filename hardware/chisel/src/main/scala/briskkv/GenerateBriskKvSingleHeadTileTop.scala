@@ -172,7 +172,7 @@ object GenerateBriskKvSingleHeadTileTop {
     require(config.scaleLanes > 0)
     require(Set("full", "dc_logic").contains(config.mode))
     require(
-      Set("full_v", "jit_v_dual", "jit_v_shared")
+      Set("full_v", "jit_v_dual", "jit_v_shared", "jit_v_shared_writer_cg")
         .contains(config.attentionArchitecture),
       s"Unsupported attention architecture: ${config.attentionArchitecture}"
     )
@@ -185,6 +185,8 @@ object GenerateBriskKvSingleHeadTileTop {
       case "full_v"     => "BriskKvSingleHeadTileTop"
       case "jit_v_dual" => "BriskKvJitVSingleHeadTileTop"
       case "jit_v_shared" => "BriskKvSharedJitVSingleHeadTileTop"
+      case "jit_v_shared_writer_cg" =>
+        "BriskKvSharedJitVWriterCgSingleHeadTileTop"
     }
     // Keep this as a method: ChiselStage evaluates its generator by name inside
     // Builder context. Constructing a Module in a strict local val is illegal.
@@ -209,6 +211,15 @@ object GenerateBriskKvSingleHeadTileTop {
         )
       case "jit_v_shared" =>
         new BriskKvSharedJitVSingleHeadTileTop(
+          inputBits = config.inputBits,
+          maximumFeatureDim = config.maximumFeatureDim,
+          maximumTokens = config.maximumTokens,
+          scaleLanes = config.scaleLanes,
+          enableStats = config.enableStats,
+          quantParameterArchitecture = quantArchitecture
+        )
+      case "jit_v_shared_writer_cg" =>
+        new BriskKvSharedJitVWriterCgSingleHeadTileTop(
           inputBits = config.inputBits,
           maximumFeatureDim = config.maximumFeatureDim,
           maximumTokens = config.maximumTokens,
@@ -258,7 +269,8 @@ object GenerateBriskKvSingleHeadTileTop {
          |  "mode": "${config.mode}",
          |  "architecture": "${config.attentionArchitecture}",
          |  "v_materialization": "${if (config.attentionArchitecture == "full_v") "full_token_feature_buffer" else "two_packet_jit_buffer_plus_feature_partial_sums"}",
-         |  "decompression_datapaths": ${if (config.attentionArchitecture == "jit_v_shared") 1 else 2},
+         |  "decompression_datapaths": ${if (config.attentionArchitecture.startsWith("jit_v_shared")) 1 else 2},
+         |  "writer_clock_gating": ${config.attentionArchitecture == "jit_v_shared_writer_cg"},
          |  "stored_transactions": 1,
          |  "repeat_attention_on_resident_transaction": true,
          |  "stored_component_streams": 11,

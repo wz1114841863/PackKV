@@ -54,7 +54,8 @@ class BriskKvJitVSingleHeadTileTop(
   enableStats: Boolean = true,
   quantParameterArchitecture: QuantParameterArchitecture =
     QuantParameterArchitecture.V1SingleStage,
-  sharedDecompressor: Boolean = false
+  sharedDecompressor: Boolean = false,
+  gateWriterClock: Boolean = false
 ) extends Module {
   private val params = BriskKvFormatV0.params
   private val streamCount = 11
@@ -97,18 +98,52 @@ class BriskKvJitVSingleHeadTileTop(
       streamCount
     )
   )
-  val writer = Module(
-    new BriskKvWriteEncoderTop(
-      inputBits = inputBits,
-      inputFractionalBits = inputFractionalBits,
-      maximumFeatureDim = maximumFeatureDim,
-      maximumTokens = maximumTokens,
-      countBits = countBits,
-      tagBits = tagBits,
-      enableStats = enableStats,
-      quantParameterArchitecture = quantParameterArchitecture
+
+  private val Seq(sIdle, sWriting, sSealCheck, sStored, sLaunch, sAttention) =
+    Enum(6)
+  val state = RegInit(sIdle)
+  val featureDimReg = RegInit(0.U(countBits.W))
+  val tokenCountReg = RegInit(0.U(countBits.W))
+  val descriptorCountReg = RegInit(0.U(countBits.W))
+  val attentionTagReg = RegInit(0.U(tagBits.W))
+  val writeDoneReg = RegInit(false.B)
+  val errorReg = RegInit(false.B)
+
+  val geometryValid = io.featureDim =/= 0.U &&
+    io.featureDim <= maximumFeatureDim.U && !io.featureDim(0) &&
+    io.blockCount =/= 0.U && io.blockCount <= maximumBlocks.U &&
+    io.firstBlockIndex === 0.U
+  val writeAccept = io.writeStart && (state === sIdle || state === sStored)
+  val validWriteAccept = writeAccept && geometryValid
+
+  // This is an optional phase-level power ablation, not the default tile.
+  // The writer receives clocks for reset, the launch edge and the complete
+  // write phase. It is held clock-stationary while resident data is consumed
+  // by attention. The self-contained low-level gate is shared by Chisel, VCS
+  // and DC, avoiding an unmodelled technology-specific clock-cell dependency.
+  val writerClockEnable = reset.asBool || state === sWriting || validWriteAccept
+  val writerClock = if (gateWriterClock) {
+    val gate = Module(new BriskKvClockGate)
+    gate.clockIn := clock
+    gate.enable := writerClockEnable
+    gate.clockOut
+  } else {
+    clock
+  }
+  val writer = withClockAndReset(writerClock, reset) {
+    Module(
+      new BriskKvWriteEncoderTop(
+        inputBits = inputBits,
+        inputFractionalBits = inputFractionalBits,
+        maximumFeatureDim = maximumFeatureDim,
+        maximumTokens = maximumTokens,
+        countBits = countBits,
+        tagBits = tagBits,
+        enableStats = enableStats,
+        quantParameterArchitecture = quantParameterArchitecture
+      )
     )
-  )
+  }
   val attention = Module(
     new BriskKvJitVAttentionTop(
       valueBits = valueBits,
@@ -129,22 +164,6 @@ class BriskKvJitVSingleHeadTileTop(
     Module(new ReplayByteStreamBuffer(capacity, countBits))
   )
 
-  private val Seq(sIdle, sWriting, sSealCheck, sStored, sLaunch, sAttention) =
-    Enum(6)
-  val state = RegInit(sIdle)
-  val featureDimReg = RegInit(0.U(countBits.W))
-  val tokenCountReg = RegInit(0.U(countBits.W))
-  val descriptorCountReg = RegInit(0.U(countBits.W))
-  val attentionTagReg = RegInit(0.U(tagBits.W))
-  val writeDoneReg = RegInit(false.B)
-  val errorReg = RegInit(false.B)
-
-  val geometryValid = io.featureDim =/= 0.U &&
-    io.featureDim <= maximumFeatureDim.U && !io.featureDim(0) &&
-    io.blockCount =/= 0.U && io.blockCount <= maximumBlocks.U &&
-    io.firstBlockIndex === 0.U
-  val writeAccept = io.writeStart && (state === sIdle || state === sStored)
-  val validWriteAccept = writeAccept && geometryValid
   val sealStores = writer.io.done && state === sWriting
   val anyOverflow = stores.map(_.io.overflow).reduce(_ || _)
 
@@ -286,5 +305,44 @@ class BriskKvSharedJitVSingleHeadTileTop(
       useBufferedMetadata,
       enableStats,
       quantParameterArchitecture,
-      sharedDecompressor = true
+      sharedDecompressor = true,
+      gateWriterClock = false
+    )
+
+/** Shared-decoder power ablation with the write encoder clock disabled outside
+  * reset, launch and the active write phase.
+  */
+class BriskKvSharedJitVWriterCgSingleHeadTileTop(
+  inputBits: Int = 24,
+  inputFractionalBits: Int = 12,
+  valueBits: Int = 18,
+  qkAccumulatorBits: Int = 44,
+  avAccumulatorBits: Int = 50,
+  outputBits: Int = 18,
+  countBits: Int = 32,
+  tagBits: Int = 16,
+  maximumFeatureDim: Int = 128,
+  maximumTokens: Int = 1024,
+  scaleLanes: Int = 4,
+  useBufferedMetadata: Boolean = true,
+  enableStats: Boolean = true,
+  quantParameterArchitecture: QuantParameterArchitecture =
+    QuantParameterArchitecture.V1SingleStage
+) extends BriskKvJitVSingleHeadTileTop(
+      inputBits,
+      inputFractionalBits,
+      valueBits,
+      qkAccumulatorBits,
+      avAccumulatorBits,
+      outputBits,
+      countBits,
+      tagBits,
+      maximumFeatureDim,
+      maximumTokens,
+      scaleLanes,
+      useBufferedMetadata,
+      enableStats,
+      quantParameterArchitecture,
+      sharedDecompressor = true,
+      gateWriterClock = true
     )

@@ -56,7 +56,7 @@ if [[ -z "$manifest_top" ]]; then
   exit 1
 fi
 case "$manifest_top" in
-  BriskKvSingleHeadTileTop|BriskKvJitVSingleHeadTileTop|BriskKvSharedJitVSingleHeadTileTop)
+  BriskKvSingleHeadTileTop|BriskKvJitVSingleHeadTileTop|BriskKvSharedJitVSingleHeadTileTop|BriskKvSharedJitVWriterCgSingleHeadTileTop)
     ;;
   *)
     printf 'Unsupported unified-tile top in manifest: %s\n' "$manifest_top" >&2
