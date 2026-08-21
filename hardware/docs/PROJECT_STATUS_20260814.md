@@ -1,5 +1,10 @@
 # PackKV / BRISK-KV project status — 2026-08-14
 
+> Historical snapshot. The current retained hardware point and paper-stage
+> handoff are `PROJECT_STATUS_20260818.md` and `PAPER_HANDOFF_20260818.md`.
+> Statements below about unfinished VCS/SAIF/DC work are preserved only for
+> provenance and have been superseded by later dated snapshots.
+
 This document is the handoff point for a new conversation. It records the
 current research decisions, verified results, code boundaries, open issues,
 and immediate commands. Read `AGENTS.md` first, then this file, then the

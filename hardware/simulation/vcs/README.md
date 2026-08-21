@@ -1,5 +1,26 @@
 # BRISK-KV VCS full-RTL validation
 
+## Frozen evidence status
+
+The 64-token flow below remains the smoke test. The paper-stage hardware
+boundary uses the matched 1024-token x 128-feature workload. Full-V, shared
+JIT-V, and shared writer-CG remote runs reported PASS; some remote
+`simulation.log` files were not copied into the local archive, so those PASS
+lines remain user-confirmed terminal evidence. Their SAIF and downstream DC
+reports are locally available.
+
+The retained point is `jit_v_shared_writer_cg`. Its accepted activity file is:
+
+```text
+hardware/simulation/results/2026081801/
+  jit_v_shared_writer_cg_1024t_128f_attention.saif
+```
+
+It has 1 ps timescale, 557720000 ps duration, hierarchy
+`tb_briskkv_tile_power_1024/dut`, zero duration mismatches, and a zero-toggle
+writer gated clock throughout the attention window. See
+`../../docs/PROJECT_STATUS_20260818.md` for hashes and the matched DC result.
+
 This testbench uses the generated `full/` RTL, including behavioral SRAM
 implementations. It must not be compiled against the DC `dc_logic/` export.
 
@@ -48,8 +69,8 @@ deterministic K/V and query pattern as `BriskKvCycleBenchmarkSpec`, checks the
 complete protocol/result path, and starts waveform collection only at the
 selected activity phase.
 
-The recommended primary report is the attention phase at the same 2.0 ns clock
-used for DC:
+The primary report is the attention phase at the same 2.0 ns clock used for
+DC. The following dual command remains a reproduction example:
 
 ```bash
 export RTL_DIR=/absolute/path/to/briskkv_jit_v_dual_overlap_v1_vcs2018/full
@@ -157,9 +178,9 @@ different even though their transaction-level outputs match.
 
 ## Shared JIT-V writer clock-gating ablation
 
-The phase-level writer clock-gating candidate is a distinct architecture and
-top; it does not replace the matched shared baseline. Generate it into a new
-directory:
+The phase-level writer clock-gating point is a distinct architecture and top.
+It is now the retained area/power-first design, while the matched ungated shared
+baseline remains immutable. Reproduce it only into a new directory:
 
 ```bash
 OUTPUT_ROOT=/absolute/path/to/hardware/rtl/generated/briskkv_jit_v_shared_v1_t1024_f128_replay_pipe_v1_writer_cg_vcs2018 \
@@ -185,3 +206,7 @@ The expected VCD is
 `tb_briskkv_tile_power_1024/dut`. For DC, point `RTL_DIR` at the matching
 `dc_logic/` directory and obtain the top from `manifest.json`; do not reuse the
 ungated shared SAIF.
+
+Before accepting a new result, also verify SAIF duration against the reported
+activity window, clock `TX=0`, annotation coverage, architecture/top match, and
+the VCS checksum/output count. Do not overwrite `results/2026081801`.

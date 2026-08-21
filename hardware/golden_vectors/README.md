@@ -1,5 +1,10 @@
 # BRISK-KV Golden Vectors
 
+These vectors remain the normative Python-to-Chisel transport for Format v0.
+They support the frozen single-head implementation but do not by themselves
+establish VCS/DC correctness; the complete evidence chain is indexed in
+`../docs/PAPER_HANDOFF_20260818.md`.
+
 Run from the repository root:
 
 ```bash

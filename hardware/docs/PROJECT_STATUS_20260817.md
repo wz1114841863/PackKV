@@ -1,5 +1,10 @@
 # BRISK-KV Hardware Status — 2026-08-17
 
+> Historical replay and matched-architecture freeze. Section 10 records the
+> writer-CG candidate before remote PPA; that candidate has since passed and is
+> frozen by `PROJECT_STATUS_20260818.md`. Start a paper-writing conversation
+> from `PAPER_HANDOFF_20260818.md`.
+
 This document freezes the first bounded hardware optimization after the
 `2026081502` dual JIT-V overlap-v1 baseline.  The frozen candidate is named:
 
@@ -349,9 +354,10 @@ shared_writer_cg_v1
 top = BriskKvSharedJitVWriterCgSingleHeadTileTop
 ```
 
-This is not yet a frozen PPA result. It is an isolated implementation and
-local functional/cycle candidate awaiting remote VCS, attention-only SAIF and
-matched 2.0 ns DC.
+At the time of this snapshot this was not yet a frozen PPA result. It was an
+isolated implementation and local functional/cycle candidate awaiting remote
+VCS, attention-only SAIF and matched 2.0 ns DC. Those steps are complete; see
+`PROJECT_STATUS_20260818.md` for the accepted result.
 
 Implementation:
 
@@ -404,8 +410,7 @@ b2017378048cfdcbdcdbd5af8a5ffd8f0a48b00c5d911c9cb394c06815108ee3  BriskKvJitVSin
 326cdb78bb584804e232718d87090683f334663b30a756b5ed8e2565e5fbc82f  dc_logic RTL tree
 ```
 
-The next acceptance gate is a user-confirmed remote VCS PASS followed by an
-attention-only SAIF using hierarchy `tb_briskkv_tile_power_1024/dut`. The SAIF
-must be applied only to the matching writer-CG `dc_logic/` RTL. Compare against
-the ungated shared `2026081705` DC and `2026081707` hierarchical power results;
-do not overwrite either baseline.
+The historical acceptance gate was a user-confirmed remote VCS PASS followed
+by an attention-only SAIF at `tb_briskkv_tile_power_1024/dut`, applied only to
+the matching writer-CG `dc_logic/` RTL. It completed in `2026081801` and
+`2026081802`; the ungated `2026081705`/`2026081707` baselines remain immutable.

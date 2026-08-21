@@ -1,4 +1,13 @@
-**Use phi3 as an example**
+# Historical model-adoption note
+
+This Phi-3 example predates the frozen BRISK-KV paper boundary and is not a
+verified current integration recipe. It illustrates where a PackKV cache and
+RoPE-aware update could be inserted, but model APIs and exact call paths must
+be re-audited before reuse. The current paper evidence is based on the software
+paths and hardware artifacts indexed by `hardware/docs/PAPER_HANDOFF_20260818.md`;
+do not cite this note as proof of end-to-end model support.
+
+## Phi-3 example
 
 In Phi3Attention module
 ```python

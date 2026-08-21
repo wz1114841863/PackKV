@@ -1,5 +1,12 @@
 # BRISK-KV DC baseline validation
 
+The current accepted DC boundary is no longer the early attention-only
+component baseline. The retained full-tile writer-CG reports are under
+`hardware/synthesis/dc/results/2026081801/`, with DDC hierarchical power under
+`2026081802/`. Use `hardware/docs/PROJECT_STATUS_20260818.md` for the exact
+configuration and hashes. This checker remains useful for new runs, which must
+use new result directories.
+
 `dc_baseline_report.py` checks whether a Design Compiler run is a usable
 logic-only baseline before its area, timing, or power values are compared.
 

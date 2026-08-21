@@ -639,6 +639,11 @@ golden behavioral reference for Format v0.
 
 ## 10. Verification status
 
+Format v0 and the current single-head tile are frozen for paper preparation.
+The list below records cumulative validation; the latest end-to-end VCS/SAIF/DC
+status is in `PROJECT_STATUS_20260818.md`, not inferred from this component
+checklist.
+
 Completed in the Python reference model:
 
 - compact metadata byte encode/decode;
@@ -716,4 +721,14 @@ Not yet completed:
 
 - export of selected real-model Cache blocks as committed/archived vectors;
 - serialized DMA or memory-container header;
-- synthesis, timing, area, power, and throughput evaluation.
+- multi-head/multi-layer scheduling and complete memory-system integration;
+- foundry SRAM/ICG integration and post-layout timing/power.
+
+Completed beyond the original component checklist:
+
+- end-to-end Full-V, dual JIT-V, shared JIT-V, and shared writer-CG single-head
+  tile implementations;
+- matched 1024 x 128 cycle measurements and deterministic output checks;
+- full-RTL VCS validation and architecture-matched attention-only SAIF;
+- 2.0 ns logic-only DC timing, area, power, and hierarchical-power reports
+  with architectural SRAMs preserved as black boxes.

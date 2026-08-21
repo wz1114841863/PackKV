@@ -1,5 +1,27 @@
 # BRISK-KV DC baseline
 
+## Frozen paper-stage result
+
+The retained full-tile result is `shared_writer_cg_v1` at 2.0 ns / 500 MHz:
+
+```text
+top:       BriskKvSharedJitVWriterCgSingleHeadTileTop
+SAIF:      hardware/simulation/results/2026081801/
+DC:        hardware/synthesis/dc/results/2026081801/
+DDC hier:  hardware/synthesis/dc/results/2026081802/
+hierarchy: tb_briskkv_tile_power_1024/dut
+```
+
+It uses TSMC 28 nm HPC+ LVT SSG 0.81 V / 125 C, stats-off RTL,
+attention-only activity, ZeroWireload, and 52 architectural SRAM black-box
+instances. Setup closes at 2.0 ns; worst hold is about -0.06 ns and there are
+no max-transition violations. Cell area is 134594.710815 um^2 and dynamic
+power is 15.8115 mW. Exact provenance, coverage, hierarchy attribution, and
+claim limits are in `../../docs/PROJECT_STATUS_20260818.md`.
+
+The commands below remain reproduction and ablation instructions. New runs
+must use new report roots and may not overwrite any frozen result.
+
 `dc_logic` RTL replaces every architectural Chisel `SyncReadMem` implementation
 with a port-compatible bodyless SystemVerilog stub and provides
 `memory_modules.tcl` to mark and audit those designs as black boxes. Use Design
@@ -77,9 +99,9 @@ Inspect the annotation reports before accepting `power.rpt`. A successfully
 parsed SAIF with poor hierarchy/name mapping can otherwise leave most objects
 on default activity. Architectural SRAMs remain black boxes, so their dynamic
 energy still requires access counts plus CACTI or memory-compiler energy.
-The 64-token/four-feature VCS trace is suitable for bringing up this flow, but
-the final workload-power result should use the planned representative
-1024-token trace in a separate report directory.
+The 64-token/four-feature VCS trace is suitable only for bringing up this flow.
+The accepted workload-power results use architecture-matched 1024-token x
+128-feature traces in separate report directories.
 
 For the write encoder, upload the complete generated `dc_logic` directory,
 `run_dc_logic.tcl`, and `run_write_encoder_dc.sh`. Absolute paths make the flow

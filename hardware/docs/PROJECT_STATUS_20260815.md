@@ -1,5 +1,10 @@
 # BRISK-KV Hardware Status — 2026-08-15
 
+> Historical pre-replay baseline. It remains immutable comparison evidence,
+> but the current retained architecture is documented in
+> `PROJECT_STATUS_20260818.md`; start paper work from
+> `PAPER_HANDOFF_20260818.md`.
+
 This document is the continuation of `PROJECT_STATUS_20260814.md`. It records
 the verified 1024-token VCS/SAIF/DC power boundary before any further hardware
 optimization. Do not overwrite the referenced result directories.

@@ -7,6 +7,13 @@ algorithm implementation in the repository root.
 The normative component-stream contract is documented in
 [`../docs/briskkv_format_v0.md`](../docs/briskkv_format_v0.md).
 
+The retained integrated top is
+`BriskKvSharedJitVWriterCgSingleHeadTileTop` (shared JIT-V with
+`replay_pipe_v1` and phase-level writer clock gating). Its frozen cycle and PPA
+evidence is documented in `../docs/PROJECT_STATUS_20260818.md`; the paper-stage
+summary is `../docs/PAPER_HANDOFF_20260818.md`. Component descriptions below
+remain implementation documentation, not a list of unfinished project steps.
+
 ## Requirements
 
 - JDK 17 or newer
@@ -203,6 +210,12 @@ SBT is the only supported build entry point for the first implementation. This
 avoids dependency and plugin drift between multiple build systems.
 
 ## SystemVerilog generation
+
+Generated exports serve two distinct flows: use `full/` for RTL simulation and
+SAIF generation, and use the matching `dc_logic/` for DC logic synthesis. For
+the retained shared writer-CG architecture, set `WRITER_CLOCK_GATING=true` in
+`../scripts/generate_shared_jit_v_tile_rtl.sh`, preserve the output directory,
+and read the emitted top and flags from `manifest.json`.
 
 `GenerateBriskKvAttentionTop` emits split SystemVerilog for a parameterized
 unified Attention top. The repository wrapper generates a functional variant

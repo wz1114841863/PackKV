@@ -1,5 +1,11 @@
 # BRISK-KV CACTI evaluation
 
+For the frozen 1024 x 128 comparison, Full-V contains 4,012,288 architectural
+SRAM bits and all JIT-V variants contain 1,659,392 bits, a 58.64% reduction.
+The archived 22 nm CACTI estimates are summarized in
+`hardware/docs/JIT_V_ABLATION.md`. They remain separate from the 28 nm DC
+logic results.
+
 This directory evaluates the architectural SRAMs that are black-boxed during
 Design Compiler logic synthesis.  It consumes the `memories.csv` generated
 with the `dc_logic` SystemVerilog variant; capacities are not copied into a

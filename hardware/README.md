@@ -5,6 +5,13 @@ PackKV-based Python research code in this repository. The hardware directory is
 kept separate so that algorithm experiments do not become coupled to RTL build
 artifacts or simulator dependencies.
 
+The current single-head hardware boundary is frozen at `shared_writer_cg_v1`
+(`BriskKvSharedJitVWriterCgSingleHeadTileTop`): shared JIT-V, pipelined
+byte-stream replay, and phase-level writer clock gating. The primary evidence
+is the matched 1024-token x 128-feature, 2.0 ns attention workload archived in
+`docs/PROJECT_STATUS_20260818.md`. Paper work should start from
+`docs/PAPER_HANDOFF_20260818.md`; further RTL optimization is deferred.
+
 ## Current status
 
 - BRISK-KV Format v0 field limits are frozen as an initial hardware contract.
@@ -56,6 +63,10 @@ artifacts or simulator dependencies.
   write, storage, read, decompression, and compute path under backpressure. The
   sealed transaction remains resident for repeated decode-query commands until
   a new write command explicitly replaces it.
+- Full-V, dual JIT-V, shared JIT-V, and shared writer-CG have matched
+  1024 x 128 cycle/SAIF/DC evidence. The retained writer-CG point preserves
+  278859 shared attention cycles and reduces attention-phase logic dynamic
+  power by 33.12% at 0.059% cell-area overhead relative to ungated shared.
 
 ## Layout
 
@@ -90,6 +101,10 @@ byte streams. It sequences multiple full blocks and reports completion only
 after every output stream has drained.
 
 ## RTL and synthesis baseline
+
+For current architecture-specific generation, VCS/SAIF, and DC commands, use
+`simulation/vcs/README.md` and `synthesis/dc/README.md`. The commands below are
+older component/baseline entry points and should not overwrite frozen exports.
 
 Generate the initial 1024-token, 128-feature SystemVerilog point with:
 
