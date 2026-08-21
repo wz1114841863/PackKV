@@ -97,7 +97,6 @@ def main():
                 "Model": model,
                 "Task": args.task,
                 "Enable_Quant": enable_quant,
-                "Quant_Method": "PackKV",
                 "Scale_Method": scale_method,
                 "Repack_Method": repack_method,
                 "K_Scale": "0.03",
@@ -109,6 +108,10 @@ def main():
                 "Bucket_Count": "4",
                 "Bucket_Score_Method": "k_sum",
             }
+            # The accuracy sidecar deliberately records no quant method for
+            # --no_quant, even though the CLI still receives --quant_method.
+            if label != "fp":
+                accuracy_expected["Quant_Method"] = "PackKV"
             accuracy_row, accuracy_state = select_one(accuracy_rows, accuracy_expected)
             check = {
                 "model": model,
