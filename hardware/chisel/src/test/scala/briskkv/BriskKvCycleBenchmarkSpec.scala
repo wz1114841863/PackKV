@@ -12,6 +12,9 @@ import java.nio.file.{Files, Paths}
 class BriskKvCycleBenchmarkProgress extends Bundle {
   val kCompletedValues = UInt(64.W)
   val vCompletedValues = UInt(64.W)
+  val qkActiveCycles = UInt(64.W)
+  val softmaxActiveCycles = UInt(64.W)
+  val avActiveCycles = UInt(64.W)
   val softmaxOutputPackets = UInt(64.W)
   val vStreamStart = Bool()
   val vPacketizerInputValues = UInt(64.W)
@@ -121,6 +124,12 @@ class BriskKvCycleBenchmarkHarness(
       dut.io.attentionProgress.decompressionQk.compute.decompression.k.completedValues
     io.progress.vCompletedValues :=
       dut.io.attentionProgress.decompressionQk.compute.decompression.v.completedValues
+    io.progress.qkActiveCycles :=
+      dut.io.attentionProgress.decompressionQk.qk.accumulator.activeCycles
+    io.progress.softmaxActiveCycles :=
+      dut.io.attentionProgress.scaleSoftmax.softmax.activeCycles
+    io.progress.avActiveCycles :=
+      dut.io.attentionProgress.softmaxV.accumulator.activeCycles
     io.progress.softmaxOutputPackets :=
       dut.io.attentionProgress.scaleSoftmax.softmax.outputPackets
     // Full-V launches both component streams with the attention transaction.
@@ -173,6 +182,11 @@ class BriskKvCycleBenchmarkHarness(
       dut.io.attentionProgress.kDecompression.completedValues
     io.progress.vCompletedValues :=
       dut.io.attentionProgress.vDecompression.completedValues
+    io.progress.qkActiveCycles :=
+      dut.io.attentionProgress.qk.accumulator.activeCycles
+    io.progress.softmaxActiveCycles :=
+      dut.io.attentionProgress.scaleSoftmax.softmax.activeCycles
+    io.progress.avActiveCycles := dut.io.attentionProgress.jitV.activeCycles
     io.progress.softmaxOutputPackets :=
       dut.io.attentionProgress.scaleSoftmax.softmax.outputPackets
     io.progress.vStreamStart := dut.io.attentionProgress.vLaunched
@@ -240,6 +254,9 @@ class BriskKvCycleBenchmarkSpec
     lastOutputCycle: Long,
     resultCycle: Long,
     kActiveCycles: Long,
+    qkActiveCycles: Long,
+    softmaxActiveCycles: Long,
+    avActiveCycles: Long,
     kOutputValues: Long,
     kMetadataStallCycles: Long,
     kDownstreamStallCycles: Long,
@@ -343,6 +360,9 @@ class BriskKvCycleBenchmarkSpec
         var lastOutputCycle = -1L
         var resultCycle = -1L
         var kActiveCycles = -1L
+        var qkActiveCycles = -1L
+        var softmaxActiveCycles = -1L
+        var avActiveCycles = -1L
         var kOutputValues = -1L
         var kMetadataStallCycles = -1L
         var kDownstreamStallCycles = -1L
@@ -416,6 +436,12 @@ class BriskKvCycleBenchmarkSpec
             dut.io.result.bits.error.expect(false.B)
             kActiveCycles =
               dut.io.result.bits.kStats.activeCycles.peek().litValue.toLong
+            qkActiveCycles =
+              dut.io.progress.qkActiveCycles.peek().litValue.toLong
+            softmaxActiveCycles =
+              dut.io.progress.softmaxActiveCycles.peek().litValue.toLong
+            avActiveCycles =
+              dut.io.progress.avActiveCycles.peek().litValue.toLong
             kOutputValues =
               dut.io.result.bits.kStats.outputValues.peek().litValue.toLong
             kMetadataStallCycles =
@@ -482,6 +508,9 @@ class BriskKvCycleBenchmarkSpec
           lastOutputCycle,
           resultCycle,
           kActiveCycles,
+          qkActiveCycles,
+          softmaxActiveCycles,
+          avActiveCycles,
           kOutputValues,
           kMetadataStallCycles,
           kDownstreamStallCycles,
@@ -519,7 +548,8 @@ class BriskKvCycleBenchmarkSpec
         "attention_cycles,k_done_cycle,first_weight_cycle,weights_loaded_cycle," +
         "v_first_value_cycle," +
         "v_done_cycle,first_output_cycle,last_output_cycle,result_cycle," +
-        "k_active_cycles,k_output_values,k_metadata_stall_cycles," +
+        "k_active_cycles,qk_active_cycles,softmax_active_cycles,av_active_cycles," +
+        "k_output_values,k_metadata_stall_cycles," +
         "k_downstream_stall_cycles,v_active_cycles,v_output_values," +
         "v_metadata_stall_cycles,v_downstream_stall_cycles," +
         "v_packetizer_input_values,v_packetizer_output_packets," +
